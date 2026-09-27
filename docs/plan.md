@@ -47,7 +47,7 @@ Run without arguments to start the scheduler with all jobs. Redis locks make it 
 
 1. **Report title and summary**: Trendlyne rows carry the report headline and a one-paragraph abstract (last cell); add `title`/`summary` columns to `analyst_calls`, parse them, bump `TRENDLYNE_PARSER_VERSION`, and show the headline in the ANR table. Note that Trendlyne's headline can name the wrong company (an ICICI Direct note on INDGN was titled "Centum Electronics"); the stock link and `/posts/` URL are row-aligned and correct.
 2. **Backfill**: `prices` for NIFTY500 (`cli.ts prices NIFTY500`), then `fundamentals` and `relationships` jobs repeatedly until `documents.fetched_at` is fresh for the universe; re-run `intel`.
-3. **Vercel**: deploy `apps/web` with `API_URL` pointing at the hosted API and `API_KEY`; the API must be reachable from Vercel (run `docker compose up api worker` on a VM or a container host).
+3. **Host the API permanently**: `apps/web` is deployed on Vercel (project `market-analysis`, https://market-analysis-liard.vercel.app) with `API_URL`/`API_KEY` env vars; `API_URL` currently points at a temporary tunnel to the development sandbox. Run `docker compose up api worker` on a VM or container host and update `API_URL` (`vercel env add API_URL production`).
 4. **Relationship recall**: add a sentence classifier (small LLM or fine-tuned model) behind `extractNamedMentions` to catch mentions without lexical cues; keep the regex path as a fast pre-filter.
 5. **BSE announcements** as a second filings source; **NSE corporate actions**.
 6. **Watchlists and alerts**: user-defined lists in the UI, notify on new analyst calls and signal threshold crossings.
