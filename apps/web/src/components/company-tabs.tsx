@@ -1,5 +1,12 @@
 import type { Fundamental, Overview, RelationshipRow } from "@/lib/api";
-import { getAnalysts, getAnnouncements, getFinancials, getPrices, getSupplyChain } from "@/lib/api";
+import {
+  attempt,
+  getAnalysts,
+  getAnnouncements,
+  getFinancials,
+  getPrices,
+  getSupplyChain,
+} from "@/lib/api";
 import {
   ACTION_LABEL,
   crore,
@@ -14,7 +21,7 @@ import {
   tone,
 } from "@/lib/format";
 import { PriceChart } from "./chart";
-import { actionTone, bucketTone, Chg, Empty, Panel } from "./panels";
+import { actionTone, bucketTone, Chg, Empty, Panel, Unavailable } from "./panels";
 
 const RANGES = ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"];
 
@@ -34,8 +41,10 @@ function growth(rows: Fundamental[], key: keyof Fundamental, lag = 1): number | 
   const cur = rows[0];
   const prev = rows[lag];
   if (!cur || !prev) return null;
-  const r = ratio(cur[key] as string | null, prev[key] as string | null);
-  return r == null ? null : (r - 1) * 100;
+  const a = Number(cur[key]);
+  const b = Number(prev[key]);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b === 0) return null;
+  return ((a - b) / Math.abs(b)) * 100;
 }
 
 export function DescriptionTab({ overview }: { overview: Overview }) {
@@ -110,7 +119,7 @@ export function DescriptionTab({ overview }: { overview: Overview }) {
           </div>
           <div>
             <span>Latest quarter</span>
-            <span>{fq ? `${fyLabel(fq.periodEnd)} · rev ${crore(fq.revenue)}` : "—"}</span>
+            <span>{fq ? `${fyLabel(fq.periodEnd, true)} · rev ${crore(fq.revenue)}` : "—"}</span>
           </div>
         </div>
       </Panel>
@@ -141,7 +150,7 @@ export function DescriptionTab({ overview }: { overview: Overview }) {
 
 export async function ChartTab({ symbol, range }: { symbol: string; range: string }) {
   const r = RANGES.includes(range) ? range : "1y";
-  const data = await getPrices(symbol, r).catch(() => ({ bars: [] }));
+  const res = await attempt(getPrices(symbol, r));
   return (
     <Panel
       title="Price"
@@ -155,7 +164,7 @@ export async function ChartTab({ symbol, range }: { symbol: string; range: strin
         </span>
       }
     >
-      <PriceChart bars={data.bars} />
+      {res.ok ? <PriceChart bars={res.data.bars} /> : <Unavailable error={res.error} />}
     </Panel>
   );
 }
@@ -242,28 +251,32 @@ function FinTable({ rows, quarterly = false }: { rows: Fundamental[]; quarterly?
 }
 
 export async function FinancialsTab({ symbol }: { symbol: string }) {
-  const data = await getFinancials(symbol).catch(() => ({ annual: [], quarterly: [] }));
+  const res = await attempt(getFinancials(symbol));
   return (
     <div className="grid">
       <Panel title="Annual" sub="Screener.in · consolidated where available">
-        <FinTable rows={data.annual} />
+        {res.ok ? <FinTable rows={res.data.annual} /> : <Unavailable error={res.error} />}
       </Panel>
       <Panel title="Quarterly" sub="last 8 quarters">
-        <FinTable rows={data.quarterly} quarterly />
+        {res.ok ? (
+          <FinTable rows={res.data.quarterly} quarterly />
+        ) : (
+          <Unavailable error={res.error} />
+        )}
       </Panel>
     </div>
   );
 }
 
 export async function AnalystsTab({ symbol }: { symbol: string }) {
-  const data = await getAnalysts(symbol).catch(() => null);
-  if (!data)
+  const res = await attempt(getAnalysts(symbol));
+  if (!res.ok)
     return (
       <Panel title="Analyst recommendations">
-        <Empty>API unavailable.</Empty>
+        <Unavailable error={res.error} />
       </Panel>
     );
-  const { summary: s, calls } = data;
+  const { summary: s, calls } = res.data;
   return (
     <Panel title="Analyst recommendations" sub={`${s.brokers} brokers · last 6 months · Trendlyne`}>
       <div className="summary">
@@ -422,11 +435,14 @@ function RelTable({ rows, side }: { rows: RelationshipRow[]; side: "customer" | 
 }
 
 export async function SupplyChainTab({ symbol, overview }: { symbol: string; overview: Overview }) {
-  const data = await getSupplyChain(symbol).catch(() => ({
-    customers: [],
-    suppliers: [],
-    signals: [],
-  }));
+  const res = await attempt(getSupplyChain(symbol));
+  if (!res.ok)
+    return (
+      <Panel title="Supply chain">
+        <Unavailable error={res.error} />
+      </Panel>
+    );
+  const data = res.data;
   const revenue = overview.latestAnnual?.revenue;
   return (
     <div className="grid">
@@ -477,11 +493,13 @@ export async function SupplyChainTab({ symbol, overview }: { symbol: string; ove
 }
 
 export async function NewsTab({ symbol }: { symbol: string }) {
-  const data = await getAnnouncements(symbol).catch(() => ({ items: [] }));
+  const res = await attempt(getAnnouncements(symbol));
   return (
     <Panel title="Corporate announcements" sub="NSE">
       <div className="panel-body tight">
-        {data.items.length === 0 ? (
+        {!res.ok ? (
+          <Unavailable error={res.error} />
+        ) : res.data.items.length === 0 ? (
           <Empty>No announcements ingested for {symbol} yet.</Empty>
         ) : (
           <table className="t">
@@ -494,7 +512,7 @@ export async function NewsTab({ symbol }: { symbol: string }) {
               </tr>
             </thead>
             <tbody>
-              {data.items.map((a) => (
+              {res.data.items.map((a) => (
                 <tr key={a.id}>
                   <td className="dim">{shortDate(a.publishedAt)}</td>
                   <td className="wrap" style={{ maxWidth: 260 }}>

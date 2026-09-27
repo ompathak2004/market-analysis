@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { IndexQuote, LatestCall, LeaderboardRow, Mover } from "@/lib/api";
+import type { ApiError, IndexQuote, LatestCall, LeaderboardRow, Mover } from "@/lib/api";
 import {
   ACTION_LABEL,
   num,
@@ -38,6 +38,10 @@ export function Panel({
 
 export function Empty({ children = "No data yet." }: { children?: ReactNode }) {
   return <div className="empty">{children}</div>;
+}
+
+export function Unavailable({ error }: { error: ApiError }) {
+  return <div className="err">API unavailable · {error.code}</div>;
 }
 
 export function Chg({ v, digits = 2 }: { v: number | null | undefined; digits?: number }) {

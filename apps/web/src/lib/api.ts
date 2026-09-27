@@ -13,6 +13,17 @@ export class ApiError extends Error {
   }
 }
 
+export type Result<T> = { ok: true; data: T } | { ok: false; error: ApiError };
+
+export async function attempt<T>(p: Promise<T>): Promise<Result<T>> {
+  try {
+    return { ok: true, data: await p };
+  } catch (e) {
+    const error = e instanceof ApiError ? e : new ApiError(0, "unavailable", String(e));
+    return { ok: false, error };
+  }
+}
+
 export async function api<T>(path: string, revalidateSeconds = 30): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     headers: { "x-api-key": API_KEY },

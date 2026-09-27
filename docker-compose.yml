@@ -41,9 +41,9 @@ services:
     build:
       context: .
       dockerfile: docker/web.Dockerfile
-    env_file: .env
     environment:
       API_URL: http://api:4000
+      API_KEY: ${API_KEY}
     ports:
       - "3000:3000"
     depends_on:

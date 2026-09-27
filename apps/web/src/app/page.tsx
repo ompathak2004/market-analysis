@@ -5,9 +5,10 @@ import {
   Leaderboard,
   MoversTable,
   Panel,
+  Unavailable,
   WorldIndices,
 } from "@/components/panels";
-import { getLatestCalls, getLeaderboard, getMarketOverview, getMovers } from "@/lib/api";
+import { attempt, getLatestCalls, getLeaderboard, getMarketOverview, getMovers } from "@/lib/api";
 import { shortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -64,37 +65,44 @@ export default function Home() {
 }
 
 async function Indices() {
-  const data = await getMarketOverview().catch(() => null);
+  const res = await attempt(getMarketOverview());
   return (
     <Panel
       title="World indices"
       sub={
-        data
-          ? `as of ${new Date(data.asOf).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata" })} IST`
+        res.ok
+          ? `as of ${new Date(res.data.asOf).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata" })} IST`
           : "unavailable"
       }
     >
-      {data ? <WorldIndices indices={data.indices} /> : <Empty>API unavailable.</Empty>}
+      {res.ok ? <WorldIndices indices={res.data.indices} /> : <Unavailable error={res.error} />}
     </Panel>
   );
 }
 
 async function Movers() {
-  const data = await getMovers().catch(() => null);
+  const res = await attempt(getMovers());
+  if (!res.ok)
+    return (
+      <Panel title="NIFTY 50 movers">
+        <Unavailable error={res.error} />
+      </Panel>
+    );
+  const data = res.data;
   return (
-    <Panel title="NIFTY 50 movers" sub={data?.date ? shortDate(data.date) : ""}>
+    <Panel title="NIFTY 50 movers" sub={data.date ? shortDate(data.date) : ""}>
       <div className="grid grid-2" style={{ gap: 0 }}>
         <div className="panel-body tight">
           <div className="panel-head" style={{ color: "var(--up)" }}>
             Gainers
           </div>
-          <MoversTable rows={data?.gainers ?? []} compact />
+          <MoversTable rows={data.gainers} compact />
         </div>
         <div className="panel-body tight">
           <div className="panel-head" style={{ color: "var(--down)" }}>
             Losers
           </div>
-          <MoversTable rows={data?.losers ?? []} compact />
+          <MoversTable rows={data.losers} compact />
         </div>
       </div>
     </Panel>
@@ -103,19 +111,27 @@ async function Movers() {
 
 async function Signals() {
   const [distress, momentum] = await Promise.all([
-    getLeaderboard("distress_score", 8).catch(() => ({ rows: [] })),
-    getLeaderboard("customer_momentum_3m", 8).catch(() => ({ rows: [] })),
+    attempt(getLeaderboard("distress_score", 8)),
+    attempt(getLeaderboard("customer_momentum_3m", 8)),
   ]);
   return (
     <Panel title="Signals" sub={<a href="/signals">all →</a>}>
       <div className="grid grid-2" style={{ gap: 0 }}>
         <div className="panel-body tight">
           <div className="panel-head">Distress (DuPont)</div>
-          <Leaderboard kind="distress_score" rows={distress.rows} compact />
+          {distress.ok ? (
+            <Leaderboard kind="distress_score" rows={distress.data.rows} compact />
+          ) : (
+            <Unavailable error={distress.error} />
+          )}
         </div>
         <div className="panel-body tight">
           <div className="panel-head">Customer momentum 3M</div>
-          <Leaderboard kind="customer_momentum_3m" rows={momentum.rows} compact />
+          {momentum.ok ? (
+            <Leaderboard kind="customer_momentum_3m" rows={momentum.data.rows} compact />
+          ) : (
+            <Unavailable error={momentum.error} />
+          )}
         </div>
       </div>
     </Panel>
@@ -123,11 +139,11 @@ async function Signals() {
 }
 
 async function Calls() {
-  const data = await getLatestCalls(30).catch(() => ({ calls: [] }));
+  const res = await attempt(getLatestCalls(30));
   return (
     <Panel title="Latest broker calls" sub="Trendlyne">
       <div className="panel-body tight">
-        <LatestCallsTable calls={data.calls} />
+        {res.ok ? <LatestCallsTable calls={res.data.calls} /> : <Unavailable error={res.error} />}
       </div>
     </Panel>
   );
