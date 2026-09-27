@@ -55,6 +55,6 @@ Broker reports are aggregated from Trendlyne's public research listing. Each cal
 
 ## Known limitations
 
-- Trendlyne `reportUrl` alignment: the parser can pick a `/posts/` link from a neighbouring row (see `docs/plan.md`).
+- Trendlyne headlines are upstream data and occasionally name the wrong company; the stock link and `reportUrl` are row-aligned.
 - Relationship extraction is regex/cue based; recall on concalls is modest. A sentence-classifier is the natural upgrade.
 - Fundamentals come from Screener's consolidated tables; quarterly balance sheets are not available there.

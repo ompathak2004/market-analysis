@@ -45,7 +45,7 @@ Run without arguments to start the scheduler with all jobs. Redis locks make it 
 
 ## Next
 
-1. **Trendlyne report link alignment** (`packages/ingest/src/sources/trendlyne.ts`): take the `/research-reports/post/<SYMBOL>/…` or row-scoped `/posts/` link instead of the first `/posts/` link on the page; bump `TRENDLYNE_PARSER_VERSION`.
+1. **Report title and summary**: Trendlyne rows carry the report headline and a one-paragraph abstract (last cell); add `title`/`summary` columns to `analyst_calls`, parse them, bump `TRENDLYNE_PARSER_VERSION`, and show the headline in the ANR table. Note that Trendlyne's headline can name the wrong company (an ICICI Direct note on INDGN was titled "Centum Electronics"); the stock link and `/posts/` URL are row-aligned and correct.
 2. **Backfill**: `prices` for NIFTY500 (`cli.ts prices NIFTY500`), then `fundamentals` and `relationships` jobs repeatedly until `documents.fetched_at` is fresh for the universe; re-run `intel`.
 3. **Vercel**: deploy `apps/web` with `API_URL` pointing at the hosted API and `API_KEY`; the API must be reachable from Vercel (run `docker compose up api worker` on a VM or a container host).
 4. **Relationship recall**: add a sentence classifier (small LLM or fine-tuned model) behind `extractNamedMentions` to catch mentions without lexical cues; keep the regex path as a fast pre-filter.
