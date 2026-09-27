@@ -47,11 +47,17 @@ export async function loadActiveLinks(
         eq(relationshipEstimates.relationshipId, relationships.id),
         eq(
           relationshipEstimates.modelVersion,
-          sql`(select max(model_version) from relationship_estimates re where re.relationship_id = ${relationships.id})`,
+          sql`(select max(model_version) from relationship_estimates re where re.relationship_id = ${relationships.id} and re.as_of <= ${asOf})`,
         ),
       ),
     )
-    .where(and(lte(relationships.validFrom, asOf), gte(relationships.validTo, asOf)))
+    .where(
+      and(
+        lte(relationships.validFrom, asOf),
+        gte(relationships.validTo, asOf),
+        lte(relationshipEstimates.asOf, asOf),
+      ),
+    )
     .orderBy(desc(relationshipEstimates.asOf));
 
   const bySupplier = new Map<number, WeightedLink[]>();

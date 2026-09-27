@@ -1,4 +1,4 @@
-import { and, type Db, desc, eq, fundamentals, inArray, signals } from "@ma/db";
+import { and, type Db, desc, eq, fundamentals, inArray, lte, signals } from "@ma/db";
 import { loadActiveLinks } from "./momentum.js";
 import { loadCloses, shiftDays, totalReturn } from "./prices.js";
 import { dupont } from "./risk.js";
@@ -55,12 +55,24 @@ export async function eventImpact(
     db
       .selectDistinctOn([fundamentals.companyId])
       .from(fundamentals)
-      .where(and(inArray(fundamentals.companyId, ids), eq(fundamentals.periodType, "annual")))
+      .where(
+        and(
+          inArray(fundamentals.companyId, ids),
+          eq(fundamentals.periodType, "annual"),
+          lte(fundamentals.periodEnd, to),
+        ),
+      )
       .orderBy(fundamentals.companyId, desc(fundamentals.periodEnd)),
     db
       .selectDistinctOn([signals.companyId])
       .from(signals)
-      .where(and(inArray(signals.companyId, ids), eq(signals.kind, "distress_score")))
+      .where(
+        and(
+          inArray(signals.companyId, ids),
+          eq(signals.kind, "distress_score"),
+          lte(signals.asOf, to),
+        ),
+      )
       .orderBy(signals.companyId, desc(signals.asOf)),
   ]);
   const finById = new Map(fins.map((f) => [f.companyId, f]));

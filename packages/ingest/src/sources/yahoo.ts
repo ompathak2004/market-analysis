@@ -52,7 +52,7 @@ interface ChartResponse {
   };
 }
 
-export const toYahooSymbol = (nseSymbol: string): string => `${nseSymbol.replace(/&/g, "%26")}.NS`;
+export const toYahooSymbol = (nseSymbol: string): string => `${nseSymbol}.NS`;
 
 export class YahooSource {
   constructor(private readonly http: HttpClient) {}

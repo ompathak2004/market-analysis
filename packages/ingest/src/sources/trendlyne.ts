@@ -1,7 +1,7 @@
 import { parseIndianNumber } from "@ma/core";
 import { load } from "cheerio";
 
-export const TRENDLYNE_PARSER_VERSION = 1;
+export const TRENDLYNE_PARSER_VERSION = 2;
 
 export interface BrokerCall {
   nseSymbol: string | null;
@@ -65,7 +65,7 @@ export function parseTrendlyneReports(html: string): BrokerCall[] {
       targetPrice: parseIndianNumber($(tds[5]).text()),
       priceAtCall: parseIndianNumber($(tds[6]).text().trim().split(/\s+/)[0] ?? ""),
       upsidePct: parseIndianNumber($(tds[7]).text()),
-      reportUrl: postHref,
+      reportUrl: postHref ? new URL(postHref, "https://trendlyne.com").href : null,
     });
   });
   return calls;

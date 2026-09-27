@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { RedisClient } from "@ma/cache";
 import type { Logger } from "@ma/core";
 import { type Db, eq, ingestRuns } from "@ma/db";
@@ -10,6 +11,8 @@ export interface Job {
 }
 
 const IST_OFFSET_MS = 5.5 * 3_600_000;
+const RELEASE_IF_OWNER = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) end return 0`;
+const RENEW_IF_OWNER = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("pexpire", KEYS[1], ARGV[2]) end return 0`;
 
 export function istHour(now = new Date()): number {
   return new Date(now.getTime() + IST_OFFSET_MS).getUTCHours();
@@ -52,17 +55,21 @@ export class Scheduler {
       if (h < start || h >= end) return;
     }
     const lockKey = `job:lock:${job.name}`;
-    const acquired = await this.redis.set(
-      lockKey,
-      process.pid.toString(),
-      "PX",
-      Math.max(job.everyMs, 60_000),
-      "NX",
-    );
+    const token = randomUUID();
+    const ttlMs = Math.max(job.everyMs, 60_000);
+    const acquired = await this.redis.set(lockKey, token, "PX", ttlMs, "NX");
     if (!acquired) return;
+    const release = () => this.redis.eval(RELEASE_IF_OWNER, 1, lockKey, token);
     const lastKey = `job:last:${job.name}`;
     const last = Number((await this.redis.get(lastKey)) ?? 0);
-    if (Date.now() - last < job.everyMs * 0.9) return;
+    if (Date.now() - last < job.everyMs * 0.9) {
+      await release();
+      return;
+    }
+    const lease = setInterval(() => {
+      void this.redis.eval(RENEW_IF_OWNER, 1, lockKey, token, ttlMs.toString());
+    }, ttlMs / 3);
+    lease.unref();
 
     const [run] = await this.db
       .insert(ingestRuns)
@@ -89,7 +96,8 @@ export class Scheduler {
         .where(eq(ingestRuns.id, run?.id ?? -1));
       this.logger.error({ job: job.name, err }, "job failed");
     } finally {
-      await this.redis.del(lockKey);
+      clearInterval(lease);
+      await release();
     }
   }
 }
