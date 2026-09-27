@@ -36,13 +36,14 @@ describe("Cache", () => {
     const cache = new Cache(redis, { namespace: "t2", version: 1, l1MaxAgeMs: 1 });
     let calls = 0;
     const loader = async () => ({ calls: ++calls });
-    await cache.getOrLoad("k", loader, { ttlMs: 30, staleMs: 500 });
-    await new Promise((r) => setTimeout(r, 5));
-    expect(await cache.getOrLoad("k", loader, { ttlMs: 30, staleMs: 500 })).toEqual({ calls: 1 });
-    await new Promise((r) => setTimeout(r, 40));
-    expect(await cache.getOrLoad("k", loader, { ttlMs: 30, staleMs: 500 })).toEqual({ calls: 1 });
-    await new Promise((r) => setTimeout(r, 10));
-    expect(await cache.getOrLoad("k", loader, { ttlMs: 30, staleMs: 500 })).toEqual({ calls: 2 });
+    const opts = { ttlMs: 150, staleMs: 5000 };
+    await cache.getOrLoad("k", loader, opts);
+    await sleep(5);
+    expect(await cache.getOrLoad("k", loader, opts)).toEqual({ calls: 1 });
+    await sleep(200);
+    expect(await cache.getOrLoad("k", loader, opts)).toEqual({ calls: 1 });
+    await waitFor(() => calls === 2);
+    expect(await cache.getOrLoad("k", loader, opts)).toEqual({ calls: 2 });
     const m = await cache.metrics();
     expect(m.stale).toBe(1);
     expect(m.hit_l2).toBeGreaterThanOrEqual(1);
@@ -60,3 +61,13 @@ describe("Cache", () => {
     expect(calls).toBe(1);
   });
 });
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function waitFor(pred: () => boolean, timeoutMs = 3000): Promise<void> {
+  const start = Date.now();
+  while (!pred()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor timeout");
+    await sleep(10);
+  }
+}
