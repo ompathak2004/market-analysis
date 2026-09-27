@@ -34,11 +34,9 @@ export function buildApp(ctx: AppContext): FastifyInstance {
 
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof z.ZodError) {
-      return reply
-        .code(400)
-        .send({
-          error: { code: "BAD_REQUEST", message: "invalid request", details: err.flatten() },
-        });
+      return reply.code(400).send({
+        error: { code: "BAD_REQUEST", message: "invalid request", details: err.flatten() },
+      });
     }
     if (err instanceof AppError) {
       return reply
