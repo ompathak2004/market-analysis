@@ -77,8 +77,8 @@ export function CommandBar() {
   );
 
   const pick = (hit: Hit) => {
-    const first = value.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
-    go(isTab(first) ? `${first} ${hit.nseSymbol}` : hit.nseSymbol);
+    const tab = value.trim().toLowerCase().split(/\s+/).find(isTab);
+    go(tab ? `${tab} ${hit.nseSymbol}` : hit.nseSymbol);
   };
 
   return (
@@ -87,6 +87,11 @@ export function CommandBar() {
       <input
         ref={inputRef}
         className="cmd-input"
+        role="combobox"
+        aria-label="Command"
+        aria-expanded={open && hits.length > 0}
+        aria-controls="cmd-menu"
+        aria-activedescendant={hits[active] ? `cmd-hit-${hits[active].nseSymbol}` : undefined}
         value={value}
         placeholder="DES RELIANCE · ANR INFY · SPLC SONACOMS · MOV"
         spellCheck={false}
@@ -117,10 +122,13 @@ export function CommandBar() {
         }}
       />
       {open && (value.trim() || hits.length > 0) && (
-        <div className="cmd-menu">
+        <div className="cmd-menu" id="cmd-menu" role="listbox">
           {hits.map((h, i) => (
             <button
               type="button"
+              role="option"
+              aria-selected={i === active}
+              id={`cmd-hit-${h.nseSymbol}`}
               key={h.nseSymbol}
               className={`cmd-item${i === active ? " active" : ""}`}
               onMouseDown={(e) => {

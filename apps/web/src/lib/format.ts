@@ -18,8 +18,8 @@ export function crore(v: number | string | null | undefined): string {
 
 export function pct(v: number | null | undefined, digits = 2, signed = true): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  const s = `${Math.abs(v).toFixed(digits)}%`;
-  return signed ? (v > 0 ? `+${s}` : v < 0 ? `-${s}` : s) : s;
+  const s = `${v.toFixed(digits)}%`;
+  return signed && v > 0 ? `+${s}` : s;
 }
 
 export function signed(v: number | null | undefined, digits = 2): string {
@@ -46,11 +46,15 @@ export function shortDate(iso: string | Date | null | undefined): string {
     .toUpperCase();
 }
 
+const FISCAL_QUARTER: Record<string, number> = { "06": 1, "09": 2, "12": 3, "03": 4 };
+
 export function fyLabel(periodEnd: string, quarterly = false): string {
-  const [y, m] = periodEnd.split("-");
-  return m === "03" && !quarterly
-    ? `FY${(y ?? "").slice(2)}`
-    : `${MONTHS[Number(m) - 1] ?? ""}'${(y ?? "").slice(2)}`;
+  const [y = "", m = ""] = periodEnd.split("-");
+  const fy = m === "03" ? Number(y) : Number(y) + 1;
+  const q = FISCAL_QUARTER[m];
+  if (quarterly && q) return `Q${q} FY${String(fy).slice(2)}`;
+  if (!quarterly && m === "03") return `FY${y.slice(2)}`;
+  return `${MONTHS[Number(m) - 1] ?? ""}'${y.slice(2)}`;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

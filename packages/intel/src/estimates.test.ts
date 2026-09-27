@@ -22,6 +22,25 @@ describe("estimateRelationship", () => {
     expect(e.customerCostPct).toBeCloseTo(0.525, 1);
   });
 
+  it("caps disclosed and derived values at the customer's spend", () => {
+    const e = estimateRelationship(
+      {
+        disclosedPct: null,
+        disclosedValue: "900",
+        disclosureKind: "major_customer",
+        evidence: "",
+        confidence: 0.9,
+      },
+      supplier,
+      { periodEnd: "2026-03-31", revenue: 800, cogs: 500 },
+    );
+    expect(e.method).toBe("disclosed");
+    expect(e.valueCr).toBe(500);
+    expect(e.valueHighCr).toBe(500);
+    expect(e.customerCostPct).toBe(100);
+    expect(e.inputs.disclosedValueCr).toBe(900);
+  });
+
   it("uses mandated 10% prior for unquantified major customer mentions", () => {
     const e = estimateRelationship(
       {

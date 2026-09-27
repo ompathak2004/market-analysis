@@ -39,14 +39,35 @@ async function staleFundamentalIds(ctx: AppContext, limit: number): Promise<numb
   return rows.map((r) => r.id);
 }
 
-function tally(results: Array<Record<string, number> | number | null>): Record<string, number> {
-  const out: Record<string, number> = { items: results.length };
+type ItemStats = Record<string, number> | number | null;
+
+function sum(results: ItemStats[]): Record<string, number> {
+  const out: Record<string, number> = {};
   for (const r of results) {
     if (r == null) continue;
     if (typeof r === "number") out.total = (out.total ?? 0) + r;
     else for (const [k, v] of Object.entries(r)) out[k] = (out[k] ?? 0) + v;
   }
   return out;
+}
+
+async function forEachCompany(
+  ctx: AppContext,
+  ids: number[],
+  concurrency: number,
+  fn: (id: number) => Promise<ItemStats>,
+): Promise<Record<string, number>> {
+  const errors: unknown[] = [];
+  const results = await mapLimit(ids, concurrency, (id) =>
+    fn(id).catch((err: unknown) => {
+      errors.push(err);
+      ctx.logger.warn({ companyId: id, err }, "company sync failed");
+      return null;
+    }),
+  );
+  if (ids.length > 0 && errors.length === ids.length)
+    throw new Error(`all ${ids.length} items failed: ${String(errors[0])}`);
+  return { items: ids.length, failed: errors.length, ...sum(results) };
 }
 
 export function buildJobs(ctx: AppContext): Job[] {
@@ -62,7 +83,7 @@ export function buildJobs(ctx: AppContext): Job[] {
           ),
         );
         await ctx.api.invalidatePrefix("search:");
-        return tally(results);
+        return sum(results);
       },
     },
     {
@@ -71,12 +92,12 @@ export function buildJobs(ctx: AppContext): Job[] {
       activeHoursIst: [16, 24],
       run: async () => {
         const ids = await universeIds(ctx);
-        const results = await mapLimit(ids, concurrency, (id) =>
-          syncPrices(ctx, id, "1mo").catch(() => 0),
+        const stats = await forEachCompany(ctx, ids, concurrency, (id) =>
+          syncPrices(ctx, id, "1mo"),
         );
         await ctx.api.invalidatePrefix("prices:");
         await ctx.api.invalidatePrefix("movers:");
-        return tally(results);
+        return stats;
       },
     },
     {
@@ -84,14 +105,14 @@ export function buildJobs(ctx: AppContext): Job[] {
       everyMs: HOUR,
       run: async () => {
         const ids = await staleFundamentalIds(ctx, 40);
-        const results = await mapLimit(ids, 2, (id) =>
-          syncFundamentals(ctx, id)
-            .then((r) => (r ? { periods: r.periods, changed: r.changed ? 1 : 0 } : null))
-            .catch(() => null),
+        const stats = await forEachCompany(ctx, ids, 2, (id) =>
+          syncFundamentals(ctx, id).then((r) =>
+            r ? { periods: r.periods, changed: r.changed ? 1 : 0 } : null,
+          ),
         );
         await ctx.api.invalidatePrefix("financials:");
         await ctx.api.invalidatePrefix("company:");
-        return tally(results);
+        return stats;
       },
     },
     {
@@ -108,9 +129,9 @@ export function buildJobs(ctx: AppContext): Job[] {
       everyMs: 2 * HOUR,
       run: async () => {
         const ids = await universeIds(ctx);
-        const results = await mapLimit(ids, 1, (id) => syncAnnouncements(ctx, id).catch(() => 0));
+        const stats = await forEachCompany(ctx, ids, 1, (id) => syncAnnouncements(ctx, id));
         await ctx.api.invalidatePrefix("announcements:");
-        return tally(results);
+        return stats;
       },
     },
     {
@@ -119,7 +140,7 @@ export function buildJobs(ctx: AppContext): Job[] {
       run: async () => {
         const ids = await staleRelationshipIds(ctx, 15);
         const matcher = await loadAliasMatcher(ctx);
-        const results = await mapLimit(ids, 1, async (id) => {
+        const stats = await forEachCompany(ctx, ids, 1, async (id) => {
           const f = await syncFundamentals(ctx, id);
           if (!f) return null;
           const sources = [
@@ -130,7 +151,9 @@ export function buildJobs(ctx: AppContext): Job[] {
           return { documents: r.documents, relationships: r.relationships };
         });
         await ctx.api.invalidatePrefix("supply-chain:");
-        return tally(results);
+        await ctx.api.invalidatePrefix("signals:");
+        await ctx.api.invalidatePrefix("leaderboard:");
+        return stats;
       },
     },
     {

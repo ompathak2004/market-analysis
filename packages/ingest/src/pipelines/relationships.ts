@@ -171,7 +171,7 @@ export function periodEndFromLabel(label: string): string {
   const m = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(20\d{2})\b/i.exec(label);
   if (m) {
     const month = MONTHS.indexOf((m[1] as string).slice(0, 3).toLowerCase()) + 1;
-    return `${m[2]}-${String(month).padStart(2, "0")}-01`;
+    return isoDate(new Date(Date.UTC(Number(m[2]), month, 0)));
   }
   const fy = fiscalYearFromLabel(label);
   return fy ? `${fy}-03-31` : isoDate(new Date());

@@ -58,6 +58,7 @@ export function estimateRelationship(
 
   if (rel.disclosedValue != null) {
     const value = Number(rel.disclosedValue);
+    inputs.disclosedValueCr = value;
     return finish("disclosed", value, value, value, supplierRevenue, customerCogs, inputs);
   }
 
@@ -100,12 +101,11 @@ export function estimateRelationship(
 
   const spread = 1 - Math.min(0.9, Math.max(0.1, rel.confidence));
   const value = (supplierRevenue * priorPct) / 100;
-  const capped = customerCogs != null ? Math.min(value, customerCogs) : value;
   return finish(
     "estimated",
-    capped,
-    capped * (1 - spread),
-    customerCogs != null ? Math.min(capped * (1 + spread), customerCogs) : capped * (1 + spread),
+    value,
+    value * (1 - spread),
+    value * (1 + spread),
     supplierRevenue,
     customerCogs,
     inputs,
@@ -121,11 +121,13 @@ function finish(
   customerCogs: number | null,
   inputs: Record<string, unknown>,
 ): Estimate {
+  const cap = (v: number): number => (customerCogs != null ? Math.min(v, customerCogs) : v);
+  value = cap(value);
   return {
     method,
     valueCr: round2(value),
-    valueLowCr: round2(low),
-    valueHighCr: round2(high),
+    valueLowCr: round2(cap(low)),
+    valueHighCr: round2(cap(high)),
     supplierRevenuePct: supplierRevenue ? round2((value / supplierRevenue) * 100) : null,
     customerCostPct: customerCogs ? round2((value / customerCogs) * 100) : null,
     inputs,

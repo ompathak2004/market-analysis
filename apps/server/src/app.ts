@@ -26,7 +26,7 @@ export function buildApp(ctx: AppContext): FastifyInstance {
   app.addHook("onRequest", async (req, reply) => {
     if (req.url === "/health" || req.method === "OPTIONS") return;
     if (req.headers["x-api-key"] !== ctx.config.API_KEY) {
-      reply
+      return reply
         .code(401)
         .send({ error: { code: "UNAUTHORIZED", message: "missing or invalid x-api-key" } });
     }

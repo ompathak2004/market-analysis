@@ -1,5 +1,5 @@
 import { sha256 } from "@ma/core";
-import { analystCalls, and, companies, desc, eq, inArray, lt } from "@ma/db";
+import { analystCalls, and, companies, desc, eq, inArray, lt, sql } from "@ma/db";
 import type { IngestContext } from "../context.js";
 import {
   type BrokerCall,
@@ -45,6 +45,7 @@ export async function syncAnalystCalls(
     .where(inArray(companies.nseSymbol, symbols));
   const idBySymbol = new Map(known.map((k) => [k.nseSymbol, k.id]));
 
+  calls.sort((a, b) => a.publishedAt.localeCompare(b.publishedAt));
   let inserted = 0;
   for (const call of calls) {
     const companyId = call.nseSymbol ? idBySymbol.get(call.nseSymbol) : undefined;
@@ -76,9 +77,17 @@ export async function syncAnalystCalls(
         source: "trendlyne",
         dedupeKey,
       })
-      .onConflictDoNothing()
-      .returning({ id: analystCalls.id });
-    inserted += res.length;
+      .onConflictDoUpdate({
+        target: analystCalls.dedupeKey,
+        set: {
+          action: sql`excluded.action`,
+          priorRating: sql`excluded.prior_rating`,
+          priorTargetPrice: sql`excluded.prior_target_price`,
+          reportUrl: sql`excluded.report_url`,
+        },
+      })
+      .returning({ inserted: sql<boolean>`(xmax = 0)` });
+    inserted += res.filter((r) => r.inserted).length;
   }
   ctx.logger.info({ fetched: calls.length, inserted }, "analyst calls synced");
   return { fetched: calls.length, inserted };
