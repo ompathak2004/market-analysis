@@ -80,7 +80,10 @@ export const companyAliases = pgTable(
       .references(() => companies.id, { onDelete: "cascade" }),
     alias: text("alias").notNull(),
   },
-  (t) => [primaryKey({ columns: [t.companyId, t.alias] }), index("company_aliases_alias_idx").on(t.alias)],
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.alias] }),
+    index("company_aliases_alias_idx").on(t.alias),
+  ],
 );
 
 export const indices = pgTable("indices", {
@@ -118,7 +121,10 @@ export const pricesDaily = pgTable(
     adjClose: real("adj_close"),
     volume: bigint("volume", { mode: "number" }),
   },
-  (t) => [primaryKey({ columns: [t.companyId, t.date] }), index("prices_daily_date_idx").on(t.date)],
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.date] }),
+    index("prices_daily_date_idx").on(t.date),
+  ],
 );
 
 export const fundamentals = pgTable(
@@ -181,9 +187,13 @@ export const relationships = pgTable(
   "relationships",
   {
     id: serial("id").primaryKey(),
-    supplierCompanyId: integer("supplier_company_id").references(() => companies.id, { onDelete: "set null" }),
+    supplierCompanyId: integer("supplier_company_id").references(() => companies.id, {
+      onDelete: "set null",
+    }),
     supplierName: text("supplier_name").notNull(),
-    customerCompanyId: integer("customer_company_id").references(() => companies.id, { onDelete: "set null" }),
+    customerCompanyId: integer("customer_company_id").references(() => companies.id, {
+      onDelete: "set null",
+    }),
     customerName: text("customer_name").notNull(),
     costBucket: costBucket("cost_bucket").notNull().default("UNKNOWN"),
     disclosedBy: disclosedBy("disclosed_by").notNull(),
@@ -195,7 +205,9 @@ export const relationships = pgTable(
     validTo: date("valid_to").notNull(),
     confidence: real("confidence").notNull(),
     evidence: text("evidence"),
-    sourceDocumentId: integer("source_document_id").references(() => documents.id, { onDelete: "set null" }),
+    sourceDocumentId: integer("source_document_id").references(() => documents.id, {
+      onDelete: "set null",
+    }),
     ...timestamps,
   },
   (t) => [
@@ -250,7 +262,9 @@ export const analystCalls = pgTable(
     reportUrl: text("report_url"),
     source: text("source").notNull(),
     dedupeKey: text("dedupe_key").notNull(),
-    sourceDocumentId: integer("source_document_id").references(() => documents.id, { onDelete: "set null" }),
+    sourceDocumentId: integer("source_document_id").references(() => documents.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamps.createdAt,
   },
   (t) => [

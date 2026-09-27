@@ -14,8 +14,6 @@
     "declaration": true,
     "sourceMap": true,
     "forceConsistentCasingInFileNames": true,
-    "customConditions": [
-      "@ma/source"
-    ]
+    "customConditions": ["@ma/source"]
   }
 }
