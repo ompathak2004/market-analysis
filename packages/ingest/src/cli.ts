@@ -1,0 +1,81 @@
+import { createRedis } from "@ma/cache";
+import { createLogger, loadConfig } from "@ma/core";
+import { closeDb, companies, createDb, eq, indexConstituents, indices } from "@ma/db";
+import { createIngestContext } from "./context.js";
+import { syncAnalystCalls } from "./pipelines/analysts.js";
+import { syncFundamentals } from "./pipelines/fundamentals.js";
+import { syncAnnouncements, syncPrices } from "./pipelines/market.js";
+import { extractRelationshipsForCompany, loadAliasMatcher } from "./pipelines/relationships.js";
+import { syncUniverse } from "./pipelines/universe.js";
+
+const config = loadConfig();
+const logger = createLogger("ingest-cli", config.LOG_LEVEL);
+const db = createDb(config.DATABASE_URL, 4);
+const redis = createRedis(config.REDIS_URL);
+const ctx = createIngestContext({ db, redis, config, logger });
+
+const [cmd, arg] = process.argv.slice(2);
+
+async function companyIdsFor(indexCode: string): Promise<number[]> {
+  const rows = await db
+    .select({ id: indexConstituents.companyId })
+    .from(indexConstituents)
+    .innerJoin(indices, eq(indices.id, indexConstituents.indexId))
+    .where(eq(indices.code, indexCode));
+  return rows.map((r) => r.id);
+}
+
+async function symbolId(symbol: string): Promise<number> {
+  const c = await db.query.companies.findFirst({ where: eq(companies.nseSymbol, symbol) });
+  if (!c) throw new Error(`unknown symbol ${symbol}`);
+  return c.id;
+}
+
+try {
+  switch (cmd) {
+    case "universe":
+      console.log(await syncUniverse(ctx, arg ?? "NIFTY50"));
+      break;
+    case "prices": {
+      const ids = arg?.startsWith("NIFTY")
+        ? await companyIdsFor(arg)
+        : [await symbolId(arg ?? "RELIANCE")];
+      for (const id of ids) console.log(id, await syncPrices(ctx, id, "2y"));
+      break;
+    }
+    case "fundamentals": {
+      const ids = arg?.startsWith("NIFTY")
+        ? await companyIdsFor(arg)
+        : [await symbolId(arg ?? "RELIANCE")];
+      for (const id of ids) console.log(id, await syncFundamentals(ctx, id));
+      break;
+    }
+    case "announcements":
+      console.log(await syncAnnouncements(ctx, await symbolId(arg ?? "RELIANCE")));
+      break;
+    case "analysts":
+      console.log(await syncAnalystCalls(ctx, Number(arg ?? 2)));
+      break;
+    case "relationships": {
+      const id = await symbolId(arg ?? "SONACOMS");
+      const f = await syncFundamentals(ctx, id);
+      const matcher = await loadAliasMatcher(ctx);
+      const sources = [
+        ...(f?.annualReports.slice(0, 2) ?? []).map((a) => ({
+          ...a,
+          kind: "annual_report" as const,
+        })),
+        ...(f?.concalls.slice(0, 4) ?? []).map((c) => ({ ...c, kind: "concall" as const })),
+      ];
+      console.log(await extractRelationshipsForCompany(ctx, id, sources, matcher));
+      break;
+    }
+    default:
+      console.log(
+        "usage: cli <universe|prices|fundamentals|announcements|analysts|relationships> [arg]",
+      );
+  }
+} finally {
+  await closeDb(db);
+  redis.disconnect();
+}
