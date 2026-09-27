@@ -51,7 +51,7 @@ export class DocumentStore {
       return { doc: doc as StoredDocument, changed: false, fromCache: false };
     }
 
-    fetched.content = fetched.content.replace(/\u0000/g, "");
+    fetched.content = fetched.content.replaceAll("\u0000", "");
     const hash = sha256(fetched.content);
     if (existing && existing.sha256 === hash) {
       const [doc] = await this.db
