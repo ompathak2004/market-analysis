@@ -88,6 +88,19 @@ importers:
         specifier: ^22.18.0
         version: 22.20.4
 
+  packages/intel:
+    dependencies:
+      '@ma/core':
+        specifier: workspace:*
+        version: link:../core
+      '@ma/db':
+        specifier: workspace:*
+        version: link:../db
+    devDependencies:
+      '@types/node':
+        specifier: ^22.18.0
+        version: 22.20.4
+
 packages:
 
   '@biomejs/biome@2.5.14':
