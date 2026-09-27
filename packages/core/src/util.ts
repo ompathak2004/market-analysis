@@ -1,0 +1,44 @@
+import { createHash } from "node:crypto";
+
+export const sha256 = (input: string | Uint8Array): string =>
+  createHash("sha256").update(input).digest("hex");
+
+export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+export function chunk<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+export async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i] as T, i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+export function parseIndianNumber(text: string): number | null {
+  const cleaned = text.replace(/[₹,\s]/g, "").replace(/^\((.*)\)$/, "-$1");
+  if (cleaned === "" || cleaned === "-" || cleaned === "--") return null;
+  const n = Number(cleaned.replace(/%$/, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+export const isoDate = (d: Date): string => d.toISOString().slice(0, 10);
+
+export function addYears(d: Date, years: number): Date {
+  const out = new Date(d);
+  out.setUTCFullYear(out.getUTCFullYear() + years);
+  return out;
+}
