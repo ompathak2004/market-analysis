@@ -11,6 +11,7 @@
     { "path": "/api/cron/moneycontrol", "schedule": "5,35 * * * *" },
     { "path": "/api/cron/broker-reports", "schedule": "*/15 * * * *" },
     { "path": "/api/cron/insights", "schedule": "*/10 * * * *" },
+    { "path": "/api/cron/broker-theses", "schedule": "25,55 * * * *" },
     { "path": "/api/cron/market-brief", "schedule": "30 3 * * 1-5" },
     { "path": "/api/cron/market-brief", "schedule": "20 10 * * 1-5" },
     { "path": "/api/cron/triage", "schedule": "7,22,37,52 * * * *" },
