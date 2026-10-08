@@ -64,8 +64,28 @@ describe("digest grounding", () => {
     expect(digestViolations(d, input).map((v) => [v.path, v.reason])).toEqual([
       [["consensusRead"], "uncited"],
       [["byBroker", 0, "says"], "ungrounded"],
+      [["divergence", "description"], "uncited"],
+      [["targetDispersion", "read"], "uncited"],
       [["revisionMomentum", "read"], "uncited"],
     ]);
+  });
+
+  it("grounds precomputed figures in the evidence they derive from", () => {
+    const d = finalizeDigest(
+      raw({
+        targetDispersion: {
+          low: 0,
+          high: 0,
+          mean: 0,
+          spreadPct: 0,
+          read: "Targets span 47.6% around a ₹2,100 mean.",
+        },
+      }),
+      input,
+    );
+    expect(digestViolations(d, input)).toEqual([]);
+    const brokerOnly = finalizeDigest(raw({ evidence: ["brk:11"] }), input);
+    expect(digestViolations(brokerOnly, input).map((v) => v.numbers)).toEqual([[22, 72.7], [3.1]]);
   });
 
   it("rejects the digest when no broker view survives", () => {

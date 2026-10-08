@@ -121,8 +121,13 @@ export function finalizeDigest(raw: BrokerDigest, input: DigestInput): BrokerDig
   };
 }
 
+const digestSections = (input: DigestInput): Record<string, unknown> => ({
+  ...Object.fromEntries(input.brokers.map((b) => [b.evidenceId, input.computed])),
+  ...(input.consensus ? { cns: [input.consensus, input.computed] } : {}),
+});
+
 export const digestViolations = (digest: BrokerDigest, input: DigestInput): Violation[] =>
-  validateClaims(digest, input, { known: digestKnown(input) });
+  validateClaims(digest, input, { known: digestKnown(input), sections: digestSections(input) });
 
 export function groundDigest(
   digest: BrokerDigest,

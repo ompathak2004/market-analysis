@@ -4,6 +4,7 @@ import {
   describeViolations,
   dropViolations,
   extractTokens,
+  isAvailabilityStatement,
   isGrounded,
   type NumberToken,
   sanitizeEvidence,
@@ -59,32 +60,47 @@ describe("isGrounded", () => {
   const cited = (id: string) => pools.byId.get(id) ?? [];
 
   it("matches values after rounding in the global pool", () => {
-    expect(isGrounded(token("1,750"), [], pools.global)).toBe(true);
-    expect(isGrounded(token("42%"), [], pools.global)).toBe(true);
-    expect(isGrounded(token("22"), [], pools.global)).toBe(true);
+    expect(isGrounded(token("1,750"), pools.global, false)).toBe(true);
+    expect(isGrounded(token("42%"), pools.global, false)).toBe(true);
+    expect(isGrounded(token("22"), pools.global, false)).toBe(true);
   });
 
   it("allows 1% tolerance only against cited evidence", () => {
-    expect(isGrounded(token("₹2,300"), cited("brk:1"), pools.global)).toBe(true);
-    expect(isGrounded(token("₹2,300"), [], pools.global)).toBe(false);
-    expect(isGrounded(token("₹2,300"), cited("px"), pools.global)).toBe(false);
+    expect(isGrounded(token("₹2,300"), cited("brk:1"), true)).toBe(true);
+    expect(isGrounded(token("₹2,300"), pools.global, false)).toBe(false);
+    expect(isGrounded(token("₹2,300"), cited("px"), true)).toBe(false);
   });
 
   it("preserves sign", () => {
-    expect(isGrounded(token("down 4.2%"), [], pools.global)).toBe(true);
-    expect(isGrounded(token("-4.2%"), [], pools.global)).toBe(true);
-    expect(isGrounded(token("+4.2%"), [], pools.global)).toBe(false);
+    expect(isGrounded(token("down 4.2%"), pools.global, false)).toBe(true);
+    expect(isGrounded(token("-4.2%"), pools.global, false)).toBe(true);
+    expect(isGrounded(token("+4.2%"), pools.global, false)).toBe(false);
   });
 
   it("rejects fabricated figures that used to be exempt", () => {
     for (const s of ["10% growth", "₹200 Cr", "12", "3 brokers", "100%", "50"])
-      expect(isGrounded(token(s), [], pools.global)).toBe(false);
+      expect(isGrounded(token(s), pools.global, false)).toBe(false);
   });
 
   it("does not match a percent against an amount", () => {
     const p = buildPools({ text: "Order worth ₹15 crore" });
-    expect(isGrounded(token("15%"), [], p.global)).toBe(false);
-    expect(isGrounded(token("₹15 Cr"), [], p.global)).toBe(true);
+    expect(isGrounded(token("15%"), p.global, false)).toBe(false);
+    expect(isGrounded(token("₹15 Cr"), p.global, false)).toBe(true);
+  });
+
+  it("scopes alt-data signal figures to the evidence they derive from", () => {
+    const p = buildPools({
+      evidence: [{ id: "px", kind: "source", label: "Daily prices", url: null }],
+      travel: [
+        {
+          kind: "travel_legs_7d",
+          value: 6,
+          inputs: { read: "6 legs", evidence: [{ kind: "leg", id: 41, label: "BOM-DEL" }] },
+        },
+      ],
+    });
+    expect(isGrounded(token("6"), p.byId.get("leg:41") ?? [], true)).toBe(true);
+    expect(p.byId.has("px")).toBe(false);
   });
 });
 
@@ -110,7 +126,7 @@ describe("validateClaims", () => {
         ],
       },
       { revenueYoyPct: 14.3 },
-      { known },
+      { known, sections: { fin: { revenueYoyPct: 14.3 } } },
     );
     expect(out).toEqual([
       {
@@ -140,7 +156,7 @@ describe("validateClaims", () => {
     ]);
   });
 
-  it("flags figures in a narrative section with no valid citation", () => {
+  it("flags every sentence in a narrative section with no valid citation", () => {
     const out = validateClaims(
       { valuation: { read: "Trades at 25x. Cheap.", evidence: [] } },
       { pe: 25 },
@@ -148,8 +164,89 @@ describe("validateClaims", () => {
     );
     expect(out).toEqual([
       { path: ["valuation", "read"], sentence: "Trades at 25x.", numbers: [25], reason: "uncited" },
+      { path: ["valuation", "read"], sentence: "Cheap.", numbers: [], reason: "uncited" },
     ]);
     expect(describeViolations(out)).toContain("cites no valid id");
+  });
+
+  it("rejects uncited narrative claims without numbers", () => {
+    const out = validateClaims(
+      {
+        verdict: {
+          label: "constructive",
+          oneLiner: "The company won a major export contract.",
+          evidence: ["brk:404"],
+        },
+        divergence: { description: "Brokers split on export margins.", bearCase: null },
+        headline: "Banks led the market.",
+        evidence: [],
+      },
+      {},
+      { known },
+    );
+    expect(out.map((v) => [v.path, v.reason, v.sentence])).toEqual([
+      [["verdict", "oneLiner"], "uncited", "The company won a major export contract."],
+      [["divergence", "description"], "uncited", "Brokers split on export margins."],
+      [["headline"], "uncited", "Banks led the market."],
+    ]);
+  });
+
+  it("accepts explicit availability statements without a citation", () => {
+    const out = validateClaims(
+      {
+        valuation: { read: "Valuation read not available.", evidence: [] },
+        consensusRead: "No broker coverage available.",
+        targetDispersion: { read: "Not enough targets to measure dispersion." },
+        travel: { read: "Data unavailable.", evidence: [] },
+        notableCalls: ["No broker coverage."],
+        revisionMomentum: { direction: "flat", read: "" },
+        evidence: [],
+      },
+      {},
+      { known },
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("still requires grounding for figures inside availability statements", () => {
+    const out = validateClaims(
+      { read: "Data for 25% of customers is not available.", evidence: [] },
+      {},
+      { known },
+    );
+    expect(out.map((v) => v.reason)).toEqual(["uncited"]);
+  });
+
+  it("rejects a cited figure that exists only in other evidence", () => {
+    const inputs = { shareholding: { promoterPct: 25 }, price: { last: 1_750 } };
+    const sections = { fin: { revenue: 12_000 }, shp: inputs.shareholding, px: inputs.price };
+    const out = validateClaims(
+      { thesis: [{ point: "Revenue grew 25%.", evidence: ["fin"] }] },
+      inputs,
+      { known: new Set(["fin", "shp", "px"]), sections },
+    );
+    expect(out).toEqual([
+      {
+        path: ["thesis", 0, "point"],
+        sentence: "Revenue grew 25%.",
+        numbers: [25],
+        reason: "ungrounded",
+      },
+    ]);
+    const shp = validateClaims(
+      { thesis: [{ point: "Promoters hold 25%.", evidence: ["shp"] }] },
+      inputs,
+      { known: new Set(["fin", "shp", "px"]), sections },
+    );
+    expect(shp).toEqual([]);
+  });
+
+  it("uses the global pool only for claims that carry no citation field", () => {
+    const inputs = { shareholding: { promoterPct: 25 } };
+    expect(validateClaims({ uncertainty: ["Promoters hold 25%."] }, inputs, { known })).toEqual([]);
+    expect(
+      validateClaims({ read: "Promoters hold 25%.", evidence: ["fin"] }, inputs, { known }),
+    ).toHaveLength(1);
   });
 
   it("rejects fabricated growth and amounts", () => {
@@ -172,6 +269,34 @@ describe("validateClaims", () => {
     });
     expect(ok).toEqual([]);
     expect(wrong).toHaveLength(1);
+  });
+});
+
+describe("isAvailabilityStatement", () => {
+  it("matches short absence statements", () => {
+    for (const s of [
+      "No broker coverage available.",
+      "Data unavailable.",
+      "Valuation read not available.",
+      "Supply-chain data is not available for this company.",
+      "Not enough targets to measure dispersion.",
+      "Insufficient data.",
+      "Peer data missing.",
+      "No travel data",
+    ])
+      expect(isAvailabilityStatement(s)).toBe(true);
+  });
+
+  it("does not exempt factual claims", () => {
+    for (const s of [
+      "The company won a major export contract.",
+      "No major order was announced.",
+      "No notable broker calls.",
+      "Revenue grew but margin data is unavailable.",
+      "The company won a big export contract and data is unavailable.",
+      "Export orders, though data unavailable.",
+    ])
+      expect(isAvailabilityStatement(s)).toBe(false);
   });
 });
 

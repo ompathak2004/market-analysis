@@ -39,7 +39,8 @@ export function modelView(inputs: CompanyInputs) {
 const nullIfBlank = (v: string | null) => (v?.trim() ? v : null);
 
 export const briefSections = (inputs: CompanyInputs): Record<string, unknown> => ({
-  px: inputs.price,
+  px: inputs.price ? { ...inputs.price, marketCapCr: inputs.company.marketCapCr } : null,
+  prev: inputs.previousBrief,
   fin: inputs.fundamentals,
   shp: inputs.shareholding,
   cns: inputs.consensus,

@@ -162,6 +162,35 @@ describe("applyViolations", () => {
     expect(out && briefViolations(out, inputs)).toEqual([]);
   });
 
+  it("drops uncited narrative without numbers and lowers confidence", () => {
+    const brief = briefFixture({
+      verdict: {
+        score: 71,
+        label: "constructive",
+        confidence: 0.66,
+        oneLiner: "The company won a major export contract.",
+        evidence: [],
+      },
+      valuation: {
+        read: "Re-rating looks likely.",
+        vsPeers: "Cheaper than peers.",
+        vsConsensus: null,
+        evidence: [],
+      },
+    });
+    const { violations } = finalizeBrief(brief, inputs);
+    expect(violations.map((v) => [v.path, v.reason])).toEqual([
+      [["verdict", "oneLiner"], "uncited"],
+      [["valuation", "read"], "uncited"],
+      [["valuation", "vsPeers"], "uncited"],
+    ]);
+    const out = applyViolations(brief, violations, inputs);
+    expect(out?.verdict.oneLiner).toBe(briefFixture().thesis[0]?.point);
+    expect(out?.verdict.confidence).toBe(0.56);
+    expect(out?.valuation).toMatchObject({ read: "Valuation read not available.", vsPeers: null });
+    expect(out && briefViolations(out, inputs)).toEqual([]);
+  });
+
   it("re-checks the cleaned brief and rejects anything still ungrounded", () => {
     const brief = briefFixture({
       thesis: [...briefFixture().thesis, { point: "Margin hits 41%.", evidence: ["fin"] }],

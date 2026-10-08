@@ -96,6 +96,14 @@ export function extractTokens(text: string): NumberToken[] {
   return out;
 }
 
+const evidenceRef = (e: unknown): string[] => {
+  if (typeof e === "string") return [e];
+  const ref = e as { kind?: unknown; id?: unknown } | null;
+  return typeof ref?.kind === "string" && (typeof ref.id === "string" || typeof ref.id === "number")
+    ? [`${ref.kind}:${ref.id}`]
+    : [];
+};
+
 export interface EvidencePools {
   global: PoolEntry[];
   byId: Map<string, PoolEntry[]>;
@@ -131,9 +139,8 @@ export function buildPools(
       const o = v as Record<string, unknown>;
       const ids = [
         ...(typeof o.evidenceId === "string" ? [o.evidenceId] : []),
-        ...(Array.isArray(o.evidence)
-          ? o.evidence.filter((id): id is string => typeof id === "string")
-          : []),
+        // The root evidence list is the id catalogue, not a citation for the whole input.
+        ...(Array.isArray(o.evidence) && v !== inputs ? o.evidence.flatMap(evidenceRef) : []),
       ];
       const scoped = ids.length ? [...targets, ...ids.map(listFor)] : targets;
       for (const [k, x] of Object.entries(o)) if (k !== "evidence") walk(x, k, scoped);
@@ -157,12 +164,8 @@ function matches(t: NumberToken, e: PoolEntry, tolerant: boolean): boolean {
   return tolerant && Math.sign(x) === Math.sign(n) && Math.abs(x - n) <= Math.abs(n) * 0.01;
 }
 
-export function isGrounded(
-  t: NumberToken,
-  cited: readonly PoolEntry[],
-  global: readonly PoolEntry[],
-): boolean {
-  return cited.some((e) => matches(t, e, true)) || global.some((e) => matches(t, e, false));
+export function isGrounded(t: NumberToken, pool: readonly PoolEntry[], tolerant: boolean): boolean {
+  return pool.some((e) => matches(t, e, tolerant));
 }
 
 export function splitSentences(text: string): string[] {
@@ -177,6 +180,36 @@ const claimText = (o: Record<string, unknown>): string => {
   return typeof text === "string" ? text : "";
 };
 
+const NON_NARRATIVE_KEYS: ReadonlySet<string> = new Set([
+  "label",
+  "severity",
+  "when",
+  "direction",
+  "stance",
+  "broker",
+]);
+
+const WORD = "[\\p{L}\\p{N}'’/&-]+";
+const TAIL = `(?:\\s+(?:for|in|on|from|at|to)(?:\\s+${WORD}){1,4})?`;
+const CONJUNCTION =
+  /\b(?:and|but|while|although|though|whereas|because|since|after|despite|however|as)\b/i;
+const AVAILABILITY = [
+  new RegExp(
+    `^(?:${WORD}\\s+){0,5}(?:(?:is|are|was|were)\\s+)?(?:not\\s+(?:yet\\s+)?(?:available|disclosed|reported|tracked)|unavailable|missing)${TAIL}$`,
+    "iu",
+  ),
+  new RegExp(
+    `^no\\s+(?:${WORD}\\s+){0,5}(?:available|coverage|data|disclosed|reported|tracked)${TAIL}$`,
+    "iu",
+  ),
+  new RegExp(`^(?:not\\s+enough|insufficient)(?:\\s+${WORD}){1,7}$`, "iu"),
+];
+
+export function isAvailabilityStatement(sentence: string): boolean {
+  const s = sentence.replace(/[.!;]+$/, "").trim();
+  return !CONJUNCTION.test(s) && AVAILABILITY.some((re) => re.test(s));
+}
+
 export const NO_EVIDENCE: ReadonlySet<string> = new Set();
 
 export interface ClaimCheck {
@@ -188,15 +221,17 @@ export function validateClaims(output: unknown, inputs: unknown, check: ClaimChe
   const pools = buildPools(inputs, check.sections);
   const out: Violation[] = [];
   const checkText = (text: string, path: JsonPath, cited: string[] | null) => {
-    const citedPool = cited ? cited.flatMap((id) => pools.byId.get(id) ?? []) : [];
+    const pool = cited ? cited.flatMap((id) => pools.byId.get(id) ?? []) : pools.global;
+    const key = [...path].reverse().find((k) => typeof k === "string");
+    const narrative = key == null || !NON_NARRATIVE_KEYS.has(key);
     for (const sentence of splitSentences(text)) {
       const tokens = extractTokens(sentence);
-      if (!tokens.length) continue;
       if (cited && !cited.length) {
-        out.push({ path, sentence, numbers: tokens.map((t) => t.value), reason: "uncited" });
+        if (tokens.length || (narrative && !isAvailabilityStatement(sentence)))
+          out.push({ path, sentence, numbers: tokens.map((t) => t.value), reason: "uncited" });
         continue;
       }
-      const bad = tokens.filter((t) => !isGrounded(t, citedPool, pools.global));
+      const bad = tokens.filter((t) => !isGrounded(t, pool, cited != null));
       if (bad.length)
         out.push({ path, sentence, numbers: bad.map((t) => t.value), reason: "ungrounded" });
     }
