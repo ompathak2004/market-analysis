@@ -1,26 +1,34 @@
+import { NotFoundError } from "@ma/core";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
-import {
-  AnalystsTab,
-  ChartTab,
-  DescriptionTab,
-  FinancialsTab,
-  NewsTab,
-  SupplyChainTab,
-} from "@/components/company-tabs";
-import { Chg } from "@/components/panels";
-import { ApiError, getOverview } from "@/lib/api";
-import { isTab, TAB_TITLE, TABS } from "@/lib/commands";
-import { crore, num, tone } from "@/lib/format";
+import { Suspense } from "react";
+import { QuoteHeader, QuoteHeaderSkeleton, TabStrip } from "@/components/panes/company/header";
+import { type SearchParams, TabView } from "@/components/panes/company/index";
+import { Empty } from "@/components/ui/empty";
+import { Pane } from "@/components/ui/pane";
+import { isTab, TAB_TITLE } from "@/lib/commands";
+import { getContext } from "@/server/context";
+import { findCompany } from "@/server/queries";
 
 export const dynamic = "force-dynamic";
 
 type Params = Promise<{ symbol: string; tab: string }>;
-type Search = Promise<{ range?: string }>;
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { symbol, tab } = await params;
-  return { title: `${symbol.toUpperCase()} ${tab.toUpperCase()} · MA Terminal` };
+  const sym = decodeURIComponent(symbol).toUpperCase();
+  return { title: `${sym} ${isTab(tab) ? TAB_TITLE[tab] : tab.toUpperCase()} · MA Terminal` };
+}
+
+async function inUniverse(symbol: string): Promise<boolean> {
+  try {
+    await findCompany(getContext(), symbol);
+    return true;
+  } catch (err) {
+    if (err instanceof NotFoundError) return false;
+    throw err;
+  }
 }
 
 export default async function CompanyPage({
@@ -28,80 +36,30 @@ export default async function CompanyPage({
   searchParams,
 }: {
   params: Params;
-  searchParams: Search;
+  searchParams: Promise<SearchParams>;
 }) {
-  const { symbol: rawSymbol, tab } = await params;
-  const symbol = rawSymbol.toUpperCase();
+  const { symbol: raw, tab } = await params;
   if (!isTab(tab)) notFound();
-
-  let overview: Awaited<ReturnType<typeof getOverview>>;
-  try {
-    overview = await getOverview(symbol);
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      return (
-        <div className="panel">
-          <div className="err">
-            {symbol} is not in the tracked universe. Try <a href="/">HOME</a> or search with CTRL+K.
-          </div>
-        </div>
-      );
-    }
-    throw err;
-  }
-  const { company, quote } = overview;
-  const { range = "1y" } = await searchParams;
-
-  return (
-    <>
-      <div className="hdr">
-        <div>
-          <h1>
-            <span className="sym">{company.nseSymbol}</span>
-            {company.name}
-          </h1>
-          <div className="meta">
-            {[company.sector, company.industry].filter(Boolean).join(" · ") || "—"} · NSE
-            {company.isin ? ` · ${company.isin}` : ""} · MCAP {crore(company.marketCapCr)}
-          </div>
-        </div>
-        <div>
-          <div className={`price ${tone(quote?.change)}`}>{quote ? num(quote.price) : "—"}</div>
-          <div className="chg">
-            {quote ? (
-              <>
-                <span className={tone(quote.change)}>
-                  {quote.change != null
-                    ? `${quote.change > 0 ? "+" : ""}${num(quote.change)}`
-                    : "—"}
-                </span>{" "}
-                <Chg v={quote.changePct} />{" "}
-                <span className="faint">
-                  {quote.marketState === "REGULAR" ? "LIVE" : (quote.marketState ?? "")}
-                </span>
-              </>
-            ) : (
-              <span className="faint">no quote</span>
-            )}
-          </div>
-        </div>
+  const symbol = decodeURIComponent(raw).toUpperCase();
+  if (!(await inUniverse(symbol)))
+    return (
+      <div className="grid grid-solo">
+        <Pane id="missing" title="NOT IN UNIVERSE" meta={symbol}>
+          <Empty title={`${symbol} is not tracked`} hint="⌃K to search · Esc back">
+            The terminal covers the NSE universe loaded by the universe job. Search by name or
+            symbol, or go <Link href="/">HOME</Link>.
+          </Empty>
+        </Pane>
       </div>
-
-      <nav className="tabs">
-        {TABS.map((t, i) => (
-          <a key={t} href={`/c/${symbol}/${t}`} className={`tab${t === tab ? " active" : ""}`}>
-            <b>{i + 1}</b>
-            {t} <span className="faint">{TAB_TITLE[t]}</span>
-          </a>
-        ))}
-      </nav>
-
-      {tab === "des" && <DescriptionTab overview={overview} />}
-      {tab === "gp" && <ChartTab symbol={symbol} range={range} />}
-      {tab === "fa" && <FinancialsTab symbol={symbol} />}
-      {tab === "anr" && <AnalystsTab symbol={symbol} />}
-      {tab === "splc" && <SupplyChainTab symbol={symbol} overview={overview} />}
-      {tab === "news" && <NewsTab symbol={symbol} />}
-    </>
+    );
+  const sp = await searchParams;
+  return (
+    <div className="screen screen-company">
+      <Suspense fallback={<QuoteHeaderSkeleton symbol={symbol} />}>
+        <QuoteHeader symbol={symbol} />
+      </Suspense>
+      <TabStrip symbol={symbol} tab={tab} />
+      <TabView symbol={symbol} tab={tab} sp={sp} />
+    </div>
   );
 }
