@@ -1,0 +1,32 @@
+<!doctype html><html><body>
+<div class="tab-pane fade in active minht_350" id="strength">
+	<div class="swot_count"><strong>Strengths (13)</strong></div>
+	<ul class="swotfeatlist">
+		<li>High Growth Stock with Promoters increasing shareholding</li>
+		<li>Promoter Increasing Holding</li>
+	</ul>
+	<div class="common_lock">Unlock all 13 strengths</div>
+</div>
+<div class="tab-pane fade in minht_350" id="weakness">
+	<div class="swot_count"><strong>Weaknesses (4)</strong></div>
+	<ul class="swotfeatlist">
+		<li>FII/FPI decreased their shareholding last quarter</li>
+		<li>Near 52 Week Low</li>
+	</ul>
+</div>
+<div class="tab-pane fade in minht_350" id="opportunity">
+	<div class="swot_count"><strong>Opportunities (1)</strong></div>
+	<ul class="swotfeatlist">
+		<li>Companies with Price to Earnings (PE) less than average 3 Year PE, 5 Year PE and 10 Year PE </li>
+	</ul>
+</div>
+<div class="tab-pane fade in minht_350" id="threat">
+	<div class="swot_count"><strong>Threats (4)</strong></div>
+	<ul class="swotfeatlist">
+		<li>Below 200 DMA</li>
+		<li>Below 20 DMA</li>
+	</ul>
+	<script>trackSwot();</script>
+</div>
+<div id="unrelated"><p>Footer</p></div>
+</body></html>
