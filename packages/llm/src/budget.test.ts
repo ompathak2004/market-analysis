@@ -45,8 +45,8 @@ describe("LlmBudget", () => {
 
   it("refuses new work once the cap is reached", async () => {
     const b = budget(1_000);
-    await b.consume(1_000);
-    await expect(b.acquire()).rejects.toBeInstanceOf(LlmBudgetExceeded);
+    await b.reserve(1_000);
+    await expect(b.reserve(1)).rejects.toBeInstanceOf(LlmBudgetExceeded);
   });
 
   it("does not start an attempt that cannot finish before the job deadline", async () => {

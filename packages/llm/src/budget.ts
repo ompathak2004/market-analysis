@@ -87,12 +87,4 @@ export class LlmBudget {
     await this.redis.expire(reservation.key, TOKEN_KEY_TTL_S);
     return total;
   }
-
-  async acquire(): Promise<void> {
-    await this.reserve(0);
-  }
-
-  async consume(tokens: number): Promise<number> {
-    return this.settle({ key: LlmBudget.key(), tokens: 0 }, tokens);
-  }
 }

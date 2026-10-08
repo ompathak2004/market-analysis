@@ -1,6 +1,6 @@
-import { type Logger, sleep, UpstreamError } from "@ma/core";
+import { deadlineSignal, type Logger, remainingMs, sleep, UpstreamError } from "@ma/core";
 import type { z } from "zod";
-import type { LlmBudget } from "./budget.js";
+import type { LlmBudget, LlmReservation } from "./budget.js";
 import { LlmInvalidOutput, LlmPromptTooLarge } from "./errors.js";
 import { type JsonSchema, toStrictJsonSchema } from "./schema.js";
 
@@ -137,6 +137,7 @@ export class LlmClient {
     user: string,
     schema: JsonSchema,
   ): Promise<Completion> {
+    const maxOutputTokens = req.maxOutputTokens ?? 1_500;
     const body = JSON.stringify({
       model,
       messages: [
@@ -147,13 +148,14 @@ export class LlmClient {
         type: "json_schema",
         json_schema: { name: req.name, strict: true, schema },
       },
-      max_completion_tokens: req.maxOutputTokens ?? 1_500,
+      max_completion_tokens: maxOutputTokens,
       temperature: req.temperature ?? 0.2,
       ...(model.startsWith("gpt-oss") ? { reasoning_effort: "low" } : {}),
     });
+    const estimated = estimateTokens(req.system + user) + maxOutputTokens;
     let lastError = "";
     for (let attempt = 1; attempt <= HTTP_ATTEMPTS; attempt++) {
-      await this.opts.budget?.acquire();
+      const reservation = await this.opts.budget?.reserve(estimated);
       const started = Date.now();
       let res: Response;
       try {
@@ -164,22 +166,24 @@ export class LlmClient {
             "content-type": "application/json",
           },
           body,
-          signal: AbortSignal.timeout(this.opts.timeoutMs ?? 60_000),
+          signal: deadlineSignal(this.opts.timeoutMs ?? 60_000),
         });
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err);
         await this.failed(req.name, model, started);
-        if (attempt < HTTP_ATTEMPTS) await this.backoff(attempt, null);
+        if (!(await this.backoff(attempt, null))) break;
         continue;
       }
       if (res.status === 429 || res.status >= 500) {
         lastError = `status ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`;
+        await this.settle(reservation, 0);
         await this.failed(req.name, model, started);
-        if (attempt < HTTP_ATTEMPTS) await this.backoff(attempt, res.headers.get("retry-after"));
+        if (!(await this.backoff(attempt, res.headers.get("retry-after")))) break;
         continue;
       }
       if (!res.ok) {
         const text = await res.text().catch(() => "");
+        await this.settle(reservation, 0);
         await this.failed(req.name, model, started);
         throw new UpstreamError("cerebras", `status ${res.status}: ${text.slice(0, 300)}`, {
           model,
@@ -190,7 +194,7 @@ export class LlmClient {
       const latencyMs = Date.now() - started;
       const promptTokens = json.usage?.prompt_tokens ?? 0;
       const completionTokens = json.usage?.completion_tokens ?? 0;
-      await this.opts.budget?.consume(promptTokens + completionTokens);
+      await this.settle(reservation, promptTokens + completionTokens);
       const choice = json.choices?.[0];
       return {
         content: choice?.message?.content ?? "",
@@ -204,10 +208,18 @@ export class LlmClient {
     throw new UpstreamError("cerebras", lastError || "request failed", { model, name: req.name });
   }
 
-  private async backoff(attempt: number, retryAfter: string | null): Promise<void> {
+  private async backoff(attempt: number, retryAfter: string | null): Promise<boolean> {
+    if (attempt >= HTTP_ATTEMPTS) return false;
     const base = BACKOFF_MS[attempt - 1] ?? 3_000;
     const hinted = retryAfter ? Number(retryAfter) * 1_000 : 0;
-    await this.sleepImpl(Math.min(10_000, Math.max(base, Number.isFinite(hinted) ? hinted : 0)));
+    const wait = Math.min(10_000, Math.max(base, Number.isFinite(hinted) ? hinted : 0));
+    if (wait + (this.opts.timeoutMs ?? 60_000) > remainingMs()) return false;
+    await this.sleepImpl(wait);
+    return true;
+  }
+
+  private async settle(reservation: LlmReservation | undefined, actual: number): Promise<void> {
+    if (reservation) await this.opts.budget?.settle(reservation, actual);
   }
 
   private async failed(kind: string, model: string, started: number): Promise<void> {

@@ -1,6 +1,7 @@
-import { createLogger, UpstreamError } from "@ma/core";
+import { createLogger, UpstreamError, withDeadline } from "@ma/core";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import type { LlmBudget, LlmReservation } from "./budget.js";
 import { LlmClient, type LlmUsage } from "./client.js";
 import { LlmInvalidOutput, LlmPromptTooLarge } from "./errors.js";
 
@@ -9,7 +10,22 @@ const logger = createLogger("llm-test", "silent");
 
 type Reply = { status: number; content?: string; finish?: string };
 
-function harness(replies: Reply[]) {
+function fakeBudget() {
+  const log: Array<[string, number]> = [];
+  const budget = {
+    async reserve(tokens: number): Promise<LlmReservation> {
+      log.push(["reserve", tokens]);
+      return { key: "k", tokens };
+    },
+    async settle(r: LlmReservation, actual: number): Promise<number> {
+      log.push(["settle", actual - r.tokens]);
+      return 0;
+    },
+  } as unknown as LlmBudget;
+  return { budget, log };
+}
+
+function harness(replies: Reply[], budget?: LlmBudget) {
   const calls: Array<{ model: string; user: string; body: Record<string, unknown> }> = [];
   const usage: LlmUsage[] = [];
   const sleeps: number[] = [];
@@ -33,6 +49,7 @@ function harness(replies: Reply[]) {
     fallbackModel: "qwen-3.8-27b",
     logger,
     fetch: fetchMock,
+    budget: budget ?? null,
     sleep: async (ms) => {
       sleeps.push(ms);
     },
@@ -74,6 +91,29 @@ describe("LlmClient", () => {
   it("gives up after three transport failures", async () => {
     const h = harness([{ status: 500 }, { status: 502 }, { status: 503 }]);
     await expect(h.client.complete(req)).rejects.toBeInstanceOf(UpstreamError);
+  });
+
+  it("stops retrying when a backoff plus attempt would pass the job deadline", async () => {
+    const h = harness([{ status: 429 }, { status: 200, content: good }]);
+    await expect(
+      withDeadline(Date.now() + 30_000, () => h.client.complete(req)),
+    ).rejects.toBeInstanceOf(UpstreamError);
+    expect(h.calls).toHaveLength(1);
+    expect(h.sleeps).toEqual([]);
+  });
+
+  it("reserves the estimated spend up front and settles to actual usage", async () => {
+    const { budget, log } = fakeBudget();
+    const h = harness([{ status: 503 }, { status: 200, content: good }], budget);
+    await h.client.complete(req);
+    const reserved = log[0]?.[1] ?? 0;
+    expect(reserved).toBeGreaterThan(1_500);
+    expect(log).toEqual([
+      ["reserve", reserved],
+      ["settle", -reserved],
+      ["reserve", reserved],
+      ["settle", 120 - reserved],
+    ]);
   });
 
   it("does not retry other client errors", async () => {
