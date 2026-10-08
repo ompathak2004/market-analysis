@@ -5,17 +5,27 @@ import {
   altdataCoverage,
   altdataEvents,
   and,
+  asc,
   companies,
   corporateAircraft,
   corporateAircraftCompanies,
   eq,
+  gt,
   gte,
   inArray,
   isNull,
   ne,
+  or,
   sql,
 } from "@ma/db";
-import { legDedupeKey, segmentLegs, summarizeLeg } from "../altdata/legs.js";
+import {
+  type DerivedLeg,
+  legDedupeKey,
+  replayFrom,
+  segmentLegs,
+  summarizeLeg,
+  supersededFlights,
+} from "../altdata/legs.js";
 import type { IngestContext } from "../context.js";
 import {
   AIRCRAFT_OVERRIDES,
@@ -35,6 +45,9 @@ const LAST_KEY = "altdata:air:last";
 const TRIED_KEY = "altdata:adsbdb:tried";
 const MISMATCH_KEY = "altdata:adsbdb:mismatch";
 const DERIVE_CURSOR = "altdata:air:derive_from";
+const DERIVE_RESUME = "altdata:air:derive_resume";
+const REPLAY_MAX_MS = 48 * HOUR;
+const RESUME_TTL_S = 24 * 3600;
 const HEX_BATCH = 100;
 
 type Basis = SymbolLink[1];
@@ -540,15 +553,31 @@ export async function deriveAircraftFlights(
   opts: DeriveFlightsOptions = {},
 ): Promise<Record<string, number>> {
   const now = opts.now ?? new Date();
-  const cursorRaw = await ctx.redis.get(DERIVE_CURSOR);
-  const cursor = cursorRaw ? new Date(cursorRaw) : new Date(now.getTime() - 48 * HOUR);
-  const from = new Date(cursor.getTime() - 3 * HOUR);
+  const [cursorRaw, resumeRaw] = await Promise.all([
+    ctx.redis.get(DERIVE_CURSOR),
+    ctx.redis.get(DERIVE_RESUME),
+  ]);
+  const resume = parseResume(resumeRaw);
+  const cursor = cursorRaw ? new Date(cursorRaw) : new Date(now.getTime() - REPLAY_MAX_MS);
+  const seenFrom = new Date(cursor.getTime() - 3 * HOUR);
   const fleet = await ctx.db
     .select({ id: corporateAircraft.id, hex: corporateAircraft.icaoHex })
     .from(corporateAircraft)
-    .where(sql`${corporateAircraft.lastSeenAt} >= ${from.toISOString()}`);
+    .where(
+      and(
+        gt(corporateAircraft.id, resume?.afterId ?? 0),
+        or(
+          gte(corporateAircraft.lastSeenAt, seenFrom),
+          sql`exists (select 1 from ${aircraftFlights} f where f.aircraft_id = ${corporateAircraft.id}
+            and f.arrived_at is null and f.source in ('sampled', 'merged'))`,
+        ),
+      ),
+    )
+    .orderBy(asc(corporateAircraft.id));
   const stats = {
     aircraft: fleet.length,
+    processed: 0,
+    resumed: resume ? 1 : 0,
     samples: 0,
     legs: 0,
     open: 0,
@@ -556,22 +585,36 @@ export async function deriveAircraftFlights(
     removed: 0,
     opensky: 0,
   };
-  let nextCursor = now;
+  let lastId = resume?.afterId ?? 0;
   for (const a of fleet) {
     if (expired(opts, 30_000)) break;
+    const stored = await ctx.db
+      .select({
+        id: aircraftFlights.id,
+        dedupeKey: aircraftFlights.dedupeKey,
+        departedAt: aircraftFlights.departedAt,
+        arrivedAt: aircraftFlights.arrivedAt,
+      })
+      .from(aircraftFlights)
+      .where(
+        and(
+          eq(aircraftFlights.aircraftId, a.id),
+          inArray(aircraftFlights.source, ["sampled", "merged"]),
+          sql`coalesce(${aircraftFlights.arrivedAt}, ${aircraftFlights.departedAt}) >= ${new Date(now.getTime() - REPLAY_MAX_MS).toISOString()}`,
+        ),
+      );
+    const from = replayFrom(stored, now, REPLAY_MAX_MS);
     const rows = await ctx.db
       .select()
       .from(aircraftPositions)
       .where(and(eq(aircraftPositions.hex, a.hex), gte(aircraftPositions.ts, from)))
       .orderBy(aircraftPositions.ts);
     stats.samples += rows.length;
-    const legs = segmentLegs(rows, { now });
-    const keys: string[] = [];
-    for (const leg of legs) {
+    const derived: DerivedLeg[] = [];
+    for (const leg of segmentLegs(rows, { now })) {
       const sum = summarizeLeg(leg);
       const key = legDedupeKey(a.hex, sum.firstTs);
-      keys.push(key);
-      if (leg.open && sum.firstTs < nextCursor) nextCursor = sum.firstTs;
+      derived.push({ key, departedAt: sum.departedAt, endAt: sum.arrivedAt ?? sum.lastTs });
       const values = {
         aircraftId: a.id,
         hex: a.hex,
@@ -615,26 +658,44 @@ export async function deriveAircraftFlights(
       if (leg.open) stats.open++;
       if (sum.completeness === "full") stats.full++;
     }
-    const removed = await ctx.db
-      .delete(aircraftFlights)
-      .where(
-        and(
-          eq(aircraftFlights.aircraftId, a.id),
-          eq(aircraftFlights.source, "sampled"),
-          isNull(aircraftFlights.arrivedAt),
-          gte(aircraftFlights.departedAt, from),
-          keys.length ? sql`not ${inArray(aircraftFlights.dedupeKey, keys)}` : sql`true`,
-        ),
-      )
-      .returning({ id: aircraftFlights.id });
-    stats.removed += removed.length;
+    const superseded = supersededFlights(stored, derived, from);
+    if (superseded.length) {
+      await ctx.db.delete(aircraftFlights).where(inArray(aircraftFlights.id, superseded));
+      stats.removed += superseded.length;
+    }
+    lastId = a.id;
+    stats.processed++;
   }
-  await ctx.redis.set(DERIVE_CURSOR, nextCursor.toISOString());
+  if (stats.processed === fleet.length) {
+    await ctx.redis.set(DERIVE_CURSOR, (resume?.passStart ?? now).toISOString());
+    await ctx.redis.del(DERIVE_RESUME);
+  } else {
+    const next: DeriveResume = { passStart: resume?.passStart ?? now, afterId: lastId };
+    await ctx.redis.set(DERIVE_RESUME, JSON.stringify(next), "EX", RESUME_TTL_S);
+  }
   if (opts.opensky && (await opts.opensky.available())) {
     stats.opensky = await mergeOpenSky(ctx, opts.opensky, fleet, opts);
   }
   await updateHomeAirports(ctx);
   return stats;
+}
+
+interface DeriveResume {
+  passStart: Date;
+  afterId: number;
+}
+
+function parseResume(raw: string | null): DeriveResume | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as { passStart?: string; afterId?: number };
+    const passStart = v.passStart ? new Date(v.passStart) : null;
+    if (!passStart || Number.isNaN(passStart.getTime()) || !Number.isInteger(v.afterId))
+      return null;
+    return { passStart, afterId: v.afterId as number };
+  } catch {
+    return null;
+  }
 }
 
 async function mergeOpenSky(

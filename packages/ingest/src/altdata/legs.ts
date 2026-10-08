@@ -135,3 +135,45 @@ export function summarizeLeg(leg: Leg): LegSummary {
 export function legDedupeKey(hex: string, firstTs: Date): string {
   return `${hex}:${Math.floor(firstTs.getTime() / (30 * MINUTE))}`;
 }
+
+export interface StoredFlight {
+  id: number;
+  dedupeKey: string;
+  departedAt: Date | null;
+  arrivedAt: Date | null;
+}
+
+export interface DerivedLeg {
+  key: string;
+  departedAt: Date;
+  endAt: Date;
+}
+
+export function replayFrom(flights: readonly StoredFlight[], now: Date, maxMs: number): Date {
+  const floor = now.getTime() - maxMs;
+  const open = flights.flatMap((f) => (f.arrivedAt === null && f.departedAt ? [f.departedAt] : []));
+  const arrived = flights.flatMap((f) => (f.arrivedAt ? [f.arrivedAt] : []));
+  const start = open.length
+    ? Math.min(...open.map((d) => d.getTime()))
+    : arrived.length
+      ? Math.max(...arrived.map((d) => d.getTime()))
+      : floor;
+  return new Date(Math.max(floor, start));
+}
+
+export function supersededFlights(
+  stored: readonly StoredFlight[],
+  legs: readonly DerivedLeg[],
+  from: Date,
+): number[] {
+  const keys = new Set(legs.map((l) => l.key));
+  return stored
+    .filter((f) => {
+      if (keys.has(f.dedupeKey) || !f.departedAt) return false;
+      const start = f.departedAt.getTime();
+      if (f.arrivedAt === null && start >= from.getTime()) return true;
+      const end = (f.arrivedAt ?? f.departedAt).getTime();
+      return legs.some((l) => start <= l.endAt.getTime() && end >= l.departedAt.getTime());
+    })
+    .map((f) => f.id);
+}
