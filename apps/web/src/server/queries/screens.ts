@@ -135,7 +135,7 @@ function daysAgo(days: number): Date {
 
 export async function recentFilings(ctx: AppContext, limit = 40): Promise<FilingItem[]> {
   const rows = await ctx.api.getOrLoad(
-    `ui:filings:${limit}`,
+    `announcements:latest-ui:${limit}`,
     async () => {
       const rows = await ctx.db
         .select({
@@ -296,7 +296,7 @@ export async function peers(ctx: AppContext, symbol: string, limit = 12): Promis
   const company = await findCompany(ctx, symbol);
   if (!company.sector) return [];
   const rows = await ctx.api.getOrLoad(
-    `ui:peers:${company.id}:${limit}`,
+    `company:peers:${company.id}:${limit}`,
     async () => {
       const rows = await ctx.db.execute<{
         symbol: string;
