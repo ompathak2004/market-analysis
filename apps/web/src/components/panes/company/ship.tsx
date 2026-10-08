@@ -1,4 +1,4 @@
-import { median } from "@ma/intel";
+import { median } from "@ma/core";
 import { Suspense } from "react";
 import { Badge, Chip } from "@/components/ui/chip";
 import { DataTable } from "@/components/ui/data-table";

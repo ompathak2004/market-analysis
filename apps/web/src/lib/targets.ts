@@ -1,4 +1,4 @@
-import { median } from "@ma/intel";
+import { median } from "@ma/core";
 
 export interface TargetStats {
   count: number;

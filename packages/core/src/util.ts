@@ -39,6 +39,15 @@ export function parseIndianNumber(text: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+export function median(values: ReadonlyArray<number | null | undefined>): number | null {
+  const v = values
+    .filter((x): x is number => x != null && Number.isFinite(x))
+    .sort((a, b) => a - b);
+  if (!v.length) return null;
+  const mid = Math.floor(v.length / 2);
+  return v.length % 2 ? (v[mid] as number) : ((v[mid - 1] as number) + (v[mid] as number)) / 2;
+}
+
 export const isoDate = (d: Date): string => d.toISOString().slice(0, 10);
 
 export function addYears(d: Date, years: number): Date {
