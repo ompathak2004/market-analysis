@@ -1,4 +1,5 @@
 import { median } from "@ma/core";
+import { CHOKEPOINT_LOITER_MIN } from "@ma/intel";
 import { Suspense } from "react";
 import { Badge, Chip } from "@/components/ui/chip";
 import { DataTable } from "@/components/ui/data-table";
@@ -214,43 +215,73 @@ function CallsPane({ l, filter, base }: { l: CompanyLogistics; filter: CallFilte
   );
 }
 
-function ChokepointPane({ l }: { l: CompanyLogistics }) {
-  const rows = l.chokepointWatch;
+function CargoProxy({ rows, none }: { rows: Watch[]; none: string }) {
+  if (!rows.length) return <span className="dim">{none}</span>;
   const valued = rows.flatMap((r) => (r.estValueCr != null ? [r.estValueCr] : []));
-  const total = valued.reduce((s, v) => s + v, 0);
+  if (!valued.length) return <span className="muted">unavailable</span>;
+  return (
+    <>
+      <b className="accent">
+        ~₹
+        {num(
+          valued.reduce((s, v) => s + v, 0),
+          0,
+        )}{" "}
+        Cr
+      </b>
+      {valued.length < rows.length ? (
+        <span className="dim">
+          {" "}
+          partial · {valued.length}/{rows.length} valued
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+function orList(names: string[]) {
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : names.join("");
+}
+
+function ChokepointPane({ l }: { l: CompanyLogistics }) {
+  const rows = [...l.chokepointWatch].sort((a, b) => b.loiterMin - a.loiterMin);
+  const loitering = rows.filter((r) => r.loitering);
+  const moving = rows.filter((r) => !r.loitering);
+  const zones = l.coverage.chokepoints;
+  const covered = zones.filter((z) => z.covered);
+  const threshold = minutes(CHOKEPOINT_LOITER_MIN);
+  const basis = "Class-typical cargo × Brent/USDINR; not a manifest value";
   return (
     <Pane
       id="chokepoints"
       title="CHOKEPOINT EXPOSURE"
       area="chokepoints"
-      meta="destination-linked"
+      meta={`destination-linked · coverage ${covered.length}/${zones.length} zones`}
       foot={<output>Association is not confirmed ownership</output>}
     >
       {rows.length ? (
         <>
           <KeyValue
-            label="Delayed cargo"
+            label="Chokepoint cargo"
             groups={[
               {
                 items: [
                   {
                     label: "Delayed cargo proxy",
-                    title: "Class-typical cargo × Brent/USDINR; not a manifest value",
-                    value: valued.length ? (
-                      <>
-                        <b className="accent">~₹{num(total, 0)} Cr</b>
-                        {valued.length < rows.length ? (
-                          <span className="dim">
-                            {" "}
-                            partial · {valued.length}/{rows.length} valued
-                          </span>
-                        ) : null}
-                      </>
-                    ) : (
-                      <span className="muted">unavailable</span>
-                    ),
+                    title: `${basis}; vessels idle ≥ ${threshold}`,
+                    value: <CargoProxy rows={loitering} none="none loitering" />,
                   },
-                  { label: "Vessels loitering", value: String(rows.length) },
+                  {
+                    label: "In transit",
+                    title: `${basis}; vessels idle < ${threshold}`,
+                    value: <CargoProxy rows={moving} none="none moving" />,
+                  },
+                  {
+                    label: "Vessels loitering",
+                    title: `Idle ≥ ${threshold} inside a chokepoint`,
+                    value: String(loitering.length),
+                  },
+                  { label: "Vessels moving", value: String(moving.length) },
                 ],
               },
             ]}
@@ -278,7 +309,10 @@ function ChokepointPane({ l }: { l: CompanyLogistics }) {
                 sortable: true,
                 sortValue: (r) => r.loiterMin,
                 cell: (r) => (
-                  <span className={r.loiterMin >= 24 * 60 ? "accent" : ""}>
+                  <span
+                    className={r.loitering ? "accent" : "dim"}
+                    title={r.loitering ? "loitering" : "moving"}
+                  >
                     {minutes(r.loiterMin)}
                   </span>
                 ),
@@ -295,13 +329,19 @@ function ChokepointPane({ l }: { l: CompanyLogistics }) {
             ]}
           />
         </>
-      ) : l.coverage.factor7d > 0 ? (
+      ) : covered.length ? (
         <Empty title="No chokepoint loitering">
-          No inbound vessel bound for a mapped facility is idling at Hormuz, Bab-el-Mandeb or
-          Malacca.
+          No inbound vessel bound for a mapped facility is idling at{" "}
+          {orList(covered.map((z) => z.name))}.
+          {covered.length < zones.length
+            ? ` Coverage unavailable at ${zones.length - covered.length} other zones.`
+            : null}
         </Empty>
       ) : (
-        <NoAisCoverage what="chokepoint exposure" />
+        <Empty title="No observed loitering">
+          No observed loitering; chokepoint coverage unavailable in the last 7 days, so absence
+          cannot be confirmed.
+        </Empty>
       )}
     </Pane>
   );

@@ -22,8 +22,8 @@ import {
   type LogisticsSignalKind,
 } from "./types.js";
 
-const MIN_COVERAGE = 0.2;
-const LOITER_MIN = 360;
+export const LOGISTICS_MIN_COVERAGE = 0.2;
+export const CHOKEPOINT_LOITER_MIN = 360;
 const FILL_FACTOR = 0.95;
 const PRODUCT_CRACK = 1.15;
 const VALUE_BAND = 0.25;
@@ -285,7 +285,7 @@ export function computeLogisticsSignals(input: LogisticsInput): LogisticsResult 
       ? 0
       : Math.min(8, Math.max(0, Math.floor((nowMs - first) / (7 * DAY_MS)) - 1));
   };
-  const eligible = input.facilities.filter((f) => covFactor(f) >= MIN_COVERAGE);
+  const eligible = input.facilities.filter((f) => covFactor(f) >= LOGISTICS_MIN_COVERAGE);
   const factors = input.facilities.map(covFactor);
   const companyCoverage = factors.length
     ? round(factors.reduce((s, v) => s + v, 0) / factors.length, 3)
@@ -491,7 +491,7 @@ export function computeLogisticsSignals(input: LogisticsInput): LogisticsResult 
     const c = input.coverage.get(z);
     return { zone: z, factor: c ? coverageFactor(c.windows, c.windowsWithData) : 0, c };
   });
-  const anyChokeCoverage = chokeCov.some((c) => c.factor >= MIN_COVERAGE);
+  const anyChokeCoverage = chokeCov.some((c) => c.factor >= LOGISTICS_MIN_COVERAGE);
   if (input.inbound.length || anyChokeCoverage) {
     const rows = input.inbound.map((v) => {
       const dest = facilityById.get(v.destinationFacilityId);
@@ -504,8 +504,8 @@ export function computeLogisticsSignals(input: LogisticsInput): LogisticsResult 
     });
     const sumCr = (rs: typeof rows) => rs.reduce((s, r) => s + (r.value.estValueCr ?? 0), 0);
     const isValued = (rs: typeof rows) => rs.some((r) => r.value.estValueCr !== null);
-    const idle = rows.filter((r) => r.v.loiterMin >= LOITER_MIN);
-    const moving = rows.filter((r) => r.v.loiterMin < LOITER_MIN);
+    const idle = rows.filter((r) => r.v.loiterMin >= CHOKEPOINT_LOITER_MIN);
+    const moving = rows.filter((r) => r.v.loiterMin < CHOKEPOINT_LOITER_MIN);
     const focus = idle.length ? idle : rows;
     const focusCr = sumCr(focus);
     const valued = isValued(focus);

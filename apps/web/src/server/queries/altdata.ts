@@ -2,8 +2,10 @@ import { sql } from "@ma/db";
 import { airportByIcao, CHOKEPOINTS } from "@ma/ingest";
 import {
   type AltdataSignalInputs,
+  CHOKEPOINT_LOITER_MIN,
   cargoValueEstimate,
   coverageFactor,
+  LOGISTICS_MIN_COVERAGE,
   type Prices,
 } from "@ma/intel";
 import type { AppContext } from "../context";
@@ -128,7 +130,15 @@ export type ChokepointWatchView = {
   destination: string | null;
   destinationFacilitySlug: string | null;
   estValueCr: number | null;
+  loitering: boolean;
   lastPositionAt: string | null;
+};
+
+export type ChokepointCoverageView = {
+  slug: string;
+  name: string;
+  factor7d: number;
+  covered: boolean;
 };
 
 export type FleetVesselView = {
@@ -162,6 +172,7 @@ export type CompanyLogistics = {
     lastSampleAt: string | null;
     windows24h: number;
     windowsWithData24h: number;
+    chokepoints: ChokepointCoverageView[];
   };
   positionsForMap: MapPosition[];
   sources: string[];
@@ -360,7 +371,7 @@ export async function companyLogistics(
 ): Promise<CompanyLogistics | null> {
   const company = await findCompany(ctx, symbol);
   return ctx.api.getOrLoad(
-    `logistics:${company.nseSymbol}`,
+    `logistics:v2:${company.nseSymbol}`,
     async () => {
       const [facilityRows, fleetRows] = await Promise.all([
         ctx.db.execute<{
@@ -401,7 +412,8 @@ export async function companyLogistics(
       ]);
       if (!facilityRows.length && !fleetRows.length) return null;
       const fids = facilityRows.length ? facilityRows.map((f) => f.id) : [-1];
-      const zones = fids.map((id) => `facility:${id}`);
+      const facilityZones = fids.map((id) => `facility:${id}`);
+      const zones = [...facilityZones, ...CHOKEPOINTS.map((c) => `chokepoint:${c.slug}`)];
       const [coverage, weekly, active, calls, watch, positions, signalRows, prices] =
         await Promise.all([
           ctx.db.execute<{
@@ -438,7 +450,7 @@ export async function companyLogistics(
             from vessel_calls c join vessels v on v.mmsi = c.mmsi join facilities f on f.id = c.facility_id
             where c.facility_id in ${fids} and coalesce(c.left_at, c.entered_at) >= now() - interval '7 days'
             order by c.entered_at desc limit 50`),
-          ctx.db.execute<Omit<ChokepointWatchView, "estValueCr">>(sql`
+          ctx.db.execute<Omit<ChokepointWatchView, "estValueCr" | "loitering">>(sql`
             select distinct on (t.mmsi) t.mmsi, v.name, v.class::text as class, v.size_class as "sizeClass",
               t.chokepoint, t.loiter_min as "loiterMin",
               coalesce(t.destination_at_entry, v.destination_raw) as destination,
@@ -458,12 +470,14 @@ export async function companyLogistics(
           altdataPrices(ctx),
         ]);
       const covByZone = new Map(coverage.map((c) => [c.zone, c]));
-      const factors = facilityRows.map((f) => {
-        const c = covByZone.get(`facility:${f.id}`);
+      const facilityCoverage = coverage.filter((c) => facilityZones.includes(c.zone));
+      const zoneFactor = (zone: string) => {
+        const c = covByZone.get(zone);
         return c ? coverageFactor(c.windows, c.windowsWithData) : 0;
-      });
+      };
+      const factors = facilityRows.map((f) => zoneFactor(`facility:${f.id}`));
       const commodityFor = new Map(facilityRows.map((f) => [f.slug, f.commodityIn]));
-      const lastDay = coverage
+      const lastDay = facilityCoverage
         .map((c) => c.lastDataDay)
         .filter((d): d is string => !!d)
         .sort()
@@ -496,6 +510,7 @@ export async function companyLogistics(
               { class: w.class, sizeClass: w.sizeClass, product },
               prices,
             ).estValueCr,
+            loitering: w.loiterMin >= CHOKEPOINT_LOITER_MIN,
           };
         }),
         fleet: fleetRows.length
@@ -512,8 +527,17 @@ export async function companyLogistics(
             ? Math.round((factors.reduce((s, v) => s + v, 0) / factors.length) * 1000) / 1000
             : 0,
           lastSampleAt: lastDay ?? null,
-          windows24h: coverage.reduce((s, c) => s + c.windows24h, 0),
-          windowsWithData24h: coverage.reduce((s, c) => s + c.windowsWithData24h, 0),
+          windows24h: facilityCoverage.reduce((s, c) => s + c.windows24h, 0),
+          windowsWithData24h: facilityCoverage.reduce((s, c) => s + c.windowsWithData24h, 0),
+          chokepoints: CHOKEPOINTS.map((c) => {
+            const factor7d = zoneFactor(`chokepoint:${c.slug}`);
+            return {
+              slug: c.slug,
+              name: c.name,
+              factor7d,
+              covered: factor7d >= LOGISTICS_MIN_COVERAGE,
+            };
+          }),
         },
         positionsForMap: positions.map((p) => ({ ...p })),
         sources: ["AISStream", "company filings", "Yahoo (Brent, USDINR)"],
