@@ -8,23 +8,10 @@ export function num(v: number | string | null | undefined, digits = 2): string {
   return digits === 0 ? inr0.format(n) : inr.format(Number(n.toFixed(digits)));
 }
 
-export function crore(v: number | string | null | undefined): string {
-  if (v == null) return "—";
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "—";
-  if (Math.abs(n) >= 100_000) return `${num(n / 100_000, 2)} L Cr`;
-  return `${num(n, 0)} Cr`;
-}
-
 export function pct(v: number | null | undefined, digits = 2, signed = true): string {
   if (v == null || !Number.isFinite(v)) return "—";
   const s = `${v.toFixed(digits)}%`;
   return signed && v > 0 ? `+${s}` : s;
-}
-
-export function signed(v: number | null | undefined, digits = 2): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v > 0 ? "+" : v < 0 ? "-" : ""}${num(Math.abs(v), digits)}`;
 }
 
 export type Tone = "pos" | "neg" | "neu";
@@ -83,18 +70,6 @@ export function istDateTime(v: string | Date | null | undefined): string {
   return `${shortDate(v)} ${istTime(v)}`;
 }
 
-export function relTime(v: string | Date | null | undefined, now = Date.now()): string {
-  if (!v) return "—";
-  const diff = Math.round((now - asDate(v).getTime()) / 1000);
-  const a = Math.abs(diff);
-  const suffix = diff >= 0 ? "ago" : "ahead";
-  if (a < 60) return "now";
-  if (a < 3600) return `${Math.floor(a / 60)}m ${suffix}`;
-  if (a < 86_400) return `${Math.floor(a / 3600)}h ${suffix}`;
-  if (a < 86_400 * 45) return `${Math.floor(a / 86_400)}d ${suffix}`;
-  return shortDate(v);
-}
-
 export function minutes(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   const h = Math.floor(v / 60);
@@ -150,7 +125,7 @@ export const ACTION_LABEL: Record<string, string> = {
   unknown: "—",
 };
 
-export const SIGNAL_LABEL: Record<string, string> = {
+const SIGNAL_LABEL: Record<string, string> = {
   customer_concentration_pct: "REV FROM >10% CUSTOMERS",
   customer_momentum_1m: "CUST MOM 1M",
   customer_momentum_2m: "CUST MOM 2M",
