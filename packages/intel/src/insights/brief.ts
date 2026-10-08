@@ -73,17 +73,25 @@ export function finalizeBrief(
     },
     supplyChain: { ...output.supplyChain, read: nullIfBlank(output.supplyChain.read) },
   };
-  const violations = validateClaims(brief, inputs, { known, sections: briefSections(inputs) });
-  return { brief, violations, removedEvidence: removed };
+  return { brief, violations: briefViolations(brief, inputs), removedEvidence: removed };
 }
+
+export const briefViolations = (brief: CompanyBriefDraft, inputs: CompanyInputs): Violation[] =>
+  validateClaims(brief, inputs, {
+    known: new Set(inputs.evidence.map((e) => e.id)),
+    sections: briefSections(inputs),
+  });
 
 export function applyViolations(
   brief: CompanyBriefDraft,
   violations: readonly Violation[],
+  inputs: CompanyInputs,
 ): CompanyBriefDraft | null {
   if (!violations.length) return brief;
   const { output, dropped } = dropViolations(brief, violations, BRIEF_ARRAYS);
   if (output.thesis.length < MIN_THESIS) return null;
+  const oneLiner = output.verdict.oneLiner.trim();
+  const lead = output.thesis[0];
   const cleaned: CompanyBriefDraft = {
     ...output,
     whatChanged: output.whatChanged.filter((c) => c.point.trim()),
@@ -93,7 +101,10 @@ export function applyViolations(
     ],
     verdict: {
       ...output.verdict,
-      oneLiner: output.verdict.oneLiner.trim() || (brief.thesis[0]?.point ?? "").slice(0, 240),
+      oneLiner: oneLiner || (lead?.point ?? "").slice(0, 240),
+      evidence: oneLiner
+        ? output.verdict.evidence
+        : [...new Set([...output.verdict.evidence, ...(lead?.evidence ?? [])])],
       confidence: Math.max(0, Math.round((output.verdict.confidence - 0.1) * 100) / 100),
     },
     valuation: {
@@ -109,7 +120,8 @@ export function applyViolations(
     },
     logistics: { ...output.logistics, read: nullIfBlank(output.logistics.read) },
   };
-  return companyBriefDraftSchema.safeParse(cleaned).success ? cleaned : null;
+  if (!companyBriefDraftSchema.safeParse(cleaned).success) return null;
+  return briefViolations(cleaned, inputs).length ? null : cleaned;
 }
 
 export const storedBrief = (draft: CompanyBriefDraft): CompanyBrief => ({
@@ -161,7 +173,7 @@ export async function generateCompanyBrief(
     log.info({ violations: result.violations.length }, "brief numbers not grounded, retrying");
     result = await ask(groundingFeedback(describeViolations(result.violations)));
   }
-  const brief = applyViolations(result.brief, result.violations);
+  const brief = applyViolations(result.brief, result.violations, inputs);
   if (!brief) {
     log.warn({ violations: result.violations.length }, "brief rejected after grounding");
     throw new LlmInvalidOutput(

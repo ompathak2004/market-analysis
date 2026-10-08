@@ -31,16 +31,29 @@ const marketSections = (inputs: MarketInputs): Record<string, unknown> => ({
   ...Object.fromEntries(inputs.indices.map((i) => [`idx:${i.code}`, i])),
 });
 
+const marketViolations = (brief: MarketBrief, inputs: MarketInputs): Violation[] =>
+  validateClaims(brief, inputs, {
+    known: new Set(inputs.evidence.map((e) => e.id)),
+    sections: marketSections(inputs),
+  });
+
 export function finalizeMarketBrief(
   raw: MarketBrief,
   inputs: MarketInputs,
 ): { brief: MarketBrief; violations: Violation[] } {
-  const known = new Set(inputs.evidence.map((e) => e.id));
-  const { output } = sanitizeEvidence(raw, known);
-  return {
-    brief: output,
-    violations: validateClaims(output, inputs, { known, sections: marketSections(inputs) }),
-  };
+  const { output } = sanitizeEvidence(raw, new Set(inputs.evidence.map((e) => e.id)));
+  return { brief: output, violations: marketViolations(output, inputs) };
+}
+
+export function groundMarketBrief(
+  brief: MarketBrief,
+  violations: readonly Violation[],
+  inputs: MarketInputs,
+): MarketBrief | null {
+  if (!violations.length) return brief;
+  const { output } = dropViolations(brief, violations, MARKET_ARRAYS);
+  if (!marketBriefSchema.safeParse(output).success) return null;
+  return marketViolations(output, inputs).length ? null : output;
 }
 
 export async function generateMarketBrief(
@@ -84,14 +97,8 @@ export async function generateMarketBrief(
   let result = await ask();
   if (result.violations.length)
     result = await ask(groundingFeedback(describeViolations(result.violations)));
-  let brief = result.brief;
-  if (result.violations.length) {
-    const dropped = dropViolations(brief, result.violations, MARKET_ARRAYS).output;
-    if (!marketBriefSchema.safeParse(dropped).success) {
-      throw new LlmInvalidOutput("market_brief", "fewer than 3 grounded bullets");
-    }
-    brief = dropped;
-  }
+  const brief = groundMarketBrief(result.brief, result.violations, inputs);
+  if (!brief) throw new LlmInvalidOutput("market_brief", "fewer than 3 grounded bullets");
   return writeCurrentInsight(ctx.db, {
     companyId: null,
     kind: "market_brief",

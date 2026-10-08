@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyViolations, finalizeBrief, modelView } from "./brief.js";
+import { applyViolations, briefViolations, finalizeBrief, modelView } from "./brief.js";
 import { briefFixture, companyFixture } from "./fixtures.js";
 import { VERDICT_BANDS, verdictLabelFor } from "./schemas.js";
 
@@ -95,34 +95,90 @@ describe("finalizeBrief", () => {
 });
 
 describe("applyViolations", () => {
+  const inputs = companyFixture();
+
   it("drops offending points, notes the removal and lowers confidence", () => {
     const brief = briefFixture({
       thesis: [
-        { point: "One 14.3%.", evidence: [] },
-        { point: "Two 20%.", evidence: [] },
-        { point: "Three 31%.", evidence: [] },
-        { point: "Four 777.", evidence: [] },
+        { point: "One 14.3%.", evidence: ["fin"] },
+        { point: "Two 20%.", evidence: ["fin"] },
+        { point: "Three 31%.", evidence: ["sig:supply_chain"] },
+        { point: "Four 777.", evidence: ["fin"] },
       ],
     });
-    const out = applyViolations(brief, [
-      { path: ["thesis", 3, "point"], sentence: "Four 777.", numbers: [777], reason: "ungrounded" },
-    ]);
+    const out = applyViolations(
+      brief,
+      [
+        {
+          path: ["thesis", 3, "point"],
+          sentence: "Four 777.",
+          numbers: [777],
+          reason: "ungrounded",
+        },
+      ],
+      inputs,
+    );
     expect(out?.thesis).toHaveLength(3);
     expect(out?.verdict.confidence).toBe(0.56);
     expect(out?.uncertainty.at(-1)).toMatch(/^1 statement removed/);
   });
 
   it("rejects the brief when fewer than three thesis points survive", () => {
-    const out = applyViolations(briefFixture(), [
-      { path: ["thesis", 0, "point"], sentence: "x", numbers: [1], reason: "ungrounded" },
-    ]);
+    const out = applyViolations(
+      briefFixture(),
+      [{ path: ["thesis", 0, "point"], sentence: "x", numbers: [1], reason: "ungrounded" }],
+      inputs,
+    );
     expect(out).toBeNull();
   });
 
   it("rejects the brief when no cited risk survives", () => {
-    const out = applyViolations(briefFixture(), [
-      { path: ["risks", 0], sentence: "", numbers: [], reason: "uncited" },
-    ]);
+    const out = applyViolations(
+      briefFixture(),
+      [{ path: ["risks", 0], sentence: "", numbers: [], reason: "uncited" }],
+      inputs,
+    );
+    expect(out).toBeNull();
+  });
+
+  it("falls back to the first surviving thesis point, not the removed one", () => {
+    const brief = briefFixture({
+      verdict: {
+        score: 71,
+        label: "constructive",
+        confidence: 0.66,
+        oneLiner: "Earnings will double to ₹4,321 crore.",
+        evidence: [],
+      },
+      thesis: [
+        { point: "Revenue will hit ₹4,321 crore.", evidence: ["fin"] },
+        ...briefFixture().thesis,
+      ],
+    });
+    const { violations } = finalizeBrief(brief, inputs);
+    const out = applyViolations(brief, violations, inputs);
+    expect(out?.verdict.oneLiner).toBe(briefFixture().thesis[0]?.point);
+    expect(out?.verdict.evidence).toEqual(["fin"]);
+    expect(out && briefViolations(out, inputs)).toEqual([]);
+  });
+
+  it("re-checks the cleaned brief and rejects anything still ungrounded", () => {
+    const brief = briefFixture({
+      thesis: [...briefFixture().thesis, { point: "Margin hits 41%.", evidence: ["fin"] }],
+      valuation: { read: "Trades at 99x.", vsPeers: null, vsConsensus: null, evidence: ["px"] },
+    });
+    const out = applyViolations(
+      brief,
+      [
+        {
+          path: ["thesis", 3, "point"],
+          sentence: "Margin hits 41%.",
+          numbers: [41],
+          reason: "ungrounded",
+        },
+      ],
+      inputs,
+    );
     expect(out).toBeNull();
   });
 });
