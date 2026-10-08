@@ -12,7 +12,7 @@ Indian-equities intelligence terminal: Bloomberg-style supply-chain intelligence
 | `packages/ingest` | `@ma/ingest` | `DocumentStore`, sources (NSE, Yahoo, Screener, Trendlyne, Firecrawl), extractors, pipelines, `IngestContext`, CLI. |
 | `packages/intel` | `@ma/intel` | Estimates, momentum, DuPont distress, event-impact OLS, CLI. |
 | `apps/server` | `@ma/server` | Fastify API (`src/app.ts`, `src/queries.ts`) and scheduler worker (`src/worker`). |
-| `apps/web` | `@ma/web` | Next.js 15 terminal UI. Server components call the API with `API_KEY`; the browser never sees it. |
+| `apps/web` | `@ma/web` | Next.js 15 terminal UI (Gloomberg-style panes) plus `/api/v1` routes and cron jobs. Server components call `@/server/queries` directly; no secrets reach the browser. |
 | `docker/`, `docker-compose.yml` | — | Images for api/worker/web; Postgres (Aiven) and Redis are managed services. |
 | `docs/` | — | `methodology.md` (models), `plan.md` (status + next steps), `data-sources.md`. |
 
@@ -46,7 +46,7 @@ Signal kinds: `customer_concentration_pct`, `top{N}_customers_pct`, `customer_mo
 - Parsers carry a `*_PARSER_VERSION`/`*_EXTRACTOR_VERSION`; bump it when output changes so stale documents re-parse.
 - Models carry a `*_MODEL_VERSION`; estimates and signals are keyed by it so old rows stay comparable.
 - API read models live in `apps/server/src/queries.ts` and are cached through `ctx.api` with explicit `ttlMs/staleMs`; worker jobs invalidate prefixes after writes.
-- Web: server components fetch through `apps/web/src/lib/api.ts`; UI copy uses Bloomberg-style function codes (DES, GP, FA, ANR, SPLC, NEWS).
+- Web UI: routes in `src/app` (`/`, `/c/[symbol]/[tab]`, `/signals`, `/movers`, `/help`) compose panes from `src/components/panes/**`, which call read models in `src/server/queries` (`ui.ts` for UI-shaped models) through `attempt()` so one failing pane renders `DATA UNAVAILABLE` instead of failing the page. Primitives live in `src/components/ui`, shell chrome in `src/components/shell`, keyboard handling in `src/lib/keymap`. Styles are plain CSS in `src/styles` (`tokens.css` holds every colour/size; panes place themselves with the `--area` custom property into `grid.css` layouts). Function codes: DES, GP, FA, ANR, SPLC, NEWS, JET, SHIP, INTL. Every page must fit 1440×900 with no document scroll; panes scroll internally.
 - Commits: conventional (`feat(scope): …`), small, one concern each. `.env` is gitignored (GitHub push protection rejects the Aiven password); `.env.example` is the contract.
 
 ## Secrets and services

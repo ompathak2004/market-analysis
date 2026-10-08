@@ -53,3 +53,8 @@ Run without arguments to start the scheduler with all jobs. Redis locks make it 
 6. **Watchlists and alerts**: user-defined lists in the UI, notify on new analyst calls and signal threshold crossings.
 7. **Auth for the web app** when exposing it publicly (currently the API key is the only gate).
 8. **Observability**: `/v1/cache/metrics` exists; add request timing histograms and `ingest_runs` dashboards.
+9. **UI read models are provisional**: `apps/web/src/server/queries/ui.ts` reads `insights`, alt-data tables and broker calls directly. Swap to `queries/insights.ts` (track-llm) and `queries/altdata.ts` (track-altdata) once they land, keeping the `types.ts` shapes the panes consume.
+10. **JET routes map**: the routes pane draws a hub-and-spoke schematic because airports have no coordinates in the schema. Add an ICAO → lat/lon table and switch `RoutesPane` to `MiniMap`.
+11. **Terminal font glyphs**: the bundled JetBrains Mono subset lacks ₹ and ↵; they fall back to system fonts. Rebuild the woff2 subset with those code points.
+12. **CSS specificity**: Biome reports 10 `noDescendingSpecificity` warnings in `styles/{charts,controls,pane,table}.css`; reorder selectors when those files are next touched.
+13. **Alt-data is empty locally**: JET and SHIP show designed empty states until `corporate_aircraft` and `facilities` are seeded and the alt-data jobs run.
