@@ -7,10 +7,10 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "pnpm -r --filter './packages/**' --filter './apps/server' build",
-    "dev:server": "pnpm --filter @ma/server dev",
-    "dev:worker": "pnpm --filter @ma/server dev:worker",
+    "build": "pnpm -r --filter './packages/**' build",
+    "build:web": "pnpm build && pnpm --filter @ma/web build",
     "dev:web": "pnpm --filter @ma/web dev",
+    "job": "pnpm --filter @ma/web job",
     "db:generate": "pnpm --filter @ma/db generate",
     "db:migrate": "pnpm --filter @ma/db migrate",
     "typecheck": "pnpm -r typecheck",

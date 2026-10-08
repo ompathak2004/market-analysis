@@ -10,5 +10,4 @@ export * from "./pipelines/relationships.js";
 export * from "./pipelines/universe.js";
 export * from "./sources/nse.js";
 export * from "./sources/screener.js";
-export * from "./sources/trendlyne.js";
 export * from "./sources/yahoo.js";

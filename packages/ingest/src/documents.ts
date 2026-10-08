@@ -12,6 +12,8 @@ export interface FetchDocumentOptions {
   maxAgeMs?: number;
   headers?: Record<string, string>;
   via?: "direct" | "firecrawl";
+  extract?: (content: string) => string;
+  pdfMaxPages?: number;
 }
 
 export interface FetchDocumentResult {
@@ -40,7 +42,7 @@ export class DocumentStore {
     const fetched =
       opts.via === "firecrawl"
         ? await this.viaFirecrawl(url)
-        : await this.viaDirect(url, existing, opts.headers);
+        : await this.viaDirect(url, existing, opts.headers, opts.pdfMaxPages);
 
     if (fetched.notModified && existing) {
       const [doc] = await this.db
@@ -52,6 +54,7 @@ export class DocumentStore {
     }
 
     fetched.content = fetched.content.replaceAll("\u0000", "");
+    if (opts.extract) fetched.content = opts.extract(fetched.content);
     const hash = sha256(fetched.content);
     if (existing && existing.sha256 === hash) {
       const [doc] = await this.db
@@ -104,6 +107,7 @@ export class DocumentStore {
     url: string,
     existing: StoredDocument | undefined,
     headers?: Record<string, string>,
+    pdfMaxPages?: number,
   ): Promise<Fetched> {
     const res = await this.http.get(url, {
       etag: existing?.etag ?? null,
@@ -122,7 +126,9 @@ export class DocumentStore {
     if (res.status >= 400)
       throw new UpstreamError(new URL(url).hostname, `status ${res.status}`, { url });
     const contentType = res.headers.get("content-type");
-    const content = isPdf(contentType, url, res.body) ? await pdfToText(res.body) : res.text();
+    const content = isPdf(contentType, url, res.body)
+      ? await pdfToText(res.body, pdfMaxPages)
+      : res.text();
     return {
       notModified: false,
       content,
@@ -168,8 +174,22 @@ function isPdf(contentType: string | null, url: string, body: Uint8Array): boole
   return url.toLowerCase().endsWith(".pdf");
 }
 
-export async function pdfToText(body: Uint8Array): Promise<string> {
+export async function pdfToText(body: Uint8Array, maxPages?: number): Promise<string> {
   const pdf = await getDocumentProxy(body);
-  const { text } = await extractText(pdf, { mergePages: true });
-  return text;
+  if (maxPages === undefined || pdf.numPages <= maxPages) {
+    const { text } = await extractText(pdf, { mergePages: true });
+    return text;
+  }
+  const pages: string[] = [];
+  for (let i = 1; i <= maxPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    pages.push(
+      content.items
+        .map((item) => ("str" in item ? item.str : ""))
+        .join(" ")
+        .trim(),
+    );
+  }
+  return pages.join("\n\n");
 }

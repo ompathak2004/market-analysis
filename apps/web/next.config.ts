@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 
 const previewOrigins =
@@ -8,7 +9,8 @@ const previewOrigins =
 const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  output: "standalone",
+  outputFileTracingRoot: path.join(import.meta.dirname, "../../"),
+  serverExternalPackages: ["pino", "thread-stream", "postgres", "ioredis", "cheerio", "unpdf"],
   allowedDevOrigins: previewOrigins,
 };
 

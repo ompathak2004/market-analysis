@@ -1,0 +1,25 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    { "path": "/api/cron/universe", "schedule": "0 1 * * *" },
+    { "path": "/api/cron/prices", "schedule": "*/15 10-17 * * 1-5" },
+    { "path": "/api/cron/prices", "schedule": "0 2 * * 6" },
+    { "path": "/api/cron/fundamentals", "schedule": "10 * * * *" },
+    { "path": "/api/cron/announcements", "schedule": "*/10 * * * *" },
+    { "path": "/api/cron/relationships", "schedule": "20,50 * * * *" },
+    { "path": "/api/cron/intel", "schedule": "30 2,14 * * *" },
+    { "path": "/api/cron/moneycontrol", "schedule": "5,35 * * * *" },
+    { "path": "/api/cron/broker-reports", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/insights", "schedule": "*/10 * * * *" },
+    { "path": "/api/cron/market-brief", "schedule": "30 3 * * 1-5" },
+    { "path": "/api/cron/market-brief", "schedule": "20 10 * * 1-5" },
+    { "path": "/api/cron/triage", "schedule": "7,22,37,52 * * * *" },
+    { "path": "/api/cron/aircraft-sample", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/ais-collect", "schedule": "*/10 * * * *" },
+    { "path": "/api/cron/altdata-derive", "schedule": "*/30 * * * *" },
+    { "path": "/api/cron/altdata-signals", "schedule": "15 * * * *" },
+    { "path": "/api/cron/aircraft-registry", "schedule": "40 1 * * *" },
+    { "path": "/api/cron/fleets", "schedule": "0 3 * * 1" },
+    { "path": "/api/cron/altdata-cleanup", "schedule": "50 2 * * *" }
+  ]
+}

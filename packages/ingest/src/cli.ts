@@ -2,7 +2,6 @@ import { createRedis } from "@ma/cache";
 import { createLogger, loadConfig } from "@ma/core";
 import { closeDb, companies, createDb, eq, indexConstituents, indices } from "@ma/db";
 import { createIngestContext } from "./context.js";
-import { syncAnalystCalls } from "./pipelines/analysts.js";
 import { syncFundamentals } from "./pipelines/fundamentals.js";
 import { syncAnnouncements, syncPrices } from "./pipelines/market.js";
 import { extractRelationshipsForCompany, loadAliasMatcher } from "./pipelines/relationships.js";
@@ -53,9 +52,6 @@ try {
     case "announcements":
       console.log(await syncAnnouncements(ctx, await symbolId(arg ?? "RELIANCE")));
       break;
-    case "analysts":
-      console.log(await syncAnalystCalls(ctx, Number(arg ?? 2)));
-      break;
     case "relationships": {
       const id = await symbolId(arg ?? "SONACOMS");
       const f = await syncFundamentals(ctx, id);
@@ -71,9 +67,7 @@ try {
       break;
     }
     default:
-      console.log(
-        "usage: cli <universe|prices|fundamentals|announcements|analysts|relationships> [arg]",
-      );
+      console.log("usage: cli <universe|prices|fundamentals|announcements|relationships> [arg]");
   }
 } finally {
   await closeDb(db);

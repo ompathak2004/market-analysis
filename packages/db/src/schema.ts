@@ -63,6 +63,9 @@ export const companies = pgTable(
     yahooSymbol: text("yahoo_symbol"),
     marketCapCr: numeric("market_cap_cr", { precision: 18, scale: 2 }),
     listed: boolean("listed").notNull().default(true),
+    moneycontrolCode: text("moneycontrol_code"),
+    moneycontrolUrl: text("moneycontrol_url"),
+    registeredCity: text("registered_city"),
     ...timestamps,
   },
   (t) => [
@@ -265,6 +268,14 @@ export const analystCalls = pgTable(
     sourceDocumentId: integer("source_document_id").references(() => documents.id, {
       onDelete: "set null",
     }),
+    title: text("title"),
+    summary: text("summary"),
+    reportDocumentId: integer("report_document_id").references(() => documents.id, {
+      onDelete: "set null",
+    }),
+    thesis: jsonb("thesis").$type<Record<string, unknown>>(),
+    summaryModelVersion: smallint("summary_model_version"),
+    summarizedAt: timestamp("summarized_at", { withTimezone: true }),
     createdAt: timestamps.createdAt,
   },
   (t) => [
@@ -286,10 +297,15 @@ export const announcements = pgTable(
     details: text("details"),
     attachmentUrl: text("attachment_url"),
     dedupeKey: text("dedupe_key").notNull(),
+    materiality: text("materiality"),
+    triageCategory: text("triage_category"),
+    soWhat: text("so_what"),
+    triageModelVersion: smallint("triage_model_version"),
     createdAt: timestamps.createdAt,
   },
   (t) => [
     uniqueIndex("announcements_dedupe_uq").on(t.dedupeKey),
+    index("announcements_published_idx").on(t.publishedAt),
     index("announcements_company_date_idx").on(t.companyId, t.publishedAt),
   ],
 );
@@ -325,4 +341,523 @@ export const ingestRuns = pgTable(
     error: text("error"),
   },
   (t) => [index("ingest_runs_source_started_idx").on(t.source, t.startedAt)],
+);
+
+export const companySync = pgTable(
+  "company_sync",
+  {
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    job: text("job").notNull(),
+    syncedAt: timestamp("synced_at", { withTimezone: true }),
+    attemptedAt: timestamp("attempted_at", { withTimezone: true }),
+    failures: smallint("failures").notNull().default(0),
+    error: text("error"),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.job] }),
+    index("company_sync_job_synced_idx").on(t.job, t.syncedAt),
+  ],
+);
+
+export const indexPricesDaily = pgTable(
+  "index_prices_daily",
+  {
+    indexId: integer("index_id")
+      .notNull()
+      .references(() => indices.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    open: real("open"),
+    high: real("high"),
+    low: real("low"),
+    close: real("close").notNull(),
+    volume: bigint("volume", { mode: "number" }),
+  },
+  (t) => [primaryKey({ columns: [t.indexId, t.date] })],
+);
+
+export const holder = pgEnum("holder", ["promoter", "fii", "dii", "public", "others"]);
+export const estimateMetric = pgEnum("estimate_metric", ["eps", "net_profit", "revenue"]);
+
+export const shareholding = pgTable(
+  "shareholding",
+  {
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    quarterEnd: date("quarter_end").notNull(),
+    holder: holder("holder").notNull(),
+    pct: real("pct").notNull(),
+    pledgePct: real("pledge_pct"),
+    source: text("source").notNull().default("moneycontrol"),
+    parserVersion: smallint("parser_version").notNull(),
+    updatedAt: timestamps.updatedAt,
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.quarterEnd, t.holder] })],
+);
+
+export const analystRatings = pgTable(
+  "analyst_ratings",
+  {
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    asOf: date("as_of").notNull(),
+    buyPct: real("buy_pct"),
+    outperformPct: real("outperform_pct"),
+    holdPct: real("hold_pct"),
+    underperformPct: real("underperform_pct"),
+    sellPct: real("sell_pct"),
+    analystCount: smallint("analyst_count"),
+    finalRating: text("final_rating"),
+    source: text("source").notNull().default("moneycontrol"),
+    parserVersion: smallint("parser_version").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.asOf] })],
+);
+
+export const consensusHistory = pgTable(
+  "consensus_history",
+  {
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    month: date("month").notNull(),
+    buy: smallint("buy"),
+    outperform: smallint("outperform"),
+    hold: smallint("hold"),
+    underperform: smallint("underperform"),
+    sell: smallint("sell"),
+    source: text("source").notNull().default("moneycontrol"),
+    parserVersion: smallint("parser_version").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.month] })],
+);
+
+export const earningsEstimates = pgTable(
+  "earnings_estimates",
+  {
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    metric: estimateMetric("metric").notNull(),
+    fiscalYearEnd: date("fiscal_year_end").notNull(),
+    consolidated: boolean("consolidated").notNull().default(true),
+    asOf: date("as_of").notNull(),
+    low: numeric("low", { precision: 18, scale: 2 }),
+    high: numeric("high", { precision: 18, scale: 2 }),
+    avg: numeric("avg", { precision: 18, scale: 2 }),
+    actual: numeric("actual", { precision: 18, scale: 2 }),
+    source: text("source").notNull().default("moneycontrol"),
+    parserVersion: smallint("parser_version").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.companyId, t.metric, t.fiscalYearEnd, t.consolidated, t.asOf] }),
+  ],
+);
+
+export const priceTargets = pgTable(
+  "price_targets",
+  {
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    asOf: date("as_of").notNull(),
+    low: real("low"),
+    mean: real("mean"),
+    high: real("high"),
+    source: text("source").notNull().default("moneycontrol"),
+    parserVersion: smallint("parser_version").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.asOf] })],
+);
+
+export const earningsSurprises = pgTable(
+  "earnings_surprises",
+  {
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    metric: estimateMetric("metric").notNull(),
+    quarterEnd: date("quarter_end").notNull(),
+    actual: numeric("actual", { precision: 18, scale: 2 }),
+    estimate: numeric("estimate", { precision: 18, scale: 2 }),
+    surprisePct: real("surprise_pct"),
+    outcome: text("outcome").notNull(),
+    source: text("source").notNull().default("moneycontrol"),
+    parserVersion: smallint("parser_version").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.metric, t.quarterEnd] })],
+);
+
+export const companyFacts = pgTable(
+  "company_facts",
+  {
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    source: text("source").notNull(),
+    parserVersion: smallint("parser_version").notNull(),
+    facts: jsonb("facts").$type<Record<string, unknown>>().notNull(),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.source] })],
+);
+
+export const insights = pgTable(
+  "insights",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").references(() => companies.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    subjectId: integer("subject_id"),
+    modelVersion: smallint("model_version").notNull(),
+    model: text("model").notNull(),
+    inputHash: text("input_hash").notNull(),
+    inputs: jsonb("inputs").$type<Record<string, unknown>>().notNull(),
+    output: jsonb("output").$type<Record<string, unknown>>().notNull(),
+    confidence: real("confidence"),
+    promptTokens: integer("prompt_tokens"),
+    completionTokens: integer("completion_tokens"),
+    generatedAt: timestamp("generated_at", { withTimezone: true }).notNull().defaultNow(),
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("insights_key_uq").on(
+      t.companyId,
+      t.kind,
+      t.subjectId,
+      t.modelVersion,
+      t.inputHash,
+    ),
+    index("insights_current_idx").on(t.kind, t.companyId, t.generatedAt),
+  ],
+);
+
+export const llmUsage = pgTable(
+  "llm_usage",
+  {
+    id: serial("id").primaryKey(),
+    kind: text("kind").notNull(),
+    model: text("model").notNull(),
+    promptTokens: integer("prompt_tokens").notNull(),
+    completionTokens: integer("completion_tokens").notNull(),
+    latencyMs: integer("latency_ms").notNull(),
+    ok: boolean("ok").notNull(),
+    createdAt: timestamps.createdAt,
+  },
+  (t) => [index("llm_usage_created_idx").on(t.createdAt)],
+);
+
+export const aircraftTier = pgEnum("aircraft_tier", ["registry", "press", "inferred", "manual"]);
+export const aircraftLinkBasis = pgEnum("aircraft_link_basis", [
+  "owner",
+  "subsidiary",
+  "promoter_group",
+  "charter",
+]);
+export const flightCompleteness = pgEnum("flight_completeness", [
+  "full",
+  "departure_only",
+  "arrival_only",
+  "enroute",
+]);
+
+export const corporateAircraft = pgTable(
+  "corporate_aircraft",
+  {
+    id: serial("id").primaryKey(),
+    registration: text("registration").notNull().unique(),
+    icaoHex: text("icao_hex").notNull().unique(),
+    icaoType: text("icao_type"),
+    model: text("model"),
+    ownerName: text("owner_name"),
+    operatorName: text("operator_name"),
+    groupName: text("group_name"),
+    linkedPerson: text("linked_person"),
+    linkedRole: text("linked_role"),
+    tier: aircraftTier("tier").notNull(),
+    confidence: real("confidence").notNull(),
+    privacyFlagged: boolean("privacy_flagged").notNull().default(false),
+    active: boolean("active").notNull().default(true),
+    homeIcao: text("home_icao"),
+    sourceUrl: text("source_url"),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [index("corporate_aircraft_active_idx").on(t.active)],
+);
+
+export const corporateAircraftCompanies = pgTable(
+  "corporate_aircraft_companies",
+  {
+    aircraftId: integer("aircraft_id")
+      .notNull()
+      .references(() => corporateAircraft.id, { onDelete: "cascade" }),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    basis: aircraftLinkBasis("basis").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.aircraftId, t.companyId] })],
+);
+
+export const aircraftPositions = pgTable(
+  "aircraft_positions",
+  {
+    hex: text("hex").notNull(),
+    ts: timestamp("ts", { withTimezone: true }).notNull(),
+    lat: real("lat"),
+    lon: real("lon"),
+    altFt: integer("alt_ft"),
+    gsKt: real("gs_kt"),
+    track: real("track"),
+    onGround: boolean("on_ground").notNull(),
+    squawk: text("squawk"),
+    source: text("source").notNull().default("adsb_lol"),
+  },
+  (t) => [primaryKey({ columns: [t.hex, t.ts] }), index("aircraft_positions_ts_idx").on(t.ts)],
+);
+
+export const aircraftFlights = pgTable(
+  "aircraft_flights",
+  {
+    id: serial("id").primaryKey(),
+    aircraftId: integer("aircraft_id")
+      .notNull()
+      .references(() => corporateAircraft.id, { onDelete: "cascade" }),
+    hex: text("hex").notNull(),
+    departedAt: timestamp("departed_at", { withTimezone: true }),
+    arrivedAt: timestamp("arrived_at", { withTimezone: true }),
+    durationMin: integer("duration_min"),
+    depIcao: text("dep_icao"),
+    depCity: text("dep_city"),
+    depCountry: text("dep_country"),
+    arrIcao: text("arr_icao"),
+    arrCity: text("arr_city"),
+    arrCountry: text("arr_country"),
+    completeness: flightCompleteness("completeness").notNull(),
+    source: text("source").notNull(),
+    samples: integer("samples").notNull().default(0),
+    maxAltFt: integer("max_alt_ft"),
+    dedupeKey: text("dedupe_key").notNull().unique(),
+    ...timestamps,
+  },
+  (t) => [index("aircraft_flights_aircraft_departed_idx").on(t.aircraftId, t.departedAt)],
+);
+
+export const facilityKind = pgEnum("facility_kind", [
+  "hq",
+  "refinery",
+  "spm",
+  "port",
+  "terminal",
+  "lng_terminal",
+  "plant",
+  "mine",
+  "sez",
+  "power_plant",
+  "jetty",
+]);
+export const facilityRole = pgEnum("facility_role", ["owner", "operator", "user"]);
+export const vesselClass = pgEnum("vessel_class", [
+  "tanker",
+  "gas",
+  "cargo",
+  "container",
+  "passenger",
+  "other",
+]);
+
+export const facilities = pgTable(
+  "facilities",
+  {
+    id: serial("id").primaryKey(),
+    slug: text("slug").notNull().unique(),
+    name: text("name").notNull(),
+    kind: facilityKind("kind").notNull(),
+    lat: real("lat").notNull(),
+    lon: real("lon").notNull(),
+    radiusKm: real("radius_km").notNull(),
+    country: text("country").notNull().default("IN"),
+    locode: text("locode"),
+    aliases: text("aliases").array().notNull().default(sql`'{}'::text[]`),
+    exclusive: boolean("exclusive").notNull().default(false),
+    active: boolean("active").notNull().default(true),
+    sourceUrl: text("source_url"),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [index("facilities_kind_idx").on(t.kind)],
+);
+
+export const facilityCompanies = pgTable(
+  "facility_companies",
+  {
+    facilityId: integer("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "cascade" }),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    role: facilityRole("role").notNull(),
+    commodityIn: text("commodity_in").array().notNull().default(sql`'{}'::text[]`),
+    commodityOut: text("commodity_out").array().notNull().default(sql`'{}'::text[]`),
+    note: text("note"),
+  },
+  (t) => [primaryKey({ columns: [t.facilityId, t.companyId] })],
+);
+
+export const vessels = pgTable(
+  "vessels",
+  {
+    mmsi: integer("mmsi").primaryKey(),
+    imo: integer("imo"),
+    name: text("name"),
+    callSign: text("call_sign"),
+    flag: text("flag"),
+    shipType: smallint("ship_type"),
+    class: vesselClass("class").notNull().default("other"),
+    lengthM: smallint("length_m"),
+    beamM: smallint("beam_m"),
+    draughtM: real("draught_m"),
+    sizeClass: text("size_class"),
+    dwtEst: integer("dwt_est"),
+    dwt: integer("dwt"),
+    destinationRaw: text("destination_raw"),
+    destinationFacilityId: integer("destination_facility_id").references(() => facilities.id, {
+      onDelete: "set null",
+    }),
+    etaRaw: text("eta_raw"),
+    ownerCompanyId: integer("owner_company_id").references(() => companies.id, {
+      onDelete: "set null",
+    }),
+    ownerSourceUrl: text("owner_source_url"),
+    staticUpdatedAt: timestamp("static_updated_at", { withTimezone: true }),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index("vessels_imo_idx").on(t.imo),
+    index("vessels_destination_facility_idx").on(t.destinationFacilityId),
+  ],
+);
+
+export const vesselPositions = pgTable(
+  "vessel_positions",
+  {
+    mmsi: integer("mmsi").notNull(),
+    ts: timestamp("ts", { withTimezone: true }).notNull(),
+    lat: real("lat").notNull(),
+    lon: real("lon").notNull(),
+    sogKt: real("sog_kt"),
+    cogDeg: real("cog_deg"),
+    headingDeg: smallint("heading_deg"),
+    navStatus: smallint("nav_status"),
+  },
+  (t) => [primaryKey({ columns: [t.mmsi, t.ts] }), index("vessel_positions_ts_idx").on(t.ts)],
+);
+
+export const vesselCalls = pgTable(
+  "vessel_calls",
+  {
+    id: serial("id").primaryKey(),
+    mmsi: integer("mmsi")
+      .notNull()
+      .references(() => vessels.mmsi, { onDelete: "cascade" }),
+    facilityId: integer("facility_id")
+      .notNull()
+      .references(() => facilities.id, { onDelete: "cascade" }),
+    enteredAt: timestamp("entered_at", { withTimezone: true }).notNull(),
+    leftAt: timestamp("left_at", { withTimezone: true }),
+    dwellMin: integer("dwell_min"),
+    draughtIn: real("draught_in"),
+    draughtOut: real("draught_out"),
+    cargoDirection: text("cargo_direction"),
+    navStatusMode: smallint("nav_status_mode"),
+    positions: integer("positions").notNull().default(0),
+    endedBy: text("ended_by"),
+  },
+  (t) => [
+    uniqueIndex("vessel_calls_uq").on(t.mmsi, t.facilityId, t.enteredAt),
+    index("vessel_calls_facility_entered_idx").on(t.facilityId, t.enteredAt),
+  ],
+);
+
+export const chokepointTransits = pgTable(
+  "chokepoint_transits",
+  {
+    id: serial("id").primaryKey(),
+    mmsi: integer("mmsi")
+      .notNull()
+      .references(() => vessels.mmsi, { onDelete: "cascade" }),
+    chokepoint: text("chokepoint").notNull(),
+    enteredAt: timestamp("entered_at", { withTimezone: true }).notNull(),
+    leftAt: timestamp("left_at", { withTimezone: true }),
+    loiterMin: integer("loiter_min").notNull().default(0),
+    minSogKt: real("min_sog_kt"),
+    destinationAtEntry: text("destination_at_entry"),
+    destinationFacilityId: integer("destination_facility_id").references(() => facilities.id, {
+      onDelete: "set null",
+    }),
+    direction: text("direction"),
+  },
+  (t) => [
+    uniqueIndex("chokepoint_transits_uq").on(t.mmsi, t.chokepoint, t.enteredAt),
+    index("chokepoint_transits_cp_entered_idx").on(t.chokepoint, t.enteredAt),
+  ],
+);
+
+export const vesselFleet = pgTable(
+  "vessel_fleet",
+  {
+    imo: integer("imo").primaryKey(),
+    name: text("name").notNull(),
+    dwt: integer("dwt"),
+    type: text("type"),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    sourceUrl: text("source_url").notNull(),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("vessel_fleet_company_idx").on(t.companyId)],
+);
+
+export const altdataEvents = pgTable(
+  "altdata_events",
+  {
+    id: serial("id").primaryKey(),
+    layer: text("layer").notNull(),
+    kind: text("kind").notNull(),
+    companyId: integer("company_id").references(() => companies.id, { onDelete: "set null" }),
+    facilityId: integer("facility_id").references(() => facilities.id, { onDelete: "set null" }),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    headline: text("headline").notNull(),
+    detail: jsonb("detail").$type<Record<string, unknown>>().notNull(),
+    severity: smallint("severity").notNull().default(1),
+    dedupeKey: text("dedupe_key").notNull().unique(),
+    createdAt: timestamps.createdAt,
+  },
+  (t) => [
+    index("altdata_events_occurred_idx").on(t.occurredAt),
+    index("altdata_events_company_occurred_idx").on(t.companyId, t.occurredAt),
+  ],
+);
+
+export const altdataCoverage = pgTable(
+  "altdata_coverage",
+  {
+    layer: text("layer").notNull(),
+    zone: text("zone").notNull(),
+    day: date("day").notNull(),
+    windows: integer("windows").notNull().default(0),
+    windowsWithData: integer("windows_with_data").notNull().default(0),
+    messages: integer("messages").notNull().default(0),
+    uniqueIds: integer("unique_ids").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.layer, t.zone, t.day] })],
 );

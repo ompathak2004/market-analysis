@@ -7,17 +7,25 @@
     "dev": "next dev -p 3000 -H 0.0.0.0",
     "build": "next build",
     "start": "next start -p 3000 -H 0.0.0.0",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "job": "tsx --conditions=@ma/source scripts/run-job.ts"
   },
   "dependencies": {
+    "@ma/cache": "workspace:*",
+    "@ma/core": "workspace:*",
+    "@ma/db": "workspace:*",
+    "@ma/ingest": "workspace:*",
+    "@ma/intel": "workspace:*",
     "next": "^15.5.4",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
+    "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   }
 }

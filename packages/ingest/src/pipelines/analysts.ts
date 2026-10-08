@@ -1,13 +1,21 @@
 import { sha256 } from "@ma/core";
-import { analystCalls, and, companies, desc, eq, inArray, lt, sql } from "@ma/db";
+import { analystCalls, and, desc, eq, lt, sql } from "@ma/db";
 import type { IngestContext } from "../context.js";
-import {
-  type BrokerCall,
-  parseTrendlyneReports,
-  trendlyneAllReportsUrl,
-} from "../sources/trendlyne.js";
 
 type Action = (typeof analystCalls.$inferInsert)["action"];
+
+export interface BrokerCall {
+  companyId: number;
+  nseSymbol: string;
+  broker: string;
+  publishedAt: string;
+  rating: string;
+  targetPrice: number | null;
+  priceAtCall: number | null;
+  reportUrl: string | null;
+  title: string | null;
+  summary: string | null;
+}
 
 const RANK: Record<string, number> = {
   "strong sell": 0,
@@ -22,40 +30,21 @@ const RANK: Record<string, number> = {
   "strong buy": 4,
 };
 
-export async function syncAnalystCalls(
+export async function upsertBrokerCalls(
   ctx: IngestContext,
-  pages = 3,
-): Promise<{ fetched: number; inserted: number }> {
-  const calls: BrokerCall[] = [];
-  for (let page = 1; page <= pages; page++) {
-    const { doc } = await ctx.docs.fetch(trendlyneAllReportsUrl(page), {
-      source: "trendlyne",
-      maxAgeMs: 30 * 60_000,
-    });
-    calls.push(...parseTrendlyneReports(doc.content));
-  }
-  const symbols = [
-    ...new Set(calls.map((c) => c.nseSymbol).filter((s): s is string => Boolean(s))),
-  ];
-  if (!symbols.length) return { fetched: calls.length, inserted: 0 };
-
-  const known = await ctx.db
-    .select({ id: companies.id, nseSymbol: companies.nseSymbol })
-    .from(companies)
-    .where(inArray(companies.nseSymbol, symbols));
-  const idBySymbol = new Map(known.map((k) => [k.nseSymbol, k.id]));
-
-  calls.sort((a, b) => a.publishedAt.localeCompare(b.publishedAt));
+  calls: BrokerCall[],
+  source: string,
+): Promise<{ inserted: number; ids: number[] }> {
+  const ordered = [...calls].sort((a, b) => a.publishedAt.localeCompare(b.publishedAt));
   let inserted = 0;
-  for (const call of calls) {
-    const companyId = call.nseSymbol ? idBySymbol.get(call.nseSymbol) : undefined;
-    if (!companyId) continue;
+  const ids: number[] = [];
+  for (const call of ordered) {
     const dedupeKey = sha256(
       `${call.nseSymbol}|${call.broker}|${call.publishedAt}|${call.rating}|${call.targetPrice ?? ""}`,
     );
     const prior = await ctx.db.query.analystCalls.findFirst({
       where: and(
-        eq(analystCalls.companyId, companyId),
+        eq(analystCalls.companyId, call.companyId),
         eq(analystCalls.broker, call.broker),
         lt(analystCalls.publishedAt, call.publishedAt),
       ),
@@ -64,7 +53,7 @@ export async function syncAnalystCalls(
     const res = await ctx.db
       .insert(analystCalls)
       .values({
-        companyId,
+        companyId: call.companyId,
         broker: call.broker,
         publishedAt: call.publishedAt,
         action: classifyAction(call, prior ?? null),
@@ -74,7 +63,9 @@ export async function syncAnalystCalls(
         priorTargetPrice: prior?.targetPrice ?? null,
         priceAtCall: call.priceAtCall,
         reportUrl: call.reportUrl,
-        source: "trendlyne",
+        title: call.title,
+        summary: call.summary,
+        source,
         dedupeKey,
       })
       .onConflictDoUpdate({
@@ -84,13 +75,17 @@ export async function syncAnalystCalls(
           priorRating: sql`excluded.prior_rating`,
           priorTargetPrice: sql`excluded.prior_target_price`,
           reportUrl: sql`excluded.report_url`,
+          title: sql`coalesce(excluded.title, ${analystCalls.title})`,
+          summary: sql`coalesce(excluded.summary, ${analystCalls.summary})`,
         },
       })
-      .returning({ inserted: sql<boolean>`(xmax = 0)` });
-    inserted += res.filter((r) => r.inserted).length;
+      .returning({ id: analystCalls.id, inserted: sql<boolean>`(xmax = 0)` });
+    for (const r of res) {
+      ids.push(r.id);
+      if (r.inserted) inserted++;
+    }
   }
-  ctx.logger.info({ fetched: calls.length, inserted }, "analyst calls synced");
-  return { fetched: calls.length, inserted };
+  return { inserted, ids };
 }
 
 export function classifyAction(
