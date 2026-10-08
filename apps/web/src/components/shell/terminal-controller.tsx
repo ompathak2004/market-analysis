@@ -6,6 +6,7 @@ import type { Binding } from "@/lib/keymap/bindings";
 import { OPEN_CMD, TOGGLE_HELP } from "@/lib/keymap/events";
 import {
   cyclePane,
+  enterPane,
   focusedPane,
   panes,
   scrollPane,
@@ -95,6 +96,10 @@ export function TerminalController() {
           setFocusedPane(pane ?? panes()[0] ?? null);
           return true;
         }
+        if (pane && active instanceof HTMLElement && active !== pane && pane.contains(active)) {
+          pane.focus();
+          return true;
+        }
         if (pane && selectedRow(pane)) {
           selectRow(pane, null);
           return true;
@@ -138,8 +143,9 @@ export function TerminalController() {
         return true;
       }
       case "row.open": {
-        const row = pane ? selectedRow(pane) : null;
-        if (!row) return false;
+        if (!pane) return false;
+        const row = selectedRow(pane);
+        if (!row) return enterPane(pane);
         const href = rowHref(row);
         if (href) router.push(href);
         else {

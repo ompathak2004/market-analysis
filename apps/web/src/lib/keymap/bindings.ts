@@ -1,4 +1,4 @@
-export type KeyScope = "global" | "idle";
+export type KeyScope = "global" | "idle" | "surface";
 
 export interface Binding {
   id: string;
@@ -26,8 +26,8 @@ export const KEYMAP: readonly Binding[] = [
     group: "Command",
   },
   { id: "help.toggle", keys: ["?"], when: "idle", label: "Toggle key help", group: "Command" },
-  { id: "pane.next", keys: ["Tab"], when: "idle", label: "Next pane", group: "Panes" },
-  { id: "pane.prev", keys: ["Shift+Tab"], when: "idle", label: "Previous pane", group: "Panes" },
+  { id: "pane.next", keys: ["Tab"], when: "surface", label: "Next pane", group: "Panes" },
+  { id: "pane.prev", keys: ["Shift+Tab"], when: "surface", label: "Previous pane", group: "Panes" },
   { id: "pane.zoom", keys: ["z"], when: "idle", label: "Zoom focused pane", group: "Panes" },
   { id: "page.down", keys: ["Control+d"], when: "idle", label: "Scroll pane down", group: "Panes" },
   { id: "page.up", keys: ["Control+u"], when: "idle", label: "Scroll pane up", group: "Panes" },
@@ -35,11 +35,17 @@ export const KEYMAP: readonly Binding[] = [
   { id: "row.up", keys: ["k", "ArrowUp"], when: "idle", label: "Previous row", group: "Rows" },
   { id: "row.first", keys: ["g"], when: "idle", label: "First row", group: "Rows" },
   { id: "row.last", keys: ["Shift+g"], when: "idle", label: "Last row", group: "Rows" },
-  { id: "row.open", keys: ["Enter"], when: "idle", label: "Open selected row", group: "Rows" },
+  {
+    id: "row.open",
+    keys: ["Enter"],
+    when: "surface",
+    label: "Open selected row / enter pane",
+    group: "Rows",
+  },
   {
     id: "row.external",
     keys: ["Shift+Enter"],
-    when: "idle",
+    when: "surface",
     label: "Open source link",
     group: "Rows",
   },

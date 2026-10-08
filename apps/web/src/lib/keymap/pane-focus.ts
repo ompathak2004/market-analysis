@@ -17,6 +17,15 @@ export function setFocusedPane(pane: HTMLElement | null, moveFocus = true) {
   document.dispatchEvent(new CustomEvent(PANE_EVENT, { detail: { hints } }));
 }
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+
+export function enterPane(pane: HTMLElement): boolean {
+  const el = pane.querySelector<HTMLElement>(FOCUSABLE);
+  el?.focus();
+  return el != null;
+}
+
 export function cyclePane(delta: number) {
   const list = panes();
   if (!list.length) return;
