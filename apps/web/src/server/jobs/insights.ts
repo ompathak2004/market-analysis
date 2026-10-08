@@ -1,4 +1,4 @@
-import { isoDate, MINUTE } from "@ma/core";
+import { DeadlineExceededError, isoDate, MINUTE } from "@ma/core";
 import { analystCalls, and, desc, eq, isNull, sql } from "@ma/db";
 import {
   assembleCompanyInputs,
@@ -85,6 +85,10 @@ export const insightJobs: JobDef[] = [
             stats.budget = 1;
             break;
           }
+          if (err instanceof DeadlineExceededError) {
+            stats.deadline = 1;
+            break;
+          }
           stats.failed = (stats.failed ?? 0) + 1;
           ctx.logger.warn({ job: run.name, companyId: id, err }, "insight generation failed");
           await markFailed(ctx, "insights", id, err);
@@ -106,6 +110,7 @@ export const insightJobs: JobDef[] = [
         return stats;
       } catch (err) {
         if (err instanceof LlmBudgetExceeded) return { budget: 1 };
+        if (err instanceof DeadlineExceededError) return { deadline: 1 };
         throw err;
       }
     },
@@ -125,9 +130,9 @@ export const insightJobs: JobDef[] = [
         await invalidate(ctx, ["announcements:", "feed:", "market-brief:"]);
         return { ...stats };
       } catch (err) {
-        if (err instanceof LlmBudgetExceeded) {
+        if (err instanceof LlmBudgetExceeded || err instanceof DeadlineExceededError) {
           await invalidate(ctx, ["announcements:"]);
-          return { budget: 1 };
+          return err instanceof LlmBudgetExceeded ? { budget: 1 } : { deadline: 1 };
         }
         throw err;
       }
@@ -156,6 +161,10 @@ export const insightJobs: JobDef[] = [
         } catch (err) {
           if (err instanceof LlmBudgetExceeded) {
             stats.budget = 1;
+            break;
+          }
+          if (err instanceof DeadlineExceededError) {
+            stats.deadline = 1;
             break;
           }
           stats.failed = (stats.failed ?? 0) + 1;

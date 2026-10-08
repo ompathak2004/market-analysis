@@ -1,5 +1,16 @@
 import type { RateLimiter } from "@ma/cache";
-import { type Logger, RateLimitedError, sleep, UpstreamError } from "@ma/core";
+import {
+  assertTimeLeft,
+  DeadlineExceededError,
+  deadlineSignal,
+  type Logger,
+  RateLimitedError,
+  remainingMs,
+  sleep,
+  UpstreamError,
+} from "@ma/core";
+
+const MIN_ATTEMPT_MS = 1_000;
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36";
@@ -20,6 +31,7 @@ export interface FetchOptions {
   retries?: number;
   method?: "GET" | "POST";
   body?: string;
+  signal?: AbortSignal;
 }
 
 export class HttpClient {
@@ -36,23 +48,40 @@ export class HttpClient {
     const host = new URL(url).hostname;
     const retries = opts.retries ?? 2;
     for (let attempt = 0; ; attempt++) {
+      assertTimeLeft(MIN_ATTEMPT_MS);
       await this.limiter.acquire(host);
       const started = Date.now();
       try {
         const res = await this.once(url, opts);
         this.logger.debug({ url, status: res.status, ms: Date.now() - started }, "http get");
         if (res.status === 429 || res.status >= 500) {
-          if (attempt >= retries) throw new UpstreamError(host, `status ${res.status}`, { url });
-          await sleep(backoff(attempt, res.headers.get("retry-after")));
+          const delay = backoff(attempt, res.headers.get("retry-after"));
+          if (attempt >= retries || !this.canRetry(delay, opts)) {
+            throw new UpstreamError(host, `status ${res.status}`, { url });
+          }
+          await sleep(delay);
           continue;
         }
         return res;
       } catch (err) {
-        if (err instanceof UpstreamError || err instanceof RateLimitedError) throw err;
-        if (attempt >= retries) throw new UpstreamError(host, (err as Error).message, { url });
-        await sleep(backoff(attempt, null));
+        if (
+          err instanceof UpstreamError ||
+          err instanceof RateLimitedError ||
+          err instanceof DeadlineExceededError
+        ) {
+          throw err;
+        }
+        const delay = backoff(attempt, null);
+        if (attempt >= retries || !this.canRetry(delay, opts)) {
+          throw new UpstreamError(host, (err as Error).message, { url });
+        }
+        await sleep(delay);
       }
     }
+  }
+
+  private canRetry(delayMs: number, opts: FetchOptions): boolean {
+    return !opts.signal?.aborted && remainingMs() >= delayMs + MIN_ATTEMPT_MS;
   }
 
   private async once(url: string, opts: FetchOptions): Promise<HttpResponse> {
@@ -69,7 +98,7 @@ export class HttpClient {
       body: opts.body ?? null,
       headers,
       redirect: "follow",
-      signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
+      signal: deadlineSignal(opts.timeoutMs ?? 30_000, opts.signal ?? null),
     });
     const body = res.status === 304 ? new Uint8Array() : new Uint8Array(await res.arrayBuffer());
     let decoded: string | undefined;

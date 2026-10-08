@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { withDeadline } from "@ma/core";
 import { eq, ingestRuns } from "@ma/db";
 import type { AppContext } from "../context";
 
@@ -10,6 +11,7 @@ export interface JobRun {
   readonly ctx: AppContext;
   readonly name: string;
   readonly deadline: number;
+  readonly signal: AbortSignal;
   remainingMs(): number;
   expired(reserveMs?: number): boolean;
 }
@@ -43,16 +45,18 @@ export async function runJob(
   const runId = row?.id ?? 0;
   const started = Date.now();
   const deadline = started + budgetMs;
-  const run: JobRun = {
-    ctx,
-    name,
-    deadline,
-    remainingMs: () => deadline - Date.now(),
-    expired: (reserveMs = 0) => Date.now() + reserveMs >= deadline,
-  };
   ctx.logger.info({ job: name, budgetMs }, "job started");
   try {
-    const stats = await fn(run);
+    const stats = await withDeadline(deadline, (signal) =>
+      fn({
+        ctx,
+        name,
+        deadline,
+        signal,
+        remainingMs: () => deadline - Date.now(),
+        expired: (reserveMs = 0) => Date.now() + reserveMs >= deadline,
+      }),
+    );
     const ms = Date.now() - started;
     await ctx.db
       .update(ingestRuns)

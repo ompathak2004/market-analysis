@@ -1,14 +1,16 @@
 import { RateLimiter, type RedisClient } from "@ma/cache";
-import { isoDate } from "@ma/core";
+import { assertTimeLeft, isoDate } from "@ma/core";
 import { LlmBudgetExceeded } from "./errors.js";
 
 export const CEREBRAS_HOST = "api.cerebras.ai";
 const TOKEN_KEY_TTL_S = 2 * 86_400;
+const ATTEMPT_MS = 65_000;
 
 export interface LlmBudgetOptions {
   rpm: number;
   dailyTokens: number;
   maxWaitMs?: number;
+  attemptMs?: number;
 }
 
 export class LlmBudget {
@@ -38,9 +40,12 @@ export class LlmBudget {
   }
 
   async acquire(): Promise<void> {
+    const attemptMs = this.opts.attemptMs ?? ATTEMPT_MS;
+    assertTimeLeft(attemptMs);
     const used = await this.usedToday();
     if (used >= this.opts.dailyTokens) throw new LlmBudgetExceeded(used, this.opts.dailyTokens);
     await this.limiter.acquire(CEREBRAS_HOST);
+    assertTimeLeft(attemptMs);
   }
 
   async consume(tokens: number): Promise<number> {
