@@ -21,13 +21,14 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
   return { title: `${sym} ${isTab(tab) ? TAB_TITLE[tab] : tab.toUpperCase()} · MA Terminal` };
 }
 
-async function inUniverse(symbol: string): Promise<boolean> {
+async function notInUniverse(symbol: string): Promise<boolean> {
   try {
     await findCompany(getContext(), symbol);
-    return true;
+    return false;
   } catch (err) {
-    if (err instanceof NotFoundError) return false;
-    throw err;
+    if (err instanceof NotFoundError) return true;
+    console.error("[universe]", err);
+    return false;
   }
 }
 
@@ -41,7 +42,7 @@ export default async function CompanyPage({
   const { symbol: raw, tab } = await params;
   if (!isTab(tab)) notFound();
   const symbol = decodeURIComponent(raw).toUpperCase();
-  if (!(await inUniverse(symbol)))
+  if (await notInUniverse(symbol))
     return (
       <div className="grid grid-solo">
         <Pane id="missing" title="NOT IN UNIVERSE" meta={symbol}>
