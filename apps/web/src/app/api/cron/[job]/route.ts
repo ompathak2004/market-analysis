@@ -18,7 +18,7 @@ async function trigger(req: Request, params: Promise<{ job: string }>): Promise<
         404,
       );
     const outcome = await runJob(ctx, def.name, def.budgetMs, def.run);
-    return json({ job: def.name, ...outcome });
+    return json({ job: def.name, ...outcome }, outcome.status === "failed" ? 500 : 200);
   } catch (err) {
     return errorResponse(err);
   }
