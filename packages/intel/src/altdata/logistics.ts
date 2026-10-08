@@ -779,7 +779,7 @@ export async function refreshLogisticsSignals(
         (extract(epoch from c.left_at) * 1000)::float8 as "leftMs", c.dwell_min as "dwellMin",
         c.cargo_direction as "cargoDirection"
       from vessel_calls c join vessels v on v.mmsi = c.mmsi
-      where c.facility_id in ${fids} and c.entered_at >= ${new Date(nowMs - 70 * DAY_MS)}`),
+      where c.facility_id in ${fids} and c.entered_at >= ${iso(nowMs - 70 * DAY_MS)}`),
     db.execute<InboundRow>(sql`
       select distinct on (t.mmsi) t.id as "transitId", t.mmsi, v.name, v.class::text as class,
         v.size_class as "sizeClass", v.dwt_est as "dwtEst", t.chokepoint, t.loiter_min as "loiterMin",
@@ -789,19 +789,19 @@ export async function refreshLogisticsSignals(
       from chokepoint_transits t join vessels v on v.mmsi = t.mmsi
       where t.left_at is null
         and coalesce(v.destination_facility_id, t.destination_facility_id) in ${fids}
-        and v.last_seen_at >= ${new Date(nowMs - 2 * DAY_MS)}
+        and v.last_seen_at >= ${iso(nowMs - 2 * DAY_MS)}
       order by t.mmsi, t.entered_at desc`),
     db.execute<WaitingRow>(sql`
       select c.facility_id as "facilityId", c.id as "callId", c.mmsi, v.name, v.class::text as class,
-        (extract(epoch from (${now}::timestamptz - c.entered_at)) / 3600)::float8 as "waitingHours"
+        (extract(epoch from (${iso(nowMs)}::timestamptz - c.entered_at)) / 3600)::float8 as "waitingHours"
       from vessel_calls c join vessels v on v.mmsi = c.mmsi
       join lateral (
         select p.sog_kt, p.nav_status from vessel_positions p
         where p.mmsi = c.mmsi order by p.ts desc limit 1
       ) p on true
       where c.facility_id in ${fids} and c.left_at is null
-        and c.entered_at < ${new Date(nowMs - DAY_MS)}
-        and v.last_seen_at >= ${new Date(nowMs - 12 * 3_600_000)}
+        and c.entered_at < ${iso(nowMs - DAY_MS)}
+        and v.last_seen_at >= ${iso(nowMs - 12 * 3_600_000)}
         and (p.nav_status in (1, 5) or coalesce(p.sog_kt, 0) < 0.5)`),
     db.execute<FleetRow>(sql`
       select vf.company_id as "companyId", vf.imo, vf.name, v.mmsi, v.class::text as class,

@@ -394,7 +394,7 @@ export async function deriveVesselActivity(
   }
 
   const candidates = await ctx.db.execute<{ mmsi: number }>(sql`
-    select distinct mmsi from vessel_positions where ts >= ${recentFrom}
+    select distinct mmsi from vessel_positions where ts >= ${recentFrom.toISOString()}
     union select mmsi from vessel_calls where left_at is null
     union select mmsi from chokepoint_transits where left_at is null`);
   const stats = { vessels: 0, calls: 0, openCalls: 0, transits: 0, loitering: 0, events: 0 };
@@ -676,7 +676,7 @@ const TYPE_TEXT = /tanker|bulk|carrier|gas|lpg|lng|container|offshore|rig|vlcc|s
 function toDwt(text: string | undefined): number | null {
   if (!text) return null;
   const n = Number(text.replace(/[,\s]/g, ""));
-  return Number.isFinite(n) && n >= 1_000 && n <= 500_000 ? n : null;
+  return Number.isFinite(n) && n >= 1_000 && n <= 500_000 ? Math.round(n) : null;
 }
 
 export function parseFleetPage(content: string, defaultType: string | null = null): FleetRow[] {

@@ -702,7 +702,7 @@ export async function refreshTravelSignals(
           f.dep_icao as "depIcao", f.dep_city as "depCity", f.arr_icao as "arrIcao",
           f.arr_city as "arrCity", f.arr_country as "arrCountry", f.completeness::text as completeness
         from aircraft_flights f join corporate_aircraft a on a.id = f.aircraft_id
-        where a.active and coalesce(f.arrived_at, f.departed_at) >= ${new Date(fromMs)}`),
+        where a.active and coalesce(f.arrived_at, f.departed_at) >= ${iso(fromMs)}`),
       db.execute<CompanyRow>(sql`
         select c.id, c.nse_symbol as symbol, c.name from companies c
         where c.id in (select company_id from corporate_aircraft_companies)`),
@@ -721,7 +721,7 @@ export async function refreshTravelSignals(
         select id, company_id as "companyId", subject, attachment_url as url,
           (extract(epoch from published_at) * 1000)::float8 as "publishedMs"
         from announcements
-        where company_id in ${ids} and published_at >= ${new Date(nowMs - 34 * DAY_MS)}
+        where company_id in ${ids} and published_at >= ${iso(nowMs - 34 * DAY_MS)}
           and subject ~* ${EVENT_SUBJECT.source}`),
       db.execute<{ startMs: number | null }>(sql`
         select (extract(epoch from min(day)::timestamp) * 1000)::float8 as "startMs"

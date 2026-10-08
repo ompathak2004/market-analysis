@@ -549,7 +549,7 @@ export async function deriveAircraftFlights(
   const fleet = await ctx.db
     .select({ id: corporateAircraft.id, hex: corporateAircraft.icaoHex })
     .from(corporateAircraft)
-    .where(sql`${corporateAircraft.lastSeenAt} >= ${from}`);
+    .where(sql`${corporateAircraft.lastSeenAt} >= ${from.toISOString()}`);
   const stats = {
     aircraft: fleet.length,
     samples: 0,
@@ -668,8 +668,8 @@ async function mergeOpenSky(
         .where(
           and(
             eq(aircraftFlights.aircraftId, a.id),
-            sql`${aircraftFlights.departedAt} <= ${new Date(f.lastSeen.getTime() + 45 * MIN)}`,
-            sql`coalesce(${aircraftFlights.arrivedAt}, now()) >= ${new Date(f.firstSeen.getTime() - 45 * MIN)}`,
+            sql`${aircraftFlights.departedAt} <= ${new Date(f.lastSeen.getTime() + 45 * MIN).toISOString()}`,
+            sql`coalesce(${aircraftFlights.arrivedAt}, now()) >= ${new Date(f.firstSeen.getTime() - 45 * MIN).toISOString()}`,
           ),
         )
         .limit(1);
