@@ -1,4 +1,4 @@
-import { isoDate } from "@ma/core";
+import { isoDate, MINUTE } from "@ma/core";
 import { analystCalls, and, desc, eq, isNull, sql } from "@ma/db";
 import {
   assembleCompanyInputs,
@@ -12,10 +12,8 @@ import {
 import { LlmBudgetExceeded, LlmInvalidOutput, LlmPromptTooLarge } from "@ma/llm";
 import type { AppContext } from "../context";
 import { markFailed, markSynced, universeIds } from "./batch";
-import type { JobDef } from "./registry";
-import type { JobStats } from "./run";
+import type { JobDef, JobStats } from "./run";
 
-const MINUTE = 60_000;
 const BRIEFS_PER_RUN = 5;
 const TRIAGE_PER_RUN = 60;
 const THESES_PER_RUN = 10;

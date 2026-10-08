@@ -14,6 +14,12 @@ export interface JobRun {
   expired(reserveMs?: number): boolean;
 }
 
+export interface JobDef {
+  name: string;
+  budgetMs: number;
+  run: (run: JobRun) => Promise<JobStats>;
+}
+
 export type JobOutcome =
   | { status: "ok"; runId: number; ms: number; stats: JobStats }
   | { status: "skipped"; reason: "locked" | "disabled" }

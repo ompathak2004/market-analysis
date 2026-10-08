@@ -1,9 +1,7 @@
+import { HOUR, MINUTE } from "@ma/core";
 import { fetchBrokerReports, syncMoneycontrol } from "@ma/ingest";
 import { forEachCompany, pickBatch } from "./batch";
-import type { JobDef } from "./registry";
-
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
+import type { JobDef } from "./run";
 
 export const researchJobs: JobDef[] = [
   {

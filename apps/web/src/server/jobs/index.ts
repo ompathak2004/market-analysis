@@ -1,15 +1,20 @@
 import { altdataJobs } from "./altdata";
 import { coreJobs } from "./core";
 import { insightJobs } from "./insights";
-import { getJob, jobNames, registerJobs } from "./registry";
 import { researchJobs } from "./research";
+import type { JobDef } from "./run";
 
-registerJobs(coreJobs);
-registerJobs(researchJobs);
-registerJobs(insightJobs);
-registerJobs(altdataJobs);
+const JOBS = new Map<string, JobDef>(
+  [...coreJobs, ...researchJobs, ...insightJobs, ...altdataJobs].map((def) => [def.name, def]),
+);
 
-export type { JobDef } from "./registry";
-export type { JobOutcome, JobRun, JobStats } from "./run";
+export function getJob(name: string): JobDef | undefined {
+  return JOBS.get(name);
+}
+
+export function jobNames(): string[] {
+  return [...JOBS.keys()];
+}
+
+export type { JobDef, JobOutcome, JobRun, JobStats } from "./run";
 export { runJob } from "./run";
-export { getJob, jobNames };

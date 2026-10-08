@@ -1,4 +1,4 @@
-import { isoDate } from "@ma/core";
+import { DAY, HOUR, isoDate, MINUTE } from "@ma/core";
 import { companies, sql } from "@ma/db";
 import {
   extractRelationshipsForCompany,
@@ -10,11 +10,7 @@ import {
 } from "@ma/ingest";
 import { refreshEstimates, refreshMomentumSignals, refreshRiskSignals } from "@ma/intel";
 import { forEachCompany, pickBatch, sumStats } from "./batch";
-import type { JobDef } from "./registry";
-
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
+import type { JobDef } from "./run";
 
 export const coreJobs: JobDef[] = [
   {

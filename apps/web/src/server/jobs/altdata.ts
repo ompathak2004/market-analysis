@@ -1,3 +1,4 @@
+import { MINUTE } from "@ma/core";
 import {
   airportByIcao,
   CHOKEPOINTS,
@@ -15,10 +16,7 @@ import {
 import { refreshLogisticsSignals, refreshTravelSignals } from "@ma/intel";
 import type { AppContext } from "../context";
 import { altdataPrices } from "../queries/altdata";
-import type { JobDef } from "./registry";
-import type { JobRun, JobStats } from "./run";
-
-const MINUTE = 60_000;
+import type { JobDef, JobRun, JobStats } from "./run";
 
 function prefixed(prefix: string, stats: Record<string, number>): JobStats {
   const out: JobStats = {};
