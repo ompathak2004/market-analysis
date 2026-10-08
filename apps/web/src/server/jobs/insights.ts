@@ -39,10 +39,11 @@ export async function pickBriefBatch(
         or exists (select 1 from fundamentals f where f.company_id = c.id))
       and (s.failures is null or s.failures < 3 or s.attempted_at < now() - interval '6 hours')
       and (b.generated_at is null
-        or b.generated_at < now() - interval '20 hours'
+        or s.synced_at is null
+        or s.synced_at < now() - interval '20 hours'
         or exists (select 1 from announcements a where a.company_id = c.id
-          and a.materiality = 'high' and a.created_at > b.generated_at))
-    order by (b.generated_at is null) desc, b.generated_at asc nulls first, c.market_cap_cr desc nulls last
+          and a.materiality = 'high' and a.created_at > s.synced_at))
+    order by (b.generated_at is null) desc, s.synced_at asc nulls first, c.market_cap_cr desc nulls last
     limit ${limit}`);
   return rows.map((r) => r.id);
 }
