@@ -1,4 +1,3 @@
-export * from "./altdata/common.js";
 export * from "./altdata/logistics.js";
 export * from "./altdata/travel.js";
 export * from "./altdata/types.js";
