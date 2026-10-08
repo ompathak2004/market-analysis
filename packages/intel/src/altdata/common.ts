@@ -39,13 +39,6 @@ export function zScore(value: number, mean: number, std: number): number {
   return value === mean ? 0 : (value - mean) / Math.max(1, Math.sqrt(Math.max(mean, 1)));
 }
 
-export function median(values: number[]): number | null {
-  if (!values.length) return null;
-  const s = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? (s[mid] as number) : ((s[mid - 1] as number) + (s[mid] as number)) / 2;
-}
-
 export function weekCounts(times: number[], endMs: number, weeks: number): number[] {
   const out = new Array<number>(weeks).fill(0);
   for (const t of times) {

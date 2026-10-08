@@ -176,7 +176,7 @@ export async function refreshEstimates(db: Db, asOf = isoDate(new Date())): Prom
             eq(signals.companyId, rel.supplierCompanyId),
             eq(signals.kind, "top1_customers_pct"),
           ),
-          orderBy: desc(signals.asOf),
+          orderBy: [desc(signals.asOf), desc(signals.modelVersion)],
         })
       : undefined;
     const est = estimateRelationship(rel, supplier, customer, {

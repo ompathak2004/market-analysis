@@ -1,3 +1,4 @@
+import { median } from "@ma/core";
 import { type Db, sql } from "@ma/db";
 import {
   type AltdataEventInput,
@@ -8,7 +9,6 @@ import {
   iso,
   isoDate,
   meanStd,
-  median,
   round,
   weekCounts,
   writeAltdataSignals,

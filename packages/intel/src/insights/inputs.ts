@@ -1,3 +1,4 @@
+import { median } from "@ma/core";
 import {
   analystCalls,
   analystRatings,
@@ -250,15 +251,6 @@ const cagrPct = (now: number | null, then: number | null, years: number): number
   now == null || then == null || now <= 0 || then <= 0
     ? null
     : ((now / then) ** (1 / years) - 1) * 100;
-
-function median(values: Array<number | null>): number | null {
-  const v = values
-    .filter((x): x is number => x != null && Number.isFinite(x))
-    .sort((a, b) => a - b);
-  if (!v.length) return null;
-  const mid = Math.floor(v.length / 2);
-  return v.length % 2 ? (v[mid] as number) : ((v[mid - 1] as number) + (v[mid] as number)) / 2;
-}
 
 const shiftIso = (date: string, days: number): string =>
   new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
@@ -825,7 +817,7 @@ async function loadSupplyChain(
     .where(
       and(eq(signals.companyId, companyId), inArray(signals.kind, kinds), lte(signals.asOf, asOf)),
     )
-    .orderBy(signals.kind, desc(signals.asOf));
+    .orderBy(signals.kind, desc(signals.asOf), desc(signals.modelVersion));
   const v = (k: string, digits: number) =>
     round(sig.find((s) => s.kind === k)?.value ?? null, digits);
   const block: SupplyChainBlock = {
@@ -1322,7 +1314,7 @@ export async function assembleMarketInputs(
     prev: number | null;
   }>(sql`
     with r as (
-      select s.company_id, s.kind, s.value, row_number() over (partition by s.company_id, s.kind order by s.as_of desc) rn
+      select s.company_id, s.kind, s.value, row_number() over (partition by s.company_id, s.kind order by s.as_of desc, s.model_version desc) rn
       from signals s where s.kind in ('distress_score', 'customer_concentration_pct') and s.as_of <= ${asOf}
     )
     select c.nse_symbol symbol, c.name, a.kind, a.value, b.value prev

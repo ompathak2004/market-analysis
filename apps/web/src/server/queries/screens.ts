@@ -318,7 +318,7 @@ export async function peers(ctx: AppContext, symbol: string, limit = 12): Promis
         ) p on true
         left join lateral (
           select value from signals where company_id = c.id and kind = 'distress_score'
-          order by as_of desc limit 1
+          order by as_of desc, model_version desc limit 1
         ) s on true
         where c.sector = ${company.sector} and c.nse_symbol is not null
         order by c.market_cap_cr desc nulls last

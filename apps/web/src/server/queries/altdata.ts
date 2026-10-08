@@ -206,10 +206,10 @@ async function latestKindSignals(
     value: number;
     inputs: AltdataSignalInputs;
   }>(sql`
-    select kind, as_of::text as "asOf", value, inputs from signals
+    select distinct on (kind) kind, as_of::text as "asOf", value, inputs from signals
     where company_id = ${companyId} and kind like ${`${prefix}%`}
       and as_of = (select max(as_of) from signals where company_id = ${companyId} and kind like ${`${prefix}%`})
-    order by kind`);
+    order by kind, model_version desc`);
   return rows.map((r) => ({ ...r }));
 }
 

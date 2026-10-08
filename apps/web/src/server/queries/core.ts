@@ -99,7 +99,7 @@ export async function latestSignals(ctx: AppContext, companyId: number) {
         .selectDistinctOn([signals.kind])
         .from(signals)
         .where(eq(signals.companyId, companyId))
-        .orderBy(signals.kind, desc(signals.asOf)),
+        .orderBy(signals.kind, desc(signals.asOf), desc(signals.modelVersion)),
     { ttlMs: 15 * MINUTE, staleMs: HOUR },
   );
 }
@@ -348,7 +348,7 @@ export async function signalLeaderboard(
         .from(signals)
         .innerJoin(companies, eq(companies.id, signals.companyId))
         .where(
-          sql`${signals.kind} = ${kind} and ${signals.asOf} = (select max(as_of) from signals s2 where s2.company_id = ${signals.companyId} and s2.kind = ${kind})`,
+          sql`${signals.kind} = ${kind} and (${signals.asOf}, ${signals.modelVersion}) = (select as_of, model_version from signals s2 where s2.company_id = ${signals.companyId} and s2.kind = ${kind} order by as_of desc, model_version desc limit 1)`,
         )
         .orderBy(order === "desc" ? desc(signals.value) : signals.value)
         .limit(limit),
