@@ -227,6 +227,10 @@ export async function latestAnalystCalls(ctx: AppContext, limit = 50) {
           priorTargetPrice: analystCalls.priorTargetPrice,
           priceAtCall: analystCalls.priceAtCall,
           reportUrl: analystCalls.reportUrl,
+          title: analystCalls.title,
+          summary: analystCalls.summary,
+          reportDocumentId: analystCalls.reportDocumentId,
+          thesis: analystCalls.thesis,
         })
         .from(analystCalls)
         .innerJoin(companies, eq(companies.id, analystCalls.companyId))
