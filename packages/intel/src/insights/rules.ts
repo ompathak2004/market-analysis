@@ -162,7 +162,7 @@ function growthVsSector(i: CompanyInputs): RuleInsight | null {
     "financials.growth_vs_sector",
     "industry",
     tone,
-    `Revenue grew ${pct(f.growth.revenueYoyPct)} YoY vs a ${m.sector} median of ${pct(m.revenueYoyPct)} (${signedPp(gap)})${pat}.`,
+    `Revenue grew ${pct(f.growth.revenueYoyPct)} YoY vs the ${m.sector} median of ${pct(m.revenueYoyPct)} (${signedPp(gap)})${pat}.`,
     gap,
     ["fin"],
   );
@@ -186,7 +186,7 @@ function marginVsSector(i: CompanyInputs): RuleInsight | null {
     "industry.margin_vs_sector",
     "industry",
     tone,
-    `Operating margin ${pct(f.ratios.opmPct)} vs a ${m.sector} median of ${pct(m.opmPct)} (${signedPp(gap)}).`,
+    `Operating margin ${pct(f.ratios.opmPct)} vs the ${m.sector} median of ${pct(m.opmPct)} (${signedPp(gap)}).`,
     gap,
     ["fin"],
   );
@@ -473,7 +473,7 @@ function surpriseStreak(i: CompanyInputs): RuleInsight | null {
     "consensus.surprise_streak",
     "consensus",
     beat ? "positive" : "negative",
-    `${streak} consecutive quarterly ${s[0]?.metric ?? ""} ${beat ? "beats" : "misses"}.`.replace(
+    `${streak} consecutive quarterly ${(s[0]?.metric ?? "").replace(/_/g, " ")} ${beat ? "beats" : "misses"}.`.replace(
       "  ",
       " ",
     ),

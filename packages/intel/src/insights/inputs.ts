@@ -1061,3 +1061,334 @@ export async function assembleCompanyInputs(
   inputs.ruleInsights = computeRuleInsights(inputs);
   return inputs;
 }
+
+export interface MarketIndexQuote {
+  code: string;
+  name: string;
+  last: number;
+  chg1dPct: number | null;
+  chg1wPct: number | null;
+}
+
+export interface MarketMover {
+  symbol: string;
+  name: string;
+  sector: string | null;
+  last: number;
+  chg1dPct: number;
+  evidenceId: string;
+}
+
+export interface MarketInputs {
+  asOf: string;
+  indices: MarketIndexQuote[];
+  breadth: {
+    universe: string;
+    sample: number;
+    advancers: number;
+    decliners: number;
+    unchanged: number;
+    above50dmaPct: number | null;
+    above200dmaPct: number | null;
+  } | null;
+  sectors: Array<{
+    sector: string;
+    companies: number;
+    median1dPct: number | null;
+    median1wPct: number | null;
+  }>;
+  movers: { gainers: MarketMover[]; losers: MarketMover[] };
+  brokerCalls: Array<{
+    symbol: string;
+    broker: string;
+    action: string;
+    rating: string;
+    target: number | null;
+    evidenceId: string;
+  }>;
+  signalMovers: Array<{
+    symbol: string;
+    kind: string;
+    value: number;
+    change: number | null;
+    evidenceId: string;
+  }>;
+  announcements: Array<{
+    symbol: string;
+    subject: string;
+    category: string | null;
+    soWhat: string | null;
+    evidenceId: string;
+  }>;
+  evidence: Evidence[];
+}
+
+interface CloseRow {
+  [k: string]: unknown;
+  company_id: number;
+  symbol: string | null;
+  name: string;
+  sector: string | null;
+  last_date: string;
+  last: number;
+  prev: number | null;
+  wk: number | null;
+  sma50: number | null;
+  sma200: number | null;
+  in_breadth: boolean;
+}
+
+async function loadMarketCloses(db: Db, asOf: string, breadthIndex: string): Promise<CloseRow[]> {
+  const rows = await db.execute<CloseRow>(sql`
+    with b as (
+      select p.company_id, p.date, p.close,
+        row_number() over w_desc rn,
+        avg(p.close) over (partition by p.company_id order by p.date rows between 49 preceding and current row) sma50,
+        avg(p.close) over (partition by p.company_id order by p.date rows between 199 preceding and current row) sma200,
+        count(*) over (partition by p.company_id order by p.date rows between 199 preceding and current row) n200
+      from prices_daily p
+      where p.date <= ${asOf} and p.date > ${shiftIso(asOf, -320)}
+      window w_desc as (partition by p.company_id order by p.date desc)
+    )
+    select c.id company_id, c.nse_symbol symbol, c.name, c.sector,
+      (max(b.date) filter (where b.rn = 1))::text last_date,
+      max(b.close) filter (where b.rn = 1) last,
+      max(b.close) filter (where b.rn = 2) prev,
+      max(b.close) filter (where b.rn = 6) wk,
+      max(b.sma50) filter (where b.rn = 1 and b.n200 >= 50) sma50,
+      max(b.sma200) filter (where b.rn = 1 and b.n200 >= 200) sma200,
+      exists (
+        select 1 from index_constituents ic join indices i on i.id = ic.index_id
+        where ic.company_id = c.id and i.code = ${breadthIndex}
+      ) in_breadth
+    from b join companies c on c.id = b.company_id
+    where b.rn <= 6
+    group by c.id`);
+  const cutoff = shiftIso(asOf, -5);
+  return [...rows].filter((r) => r.last_date >= cutoff && r.last != null);
+}
+
+export async function assembleMarketInputs(
+  db: Db,
+  asOf: string,
+  breadthIndex = "NIFTY50",
+): Promise<MarketInputs> {
+  const ev: Evidence[] = [];
+  const idxRows = await db.execute<{
+    code: string;
+    name: string;
+    last: number;
+    prev: number | null;
+    wk: number | null;
+  }>(sql`
+    with r as (
+      select i.code, i.name, p.close, row_number() over (partition by i.id order by p.date desc) rn
+      from index_prices_daily p join indices i on i.id = p.index_id
+      where p.date <= ${asOf} and p.date > ${shiftIso(asOf, -14)}
+    )
+    select code, name, max(close) filter (where rn = 1) last, max(close) filter (where rn = 2) prev,
+      max(close) filter (where rn = 6) wk
+    from r group by code, name order by code`);
+  const indexQuotes: MarketIndexQuote[] = [...idxRows]
+    .filter((r) => r.last != null)
+    .map((r) => {
+      evidence(ev, `idx:${r.code}`, "source", `${r.name} index closes`, null);
+      return {
+        code: r.code,
+        name: r.name,
+        last: round(r.last, 2) as number,
+        chg1dPct: round(pctChange(r.last, r.prev)),
+        chg1wPct: round(pctChange(r.last, r.wk)),
+      };
+    });
+
+  const closes = await loadMarketCloses(db, asOf, breadthIndex);
+  const withChg = closes.map((r) => ({
+    ...r,
+    chg1d: pctChange(r.last, r.prev),
+    chg1w: pctChange(r.last, r.wk),
+  }));
+  const breadthSet = withChg.filter((r) => r.in_breadth);
+  const breadthBase = breadthSet.length >= 5 ? breadthSet : withChg;
+  let breadth: MarketInputs["breadth"] = null;
+  if (breadthBase.length) {
+    const share = (pred: (r: (typeof withChg)[number]) => boolean | null) => {
+      const known = breadthBase.filter((r) => pred(r) != null);
+      return known.length
+        ? round((known.filter((r) => pred(r)).length / known.length) * 100)
+        : null;
+    };
+    breadth = {
+      universe: breadthBase === breadthSet ? breadthIndex : "covered companies",
+      sample: breadthBase.length,
+      advancers: breadthBase.filter((r) => (r.chg1d ?? 0) > 0).length,
+      decliners: breadthBase.filter((r) => (r.chg1d ?? 0) < 0).length,
+      unchanged: breadthBase.filter((r) => (r.chg1d ?? 0) === 0).length,
+      above50dmaPct: share((r) => (r.sma50 == null ? null : r.last > r.sma50)),
+      above200dmaPct: share((r) => (r.sma200 == null ? null : r.last > r.sma200)),
+    };
+    evidence(
+      ev,
+      "brd",
+      "source",
+      `Breadth across ${breadth.sample} ${breadth.universe} stocks`,
+      null,
+    );
+  }
+
+  const bySector = new Map<string, typeof withChg>();
+  for (const r of withChg) {
+    if (!r.sector) continue;
+    const list = bySector.get(r.sector) ?? [];
+    list.push(r);
+    bySector.set(r.sector, list);
+  }
+  const sectors = [...bySector.entries()]
+    .map(([sector, list]) => ({
+      sector,
+      companies: list.length,
+      median1dPct: round(median(list.map((r) => r.chg1d))),
+      median1wPct: round(median(list.map((r) => r.chg1w))),
+    }))
+    .sort((a, b) => (b.median1dPct ?? -999) - (a.median1dPct ?? -999))
+    .slice(0, 14);
+  if (sectors.length) evidence(ev, "sec", "source", "Sector median returns", null);
+
+  const mover = (r: (typeof withChg)[number]): MarketMover => ({
+    symbol: r.symbol ?? r.name,
+    name: r.name,
+    sector: r.sector,
+    last: round(r.last, 2) as number,
+    chg1dPct: round(r.chg1d) as number,
+    evidenceId: evidence(
+      ev,
+      `mov:${r.symbol ?? r.company_id}`,
+      "source",
+      `${r.symbol ?? r.name} daily close`,
+      null,
+    ),
+  });
+  const ranked = withChg
+    .filter((r) => r.chg1d != null)
+    .sort((a, b) => (b.chg1d as number) - (a.chg1d as number));
+  const gainers = ranked
+    .filter((r) => (r.chg1d as number) > 0)
+    .slice(0, 5)
+    .map(mover);
+  const losers = ranked
+    .filter((r) => (r.chg1d as number) < 0)
+    .reverse()
+    .slice(0, 5)
+    .map(mover);
+
+  const since = shiftIso(asOf, -1);
+  const calls = await db
+    .select({
+      id: analystCalls.id,
+      symbol: companies.nseSymbol,
+      name: companies.name,
+      broker: analystCalls.broker,
+      action: analystCalls.action,
+      rating: analystCalls.rating,
+      target: analystCalls.targetPrice,
+      publishedAt: analystCalls.publishedAt,
+      url: analystCalls.reportUrl,
+    })
+    .from(analystCalls)
+    .innerJoin(companies, eq(companies.id, analystCalls.companyId))
+    .where(and(gte(analystCalls.publishedAt, since), lte(analystCalls.publishedAt, asOf)))
+    .orderBy(desc(analystCalls.publishedAt), desc(analystCalls.id))
+    .limit(15);
+  const brokerCalls = calls.map((c) => ({
+    symbol: c.symbol ?? c.name,
+    broker: c.broker,
+    action: c.action,
+    rating: c.rating,
+    target: round(c.target ?? null, 2),
+    evidenceId: evidence(
+      ev,
+      `brk:${c.id}`,
+      "broker_pdf",
+      `${c.broker} on ${c.symbol ?? c.name} (${c.publishedAt})`,
+      c.url ?? null,
+    ),
+  }));
+
+  const sigRows = await db.execute<{
+    symbol: string | null;
+    name: string;
+    kind: string;
+    value: number;
+    prev: number | null;
+  }>(sql`
+    with r as (
+      select s.company_id, s.kind, s.value, row_number() over (partition by s.company_id, s.kind order by s.as_of desc) rn
+      from signals s where s.kind in ('distress_score', 'customer_concentration_pct') and s.as_of <= ${asOf}
+    )
+    select c.nse_symbol symbol, c.name, a.kind, a.value, b.value prev
+    from r a join companies c on c.id = a.company_id
+    left join r b on b.company_id = a.company_id and b.kind = a.kind and b.rn = 2
+    where a.rn = 1 and a.value is not null
+    order by abs(coalesce(a.value - b.value, 0)) desc, a.value desc
+    limit 8`);
+  const signalMovers = [...sigRows].map((s) => ({
+    symbol: s.symbol ?? s.name,
+    kind: s.kind,
+    value: round(s.value, 2) as number,
+    change: s.prev == null ? null : round(s.value - s.prev, 2),
+    evidenceId: evidence(
+      ev,
+      `sig:${s.kind}:${s.symbol ?? s.name}`,
+      "source",
+      `${s.symbol ?? s.name} ${s.kind}`,
+      null,
+    ),
+  }));
+
+  const annRows = await db
+    .select({
+      id: announcements.id,
+      symbol: companies.nseSymbol,
+      name: companies.name,
+      subject: announcements.subject,
+      category: announcements.triageCategory,
+      soWhat: announcements.soWhat,
+      url: announcements.attachmentUrl,
+    })
+    .from(announcements)
+    .innerJoin(companies, eq(companies.id, announcements.companyId))
+    .where(
+      and(
+        eq(announcements.materiality, "high"),
+        gte(announcements.publishedAt, new Date(Date.parse(`${since}T00:00:00Z`))),
+        sql`${announcements.publishedAt} < ${shiftIso(asOf, 1)}`,
+      ),
+    )
+    .orderBy(desc(announcements.publishedAt))
+    .limit(10);
+  const material = annRows.map((a) => ({
+    symbol: a.symbol ?? a.name,
+    subject: a.subject.slice(0, 160),
+    category: a.category ?? null,
+    soWhat: a.soWhat ?? null,
+    evidenceId: evidence(
+      ev,
+      `ann:${a.id}`,
+      "announcement",
+      `${a.symbol ?? a.name}: ${a.subject}`.slice(0, 140),
+      a.url ?? null,
+    ),
+  }));
+
+  return {
+    asOf,
+    indices: indexQuotes,
+    breadth,
+    sectors,
+    movers: { gainers, losers },
+    brokerCalls,
+    signalMovers,
+    announcements: material,
+    evidence: ev,
+  };
+}
