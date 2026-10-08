@@ -5,7 +5,7 @@ import { MiniRange } from "@/components/ui/sparkline";
 import { TAB_TITLE, TABS, type Tab } from "@/lib/commands";
 import { compactInr, num, pct } from "@/lib/format";
 import { getContext } from "@/server/context";
-import { quoteView } from "@/server/queries/ui";
+import { quoteView } from "@/server/queries";
 import { asOf } from "../shared";
 
 export async function QuoteHeader({ symbol }: { symbol: string }) {

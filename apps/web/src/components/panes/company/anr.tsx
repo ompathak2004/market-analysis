@@ -12,8 +12,14 @@ import { TargetRange } from "@/components/ui/target-range";
 import { Timeline } from "@/components/ui/timeline";
 import { fyLabel, num, pct, ratingBucket, shortDate } from "@/lib/format";
 import { getContext } from "@/server/context";
-import type { BrokerCall, CompanyResearch } from "@/server/queries/types";
-import { brokerDigest, companyResearch } from "@/server/queries/ui";
+import {
+  type BrokerCall,
+  brokerDigest,
+  type CompanyCalls,
+  type CompanyResearch,
+  companyCalls,
+  companyResearch,
+} from "@/server/queries";
 import { callDigest } from "../home/flow";
 import { ActionBadge, attempt, modelFoot, PaneError, ratingTone } from "../shared";
 
@@ -23,7 +29,9 @@ function latestByBroker(calls: BrokerCall[]): BrokerCall[] {
   return [...seen.values()];
 }
 
-function distParts(r: CompanyResearch): { parts: DistPart[]; source: string } {
+type Research = CompanyResearch & CompanyCalls;
+
+function distParts(r: Research): { parts: DistPart[]; source: string } {
   if (r.ratings)
     return {
       source: `Moneycontrol · ${r.ratings.analystCount ?? "?"} analysts`,
@@ -49,7 +57,12 @@ function distParts(r: CompanyResearch): { parts: DistPart[]; source: string } {
 }
 
 async function load(symbol: string) {
-  return attempt(companyResearch(getContext(), symbol));
+  const ctx = getContext();
+  return attempt(
+    Promise.all([companyResearch(ctx, symbol), companyCalls(ctx, symbol)]).then(
+      ([research, calls]): Research => ({ ...research, ...calls }),
+    ),
+  );
 }
 
 export async function ConsensusPane({ symbol }: { symbol: string }) {
@@ -59,11 +72,12 @@ export async function ConsensusPane({ symbol }: { symbol: string }) {
   const r = res.data;
   const { parts, source } = distParts(r);
   const total = parts.reduce((s, p) => s + p.value, 0);
-  const history = r.consensus.map((m) => {
-    const all = m.buy + m.outperform + m.hold + m.underperform + m.sell;
+  const history = r.consensusHistory.map((m) => {
+    const buy = (m.buy ?? 0) + (m.outperform ?? 0);
+    const all = buy + (m.hold ?? 0) + (m.underperform ?? 0) + (m.sell ?? 0);
     return {
       label: m.month.slice(5, 7),
-      value: all ? ((m.buy + m.outperform) / all) * 100 : 0,
+      value: all ? (buy / all) * 100 : 0,
       tone: "pos" as const,
     };
   });
@@ -105,20 +119,21 @@ export async function TargetsPane({ symbol }: { symbol: string }) {
     .map((c) => c.targetPrice)
     .filter((t): t is number => t != null && t > 0)
     .sort((a, b) => a - b);
-  const low = r.target?.low ?? current[0] ?? null;
-  const high = r.target?.high ?? current.at(-1) ?? null;
+  const target = r.priceTargets;
+  const low = target?.low ?? current[0] ?? null;
+  const high = target?.high ?? current.at(-1) ?? null;
   const mean =
-    r.target?.mean ?? (current.length ? current.reduce((s, t) => s + t, 0) / current.length : null);
+    target?.mean ?? (current.length ? current.reduce((s, t) => s + t, 0) / current.length : null);
   const median = current.length ? (current[Math.floor((current.length - 1) / 2)] ?? null) : null;
   const upside = mean != null && r.price ? ((mean - r.price) / r.price) * 100 : null;
-  const digest = dg.ok ? dg.data : null;
+  const digest = dg.ok && dg.data.digest ? { ...dg.data, digest: dg.data.digest } : null;
   return (
     <Pane
       id="targets"
       title="TARGET PRICE"
       area="targets"
-      meta={r.target ? `as of ${shortDate(r.target.asOf)}` : `${current.length} targets`}
-      foot={<output>{digest ? modelFoot(digest.meta) : "Moneycontrol targets · INR"}</output>}
+      meta={target ? `as of ${shortDate(target.asOf)}` : `${current.length} targets`}
+      foot={<output>{digest?.meta ? modelFoot(digest.meta) : "Moneycontrol targets · INR"}</output>}
     >
       {low != null && high != null ? (
         <>
@@ -169,13 +184,26 @@ export async function TargetsPane({ symbol }: { symbol: string }) {
 }
 
 type Estimate = CompanyResearch["estimates"][number];
-type Surprise = CompanyResearch["surprises"][number];
+type SurpriseQuarter = CompanyResearch["surprises"][number];
+type Surprise = NonNullable<SurpriseQuarter["eps"]> & { metric: string; quarterEnd: string };
+
+const SURPRISE_METRICS = ["eps", "revenue", "netProfit"] as const;
+
+function flattenSurprises(quarters: SurpriseQuarter[]): Surprise[] {
+  return quarters.flatMap((q) =>
+    SURPRISE_METRICS.flatMap((metric) => {
+      const s = q[metric];
+      return s ? [{ ...s, metric, quarterEnd: q.quarterEnd }] : [];
+    }),
+  );
+}
 
 export async function EstimatesPane({ symbol }: { symbol: string }) {
   const res = await load(symbol);
   if (!res.ok)
     return <PaneError id="estimates" title="ESTIMATES" area="estimates" code={res.code} />;
-  const { estimates, surprises } = res.data;
+  const { estimates } = res.data;
+  const surprises = flattenSurprises(res.data.surprises);
   const beats = surprises.filter((s) => s.outcome === "beat").length;
   const misses = surprises.filter((s) => s.outcome === "miss").length;
   return (

@@ -6,8 +6,12 @@ import { Pane } from "@/components/ui/pane";
 import { Timeline, type TimelineItem } from "@/components/ui/timeline";
 import { clampText, shortDate } from "@/lib/format";
 import { getContext } from "@/server/context";
-import type { AltdataActivityItem, LatestBrokerCall } from "@/server/queries/types";
-import { altdataActivity, latestBrokerCalls } from "@/server/queries/ui";
+import {
+  type AltdataActivityItem,
+  altdataActivity,
+  type LatestBrokerCall,
+  latestBrokerCalls,
+} from "@/server/queries";
 import { ActionBadge, attempt, PaneError, ratingTone } from "../shared";
 
 export function callDigest(c: {

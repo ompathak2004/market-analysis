@@ -7,14 +7,16 @@ import { EvidenceRefs } from "@/components/ui/evidence";
 import { Pane } from "@/components/ui/pane";
 import { clampText, num, pct, shortDate } from "@/lib/format";
 import { getContext } from "@/server/context";
-import { marketOverview, movers } from "@/server/queries";
-import type { FeedItem, FilingItem } from "@/server/queries/types";
 import {
+  type FeedItem,
+  type FilingItem,
   intelligenceFeed,
   latestBrokerCalls,
   marketBrief,
+  marketOverview,
+  movers,
   recentFilings,
-} from "@/server/queries/ui";
+} from "@/server/queries";
 import { asOf, attempt, modelFoot, PaneError, VerdictBadge } from "../shared";
 
 interface RuleBullet {
@@ -128,8 +130,8 @@ export async function MarketBriefPane() {
   const res = await attempt(marketBrief(getContext()));
   if (!res.ok) return <PaneError id="brief" title="MARKET BRIEF" area="brief" code={res.code} />;
   const today = shortDate(new Date());
-  if (res.data) {
-    const { brief, meta, inputCount } = res.data;
+  if (res.data.brief && res.data.meta) {
+    const { brief, meta } = res.data;
     return (
       <Pane
         id="brief"
@@ -140,7 +142,7 @@ export async function MarketBriefPane() {
         foot={
           <>
             <output>{modelFoot(meta)}</output>
-            <span className="right">inputs {inputCount}</span>
+            <span className="right">inputs {meta.inputs}</span>
           </>
         }
       >
@@ -213,11 +215,11 @@ export async function IntelligenceFeedPane() {
             <li key={f.symbol} data-row="" data-href={`/c/${encodeURIComponent(f.symbol)}/intl`}>
               <div>
                 <Sym symbol={f.symbol} tab="intl" />
-                <VerdictBadge label={f.label} score={f.score} />
+                <VerdictBadge label={f.verdict.label} score={f.verdict.score} />
                 <span className="dim truncate">{f.sector}</span>
                 <span className="right">{asOf(f.generatedAt)}</span>
               </div>
-              <p className="clamp-2">{f.whatChanged ?? f.oneLiner}</p>
+              <p className="clamp-2">{f.whatChanged}</p>
             </li>
           ))}
         </ul>

@@ -6,8 +6,7 @@ import { KeyValue } from "@/components/ui/key-value";
 import { Pane, PaneSkeleton } from "@/components/ui/pane";
 import { istDateTime, istTime, shortDate } from "@/lib/format";
 import { getContext } from "@/server/context";
-import { companyAnnouncements } from "@/server/queries";
-import { announcementDetail } from "@/server/queries/ui";
+import { announcementDetail, companyAnnouncements } from "@/server/queries";
 import { attempt, PaneError } from "../shared";
 
 type Ann = NonNullable<Awaited<ReturnType<typeof companyAnnouncements>>>[number];

@@ -6,8 +6,7 @@ import { Pane, PaneSkeleton } from "@/components/ui/pane";
 import { Timeline, type TimelineItem } from "@/components/ui/timeline";
 import { clampText, num } from "@/lib/format";
 import { getContext } from "@/server/context";
-import { companyAnnouncements } from "@/server/queries";
-import { companyBrief, companyResearch } from "@/server/queries/ui";
+import { companyAnnouncements, companyBrief, companyCalls } from "@/server/queries";
 import { attempt, PaneError } from "../shared";
 import { BriefPane } from "./brief";
 
@@ -34,11 +33,11 @@ export async function ChangesPane({ symbol }: { symbol: string }) {
   const [brief, anns, research] = await Promise.all([
     attempt(companyBrief(ctx, symbol)),
     attempt(companyAnnouncements(ctx, symbol, 80)),
-    attempt(companyResearch(ctx, symbol)),
+    attempt(companyCalls(ctx, symbol)),
   ]);
   if (!anns.ok && !research.ok)
     return <PaneError id="changes" title="WHAT CHANGED" area="changes" code={anns.code} />;
-  const view = brief.ok ? brief.data : null;
+  const view = brief.ok && brief.data.brief ? { ...brief.data, brief: brief.data.brief } : null;
   const items: Array<TimelineItem & { t: number }> = [];
   if (anns.ok)
     for (const a of anns.data ?? []) {
@@ -113,7 +112,7 @@ export async function ChangesPane({ symbol }: { symbol: string }) {
 export async function EvidencePane({ symbol }: { symbol: string }) {
   const res = await attempt(companyBrief(getContext(), symbol));
   if (!res.ok) return <PaneError id="evidence" title="EVIDENCE" area="evidence" code={res.code} />;
-  const ev = res.data?.evidence ?? [];
+  const ev = res.data.evidence;
   return (
     <Pane
       id="evidence"

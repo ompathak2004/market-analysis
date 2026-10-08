@@ -9,8 +9,7 @@ import { Chg, Num } from "@/components/ui/num";
 import { Pane, PaneSkeleton } from "@/components/ui/pane";
 import { compact, compactInr, fyLabel, num, pct } from "@/lib/format";
 import { getContext } from "@/server/context";
-import type { Peer } from "@/server/queries/types";
-import { keyStats, peers, rangeStats, ruleInsights } from "@/server/queries/ui";
+import { companyBrief, keyStats, type Peer, peers, rangeStats } from "@/server/queries";
 import { attempt, PaneError } from "../shared";
 import { BriefPane, RULE_TONE } from "./brief";
 
@@ -34,9 +33,9 @@ const GROUP_ORDER: RuleGroup[] = [
 ];
 
 export async function InsightsPane({ symbol }: { symbol: string }) {
-  const res = await attempt(ruleInsights(getContext(), symbol));
+  const res = await attempt(companyBrief(getContext(), symbol));
   if (!res.ok) return <PaneError id="insights" title="INSIGHTS" area="insights" code={res.code} />;
-  const items = res.data;
+  const items = res.data.ruleInsights;
   return (
     <Pane
       id="insights"

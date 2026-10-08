@@ -6,8 +6,7 @@ import { Pane, PaneSkeleton } from "@/components/ui/pane";
 import { Bars } from "@/components/ui/sparkline";
 import { istTime, minutes, shortDate } from "@/lib/format";
 import { getContext } from "@/server/context";
-import type { CompanyTravel, Place } from "@/server/queries/types";
-import { companyTravel } from "@/server/queries/ui";
+import { type AirportRef, type CompanyTravel, companyTravel } from "@/server/queries";
 import { attempt, PaneError } from "../shared";
 import { AltSignalsPane, NoCoverage, sourceLabels } from "./alt";
 
@@ -21,11 +20,11 @@ const TIER_TONE: Record<string, "pos" | "warn" | "neu"> = {
   inferred: "warn",
 };
 
-function placeCode(p: Place | null): string {
+function placeCode(p: AirportRef | null): string {
   return p ? (p.iata ?? p.icao) : "???";
 }
 
-function placeLabel(p: Place | null): string {
+function placeLabel(p: AirportRef | null): string {
   if (!p) return "unknown";
   return `${placeCode(p)} ${p.city ?? ""}`.trim();
 }
@@ -196,7 +195,7 @@ function routes(legs: readonly Leg[], homeIcao: string | null) {
     homeIcao && seen.has(homeIcao)
       ? homeIcao
       : ([...seen.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null);
-  const places = new Map<string, Place>();
+  const places = new Map<string, AirportRef>();
   for (const l of legs) for (const p of [l.dep, l.arr]) if (p) places.set(p.icao, p);
   const counts = new Map<string, number>();
   for (const l of legs) {
@@ -213,7 +212,7 @@ function routes(legs: readonly Leg[], homeIcao: string | null) {
   return { hub, list };
 }
 
-function RouteSchematic({ hub, list }: { hub: Place; list: readonly Route[] }) {
+function RouteSchematic({ hub, list }: { hub: AirportRef; list: readonly Route[] }) {
   const W = 400;
   const H = 200;
   const shown = list.slice(0, 6);

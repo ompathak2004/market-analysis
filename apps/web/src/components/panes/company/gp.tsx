@@ -10,8 +10,7 @@ import { Sparkline } from "@/components/ui/sparkline";
 import { normalizeBars, pickInterval } from "@/lib/chart";
 import { compact, num, pct, shortDate } from "@/lib/format";
 import { getContext } from "@/server/context";
-import { priceHistory } from "@/server/queries";
-import { rangeStats } from "@/server/queries/ui";
+import { priceHistory, rangeStats } from "@/server/queries";
 import { attempt, PaneError } from "../shared";
 
 export const RANGES = ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"] as const;

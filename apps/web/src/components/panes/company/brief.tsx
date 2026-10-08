@@ -6,8 +6,7 @@ import { EvidenceList, EvidenceRefs } from "@/components/ui/evidence";
 import { Gauge } from "@/components/ui/gauge";
 import { Pane } from "@/components/ui/pane";
 import { getContext } from "@/server/context";
-import type { CompanyBriefView } from "@/server/queries/types";
-import { companyBrief, ruleInsights, ruleVerdict } from "@/server/queries/ui";
+import { type CompanyBriefView, companyBrief, ruleVerdict } from "@/server/queries";
 import { attempt, modelFoot, PaneError } from "../shared";
 
 export const RULE_TONE: Record<RuleInsight["tone"], "pos" | "neg" | "neu"> = {
@@ -54,8 +53,13 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 const SEVERITY_TONE = { low: "neu", medium: "warn", high: "neg" } as const;
 
-export function BriefBody({ view, full }: { view: CompanyBriefView; full: boolean }) {
-  const b: CompanyBrief = view.brief;
+type LoadedBrief = CompanyBriefView & {
+  brief: CompanyBrief;
+  meta: NonNullable<CompanyBriefView["meta"]>;
+};
+
+export function BriefBody({ view, full }: { view: LoadedBrief; full: boolean }) {
+  const b = view.brief;
   const prev = view.previous;
   const delta = prev ? b.verdict.score - prev.score : null;
   return (
@@ -224,20 +228,20 @@ export async function BriefPane({
   const title = "INTELLIGENCE BRIEF";
   if (!res.ok) return <PaneError id={area} title={title} area={area} code={res.code} />;
   const actions = full ? null : <Chip href={`/c/${encodeURIComponent(symbol)}/intl`}>INTL →</Chip>;
-  if (res.data)
+  const { brief, meta, ruleInsights } = res.data;
+  if (brief && meta)
     return (
       <Pane
         id={area}
         title={title}
         area={area}
-        meta={res.data.meta.generatedAt.slice(0, 10)}
+        meta={`${meta.generatedAt.slice(0, 10)}${meta.stale ? " · stale" : ""}`}
         actions={actions}
-        foot={<output>{modelFoot(res.data.meta)}</output>}
+        foot={<output>{modelFoot(meta)}</output>}
       >
-        <BriefBody view={res.data} full={full} />
+        <BriefBody view={{ ...res.data, brief, meta }} full={full} />
       </Pane>
     );
-  const items = await attempt(ruleInsights(ctx, symbol));
   return (
     <Pane
       id={area}
@@ -247,13 +251,7 @@ export async function BriefPane({
       actions={actions}
       foot={<output>rule-based read · LLM brief pending · gpt-oss-120b</output>}
     >
-      {items.ok ? (
-        <RuleBriefBody items={items.data} />
-      ) : (
-        <div className="pane-section">
-          <p className="fallback-note">Rule inputs unavailable ({items.code}).</p>
-        </div>
-      )}
+      <RuleBriefBody items={ruleInsights} />
     </Pane>
   );
 }

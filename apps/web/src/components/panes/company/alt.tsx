@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/chip";
 import { Empty } from "@/components/ui/empty";
 import { Pane } from "@/components/ui/pane";
 import { num, pct, shortDate, signalLabel } from "@/lib/format";
-import type { SignalRow } from "@/server/queries/types";
+import type { AltdataSignalView } from "@/server/queries";
 
 export function sourceLabels(sources: readonly string[]): string {
   const out = new Set<string>();
@@ -31,7 +31,7 @@ export function altValue(kind: string, v: number | null): string {
   return num(v, Number.isInteger(v) ? 0 : 1);
 }
 
-function baselineText(s: SignalRow): string {
+function baselineText(s: AltdataSignalView): string {
   const b = s.inputs.baseline;
   if (!b) return `${shortDate(s.inputs.window.from)} – ${shortDate(s.inputs.window.to)}`;
   return `vs ${num(b.mean, 1)} baseline · ${shortDate(b.from)} – ${shortDate(b.to)}`;
@@ -44,7 +44,7 @@ export function AltSignalsPane({
   lastSampleAt,
 }: {
   layer: "air" | "sea";
-  signals: readonly SignalRow[];
+  signals: readonly AltdataSignalView[];
   sources: readonly string[];
   lastSampleAt: string | null;
 }) {

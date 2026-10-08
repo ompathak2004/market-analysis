@@ -14,6 +14,7 @@ import {
   inputHash,
   type MarketBrief,
   marketBriefSchema,
+  type PreviousBrief,
   type RuleInsight,
   type VerdictLabel,
 } from "@ma/intel";
@@ -33,11 +34,18 @@ export interface InsightMeta {
   stale: boolean;
 }
 
+export interface PreviousVerdict {
+  score: number;
+  label: VerdictLabel;
+  generatedAt: string;
+}
+
 export interface CompanyBriefView {
   symbol: string;
   asOf: string;
   brief: CompanyBrief | null;
   meta: InsightMeta | null;
+  previous: PreviousVerdict | null;
   ruleInsights: RuleInsight[];
   evidence: Evidence[];
 }
@@ -86,6 +94,12 @@ const storedEvidence = (row: InsightRow): Evidence[] => {
   return Array.isArray(ev) ? (ev as Evidence[]) : [];
 };
 
+const storedPrevious = (row: InsightRow): PreviousVerdict | null => {
+  const prev = (row.inputs as { previousBrief?: PreviousBrief | null }).previousBrief;
+  if (!prev) return null;
+  return { score: prev.verdict.score, label: prev.verdict.label, generatedAt: prev.generatedAt };
+};
+
 async function loadInputs(ctx: AppContext, companyId: number): Promise<CompanyInputs> {
   return assembleCompanyInputs(ctx.db, companyId, isoDate(new Date()));
 }
@@ -111,6 +125,7 @@ export async function companyBrief(ctx: AppContext, symbol: string): Promise<Com
         asOf: inputs.asOf,
         brief,
         meta: row && brief ? metaOf(row, stale) : null,
+        previous: row && brief ? storedPrevious(row) : null,
         ruleInsights: inputs.ruleInsights,
         evidence: row && brief ? storedEvidence(row) : inputs.evidence,
       };
@@ -170,8 +185,7 @@ export async function intelligenceFeed(ctx: AppContext, limit = 20): Promise<Fee
         const parsed = companyBriefSchema.safeParse(row.output);
         if (!parsed.success) return [];
         const b = parsed.data;
-        const prev = (row.inputs as { previousBrief?: { verdict?: { score?: unknown } } | null })
-          .previousBrief?.verdict?.score;
+        const prev = storedPrevious(row)?.score;
         return [
           {
             symbol: symbol ?? name,
@@ -182,7 +196,7 @@ export async function intelligenceFeed(ctx: AppContext, limit = 20): Promise<Fee
               label: b.verdict.label,
               confidence: b.verdict.confidence,
             },
-            previousScore: typeof prev === "number" ? prev : null,
+            previousScore: prev ?? null,
             oneLiner: b.verdict.oneLiner,
             whatChanged: b.whatChanged[0] ?? b.thesis[0]?.point ?? b.verdict.oneLiner,
             generatedAt: row.generatedAt.toISOString(),

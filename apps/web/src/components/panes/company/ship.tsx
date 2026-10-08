@@ -8,8 +8,7 @@ import { Pane, PaneSkeleton } from "@/components/ui/pane";
 import { Sparkline } from "@/components/ui/sparkline";
 import { compact, istTime, minutes, num, shortDate } from "@/lib/format";
 import { getContext } from "@/server/context";
-import type { CompanyLogistics } from "@/server/queries/types";
-import { companyLogistics } from "@/server/queries/ui";
+import { type CompanyLogistics, companyLogistics } from "@/server/queries";
 import { attempt, PaneError } from "../shared";
 import { AltSignalsPane, NoCoverage } from "./alt";
 
