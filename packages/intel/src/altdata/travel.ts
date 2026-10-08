@@ -1,3 +1,4 @@
+import { haversineKm } from "@ma/core";
 import { type Db, sql } from "@ma/db";
 import {
   type AltdataEventInput,
@@ -6,7 +7,6 @@ import {
   emitAltdataEvents,
   fitRead,
   formatDay,
-  haversineKm,
   iso,
   isoDate,
   meanStd,
@@ -23,11 +23,11 @@ import {
   type TravelSignalKind,
 } from "./types.js";
 
-export const COUNTERPARTY_RADIUS_KM = 60;
-export const EVENT_WINDOW_DAYS = 3;
-export const EVENT_SUBJECT = /board meeting|financial results|outcome of board/i;
+const COUNTERPARTY_RADIUS_KM = 60;
+const EVENT_WINDOW_DAYS = 3;
+const EVENT_SUBJECT = /board meeting|financial results|outcome of board/i;
 
-export const TRAVEL_KIND_BASE: Record<TravelSignalKind, number> = {
+const TRAVEL_KIND_BASE: Record<TravelSignalKind, number> = {
   travel_legs_7d: 1,
   travel_frequency_anomaly: 0.8,
   travel_new_destination: 0.7,
@@ -665,13 +665,6 @@ export interface RefreshTravelResult {
   written: number;
   events: number;
   skipped: number;
-}
-
-export async function travelCompanyIds(db: Db): Promise<number[]> {
-  const rows = await db.execute<{ id: number }>(sql`
-    select distinct l.company_id as id from corporate_aircraft_companies l
-    join corporate_aircraft a on a.id = l.aircraft_id where a.active order by 1`);
-  return rows.map((r) => r.id);
 }
 
 export async function refreshTravelSignals(

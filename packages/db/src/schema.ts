@@ -324,7 +324,7 @@ export const signals = pgTable(
     createdAt: timestamps.createdAt,
   },
   (t) => [
-    primaryKey({ columns: [t.companyId, t.asOf, t.kind] }),
+    primaryKey({ columns: [t.companyId, t.asOf, t.kind, t.modelVersion] }),
     index("signals_kind_asof_idx").on(t.kind, t.asOf),
   ],
 );

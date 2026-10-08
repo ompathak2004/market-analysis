@@ -3,6 +3,10 @@ import { createHash } from "node:crypto";
 export const sha256 = (input: string | Uint8Array): string =>
   createHash("sha256").update(input).digest("hex");
 
+export const MINUTE = 60_000;
+export const HOUR = 60 * MINUTE;
+export const DAY = 24 * HOUR;
+
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export function chunk<T>(items: readonly T[], size: number): T[][] {
@@ -41,4 +45,15 @@ export function addYears(d: Date, years: number): Date {
   const out = new Date(d);
   out.setUTCFullYear(out.getUTCFullYear() + years);
   return out;
+}
+
+const EARTH_KM = 6371.0088;
+const RAD = Math.PI / 180;
+
+export function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const dLat = (lat2 - lat1) * RAD;
+  const dLon = (lon2 - lon1) * RAD;
+  const a =
+    Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * RAD) * Math.cos(lat2 * RAD) * Math.sin(dLon / 2) ** 2;
+  return 2 * EARTH_KM * Math.asin(Math.min(1, Math.sqrt(a)));
 }

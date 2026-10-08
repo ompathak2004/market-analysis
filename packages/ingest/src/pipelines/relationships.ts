@@ -1,4 +1,4 @@
-import { addYears, isoDate } from "@ma/core";
+import { addYears, assertTimeLeft, DeadlineExceededError, isoDate } from "@ma/core";
 import { companies, companyAliases, eq, relationships, signals, sql } from "@ma/db";
 import type { IngestContext } from "../context.js";
 import {
@@ -13,6 +13,7 @@ import {
 } from "../extract/relationships.js";
 
 const YEAR_MS = 365 * 86_400_000;
+const DOCUMENT_MS = 30_000;
 
 export interface RelationshipExtractionResult {
   documents: number;
@@ -58,12 +59,14 @@ export async function extractRelationshipsForCompany(
   let documentsProcessed = 0;
 
   for (const src of sources) {
+    assertTimeLeft(DOCUMENT_MS);
     const fyEnd = periodEndFromLabel(src.label);
     const fiscalYear = src.kind === "annual_report" ? fiscalYearFromLabel(src.label) : null;
     let doc: Awaited<ReturnType<typeof ctx.docs.fetch>>["doc"];
     try {
       ({ doc } = await ctx.docs.fetch(src.url, { source: src.kind, companyId, maxAgeMs: YEAR_MS }));
     } catch (err) {
+      if (err instanceof DeadlineExceededError) throw err;
       ctx.logger.warn({ err, url: src.url }, "document fetch failed");
       continue;
     }
@@ -151,12 +154,8 @@ async function upsertSignal(
     .insert(signals)
     .values({ companyId, asOf, kind, value, inputs, modelVersion: RELATIONSHIP_EXTRACTOR_VERSION })
     .onConflictDoUpdate({
-      target: [signals.companyId, signals.asOf, signals.kind],
-      set: {
-        value: sql`excluded.value`,
-        inputs: sql`excluded.inputs`,
-        modelVersion: sql`excluded.model_version`,
-      },
+      target: [signals.companyId, signals.asOf, signals.kind, signals.modelVersion],
+      set: { value: sql`excluded.value`, inputs: sql`excluded.inputs` },
     });
 }
 

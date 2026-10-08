@@ -1,4 +1,4 @@
-import { isoDate } from "@ma/core";
+import { DAY, HOUR, isoDate, MINUTE } from "@ma/core";
 import { companies, sql } from "@ma/db";
 import {
   extractRelationshipsForCompany,
@@ -10,11 +10,7 @@ import {
 } from "@ma/ingest";
 import { refreshEstimates, refreshMomentumSignals, refreshRiskSignals } from "@ma/intel";
 import { forEachCompany, pickBatch, sumStats } from "./batch";
-import type { JobDef } from "./registry";
-
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
+import type { JobDef } from "./run";
 
 export const coreJobs: JobDef[] = [
   {
@@ -24,7 +20,6 @@ export const coreJobs: JobDef[] = [
       const codes = ["NIFTY50", "NIFTYNEXT50", "NIFTY100", "NIFTY200", ctx.config.DATA_UNIVERSE];
       const results = [];
       for (const code of new Set(codes)) results.push(await syncUniverse(ctx, code));
-      await ctx.api.invalidatePrefix("search:");
       return sumStats(results);
     },
   },
@@ -35,13 +30,9 @@ export const coreJobs: JobDef[] = [
       const ids = await pickBatch(run.ctx, "prices", run.ctx.config.DATA_UNIVERSE, 400, {
         maxAgeMs: 12 * MINUTE,
       });
-      const stats = await forEachCompany(run, ids, run.ctx.config.SCRAPE_CONCURRENCY, (id) =>
+      return forEachCompany(run, ids, run.ctx.config.SCRAPE_CONCURRENCY, (id) =>
         syncPrices(run.ctx, id, "1mo"),
       );
-      await run.ctx.api.invalidatePrefix("prices:");
-      await run.ctx.api.invalidatePrefix("movers:");
-      await run.ctx.api.invalidatePrefix("quote:");
-      return stats;
     },
   },
   {
@@ -51,14 +42,11 @@ export const coreJobs: JobDef[] = [
       const ids = await pickBatch(run.ctx, "fundamentals", run.ctx.config.DATA_UNIVERSE, 30, {
         maxAgeMs: 3 * DAY,
       });
-      const stats = await forEachCompany(run, ids, 2, (id) =>
+      return forEachCompany(run, ids, 2, (id) =>
         syncFundamentals(run.ctx, id).then((r) =>
           r ? { periods: r.periods, changed: r.changed ? 1 : 0 } : null,
         ),
       );
-      await run.ctx.api.invalidatePrefix("financials:");
-      await run.ctx.api.invalidatePrefix("company:");
-      return stats;
     },
   },
   {
@@ -68,9 +56,7 @@ export const coreJobs: JobDef[] = [
       const ids = await pickBatch(run.ctx, "announcements", run.ctx.config.DATA_UNIVERSE, 60, {
         maxAgeMs: 2 * HOUR,
       });
-      const stats = await forEachCompany(run, ids, 1, (id) => syncAnnouncements(run.ctx, id));
-      await run.ctx.api.invalidatePrefix("announcements:");
-      return stats;
+      return forEachCompany(run, ids, 1, (id) => syncAnnouncements(run.ctx, id));
     },
   },
   {
@@ -98,9 +84,6 @@ export const coreJobs: JobDef[] = [
         },
         { reserveMs: 60_000 },
       );
-      await run.ctx.api.invalidatePrefix("supply-chain:");
-      await run.ctx.api.invalidatePrefix("signals:");
-      await run.ctx.api.invalidatePrefix("leaderboard:");
       return stats;
     },
   },
@@ -113,9 +96,6 @@ export const coreJobs: JobDef[] = [
       const estimates = await refreshEstimates(ctx.db, asOf);
       const momentum = await refreshMomentumSignals(ctx.db, asOf);
       const risk = await refreshRiskSignals(ctx.db, ids, asOf);
-      await ctx.api.invalidatePrefix("signals:");
-      await ctx.api.invalidatePrefix("leaderboard:");
-      await ctx.api.invalidatePrefix("supply-chain:");
       return { estimates, momentum, risk };
     },
   },

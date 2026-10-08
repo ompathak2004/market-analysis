@@ -46,15 +46,6 @@ export function median(values: number[]): number | null {
   return s.length % 2 ? (s[mid] as number) : ((s[mid - 1] as number) + (s[mid] as number)) / 2;
 }
 
-export function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const rad = Math.PI / 180;
-  const dLat = (lat2 - lat1) * rad;
-  const dLon = (lon2 - lon1) * rad;
-  const a =
-    Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
-  return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(a)));
-}
-
 export function weekCounts(times: number[], endMs: number, weeks: number): number[] {
   const out = new Array<number>(weeks).fill(0);
   for (const t of times) {
@@ -87,6 +78,7 @@ export async function writeAltdataSignals(
       and(
         eq(signals.companyId, companyId),
         eq(signals.asOf, asOf),
+        eq(signals.modelVersion, modelVersion),
         inArray(signals.kind, [...allKinds]),
         kinds.length ? sql`${signals.kind} not in ${kinds}` : undefined,
       ),
@@ -105,12 +97,8 @@ export async function writeAltdataSignals(
       })),
     )
     .onConflictDoUpdate({
-      target: [signals.companyId, signals.asOf, signals.kind],
-      set: {
-        value: sql`excluded.value`,
-        inputs: sql`excluded.inputs`,
-        modelVersion: sql`excluded.model_version`,
-      },
+      target: [signals.companyId, signals.asOf, signals.kind, signals.modelVersion],
+      set: { value: sql`excluded.value`, inputs: sql`excluded.inputs` },
     });
   return rows.length;
 }

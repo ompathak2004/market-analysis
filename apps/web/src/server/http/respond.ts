@@ -1,4 +1,4 @@
-import { AppError } from "@ma/core";
+import { AppError, RateLimitedError } from "@ma/core";
 import { ZodError } from "zod";
 import { getContext } from "../context";
 
@@ -17,9 +17,11 @@ export function errorResponse(err: unknown): Response {
     );
   }
   if (err instanceof AppError) {
+    const retryAfterMs = err instanceof RateLimitedError ? Number(err.details?.retryAfterMs) : 0;
     return json(
       { error: { code: err.code, message: err.message, details: err.details } },
       err.status,
+      retryAfterMs > 0 ? { "retry-after": String(Math.ceil(retryAfterMs / 1000)) } : {},
     );
   }
   getContext().logger.error({ err }, "unhandled error");

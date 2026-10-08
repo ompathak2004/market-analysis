@@ -1,4 +1,4 @@
-import { isoDate } from "@ma/core";
+import { DeadlineExceededError, isoDate, MINUTE } from "@ma/core";
 import { analystCalls, and, desc, eq, isNull, sql } from "@ma/db";
 import {
   assembleCompanyInputs,
@@ -12,10 +12,8 @@ import {
 import { LlmBudgetExceeded, LlmInvalidOutput, LlmPromptTooLarge } from "@ma/llm";
 import type { AppContext } from "../context";
 import { markFailed, markSynced, universeIds } from "./batch";
-import type { JobDef } from "./registry";
-import type { JobStats } from "./run";
+import type { JobDef, JobStats } from "./run";
 
-const MINUTE = 60_000;
 const BRIEFS_PER_RUN = 5;
 const TRIAGE_PER_RUN = 60;
 const THESES_PER_RUN = 10;
@@ -58,10 +56,6 @@ const tally = (stats: JobStats, outcome: InsightOutcome, kind: string) => {
   }
 };
 
-async function invalidate(ctx: AppContext, prefixes: string[]): Promise<void> {
-  for (const p of prefixes) await ctx.api.invalidatePrefix(p);
-}
-
 export const insightJobs: JobDef[] = [
   {
     name: "insights",
@@ -87,12 +81,15 @@ export const insightJobs: JobDef[] = [
             stats.budget = 1;
             break;
           }
+          if (err instanceof DeadlineExceededError) {
+            stats.deadline = 1;
+            break;
+          }
           stats.failed = (stats.failed ?? 0) + 1;
           ctx.logger.warn({ job: run.name, companyId: id, err }, "insight generation failed");
           await markFailed(ctx, "insights", id, err);
         }
       }
-      await invalidate(ctx, ["insights:", "feed:"]);
       return stats;
     },
   },
@@ -104,10 +101,10 @@ export const insightJobs: JobDef[] = [
         const outcome = await generateMarketBrief(ctx);
         const stats: JobStats = {};
         tally(stats, outcome, "brief");
-        await invalidate(ctx, ["market-brief:"]);
         return stats;
       } catch (err) {
         if (err instanceof LlmBudgetExceeded) return { budget: 1 };
+        if (err instanceof DeadlineExceededError) return { deadline: 1 };
         throw err;
       }
     },
@@ -124,12 +121,10 @@ export const insightJobs: JobDef[] = [
           companyIds,
           expired: () => run.expired(RESERVE_MS),
         });
-        await invalidate(ctx, ["announcements:", "feed:", "market-brief:"]);
         return { ...stats };
       } catch (err) {
-        if (err instanceof LlmBudgetExceeded) {
-          await invalidate(ctx, ["announcements:"]);
-          return { budget: 1 };
+        if (err instanceof LlmBudgetExceeded || err instanceof DeadlineExceededError) {
+          return err instanceof LlmBudgetExceeded ? { budget: 1 } : { deadline: 1 };
         }
         throw err;
       }
@@ -160,6 +155,10 @@ export const insightJobs: JobDef[] = [
             stats.budget = 1;
             break;
           }
+          if (err instanceof DeadlineExceededError) {
+            stats.deadline = 1;
+            break;
+          }
           stats.failed = (stats.failed ?? 0) + 1;
           ctx.logger.warn({ job: run.name, analystCallId: id, err }, "broker thesis failed");
           if (err instanceof LlmInvalidOutput || err instanceof LlmPromptTooLarge) {
@@ -170,7 +169,6 @@ export const insightJobs: JobDef[] = [
           }
         }
       }
-      if (stats.summarized) await invalidate(ctx, ["analysts:", "insights:"]);
       return stats;
     },
   },

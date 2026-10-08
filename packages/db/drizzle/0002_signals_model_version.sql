@@ -1,0 +1,2 @@
+ALTER TABLE "signals" DROP CONSTRAINT "signals_company_id_as_of_kind_pk";--> statement-breakpoint
+ALTER TABLE "signals" ADD CONSTRAINT "signals_company_id_as_of_kind_model_version_pk" PRIMARY KEY("company_id","as_of","kind","model_version");

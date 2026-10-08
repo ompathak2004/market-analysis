@@ -22,14 +22,14 @@ import {
   type LogisticsSignalKind,
 } from "./types.js";
 
-export const MIN_COVERAGE = 0.2;
-export const LOITER_MIN = 360;
-export const FILL_FACTOR = 0.95;
-export const PRODUCT_CRACK = 1.15;
-export const VALUE_BAND = 0.25;
-export const CARGO_VALUE_BASIS = "dwt_est × 0.95 fill × Brent × USDINR";
+const MIN_COVERAGE = 0.2;
+const LOITER_MIN = 360;
+const FILL_FACTOR = 0.95;
+const PRODUCT_CRACK = 1.15;
+const VALUE_BAND = 0.25;
+const CARGO_VALUE_BASIS = "dwt_est × 0.95 fill × Brent × USDINR";
 
-export const TANKER_BBL: Record<string, number> = {
+const TANKER_BBL: Record<string, number> = {
   VLCC: 2_000_000,
   Suezmax: 1_000_000,
   "Aframax/LR2": 700_000,
@@ -40,7 +40,7 @@ export const TANKER_BBL: Record<string, number> = {
 
 const PRODUCT_SIZES = new Set(["MR", "Small tanker", "Panamax/LR1"]);
 
-export const LOGISTICS_KIND_BASE: Record<LogisticsSignalKind, number> = {
+const LOGISTICS_KIND_BASE: Record<LogisticsSignalKind, number> = {
   logistics_arrivals_7d: 1,
   logistics_throughput_proxy: 0.7,
   logistics_chokepoint_exposure: 0.6,
@@ -128,7 +128,7 @@ export function coverageFactor(windows: number, windowsWithData: number): number
   return windows > 0 ? round(clamp(windowsWithData / windows, 0, 1), 3) : 0;
 }
 
-export function commodityClasses(commodities: readonly string[]): string[] {
+function commodityClasses(commodities: readonly string[]): string[] {
   return [...new Set(commodities.flatMap((c) => COMMODITY_CLASSES[c] ?? []))];
 }
 
@@ -502,10 +502,14 @@ export function computeLogisticsSignals(input: LogisticsInput): LogisticsResult 
       );
       return { v, dest, value };
     });
-    const total = rows.reduce((s, r) => s + (r.value.estValueCr ?? 0), 0);
-    const valued = rows.some((r) => r.value.estValueCr !== null);
+    const sumCr = (rs: typeof rows) => rs.reduce((s, r) => s + (r.value.estValueCr ?? 0), 0);
+    const isValued = (rs: typeof rows) => rs.some((r) => r.value.estValueCr !== null);
     const idle = rows.filter((r) => r.v.loiterMin >= LOITER_MIN);
+    const moving = rows.filter((r) => r.v.loiterMin < LOITER_MIN);
     const focus = idle.length ? idle : rows;
+    const focusCr = sumCr(focus);
+    const valued = isValued(focus);
+    const crOrNull = (rs: typeof rows) => (isValued(rs) ? round(sumCr(rs), 1) : null);
     const first = focus[0];
     let read: string;
     if (!first) {
@@ -517,7 +521,7 @@ export function computeLogisticsSignals(input: LogisticsInput): LogisticsResult 
       const where = first.v.chokepoint.replace(/_/g, " ");
       const state = idle.length ? `idle at ${where} ~${hours} h` : `inside ${where}`;
       const valueText = valued
-        ? `, ≈ ₹${crore(total)} Cr of ${first.value.commodity} ${idle.length ? "delayed" : "in transit"} — working-capital timing risk, not a loss`
+        ? `, ≈ ₹${crore(focusCr)} Cr of ${first.value.commodity} ${idle.length ? "delayed" : "in transit"} — working-capital timing risk, not a loss`
         : "";
       read = `${focus.length} inbound ${sizes} ${state}${valueText}; cargo and destination inferred.`;
     }
@@ -550,9 +554,14 @@ export function computeLogisticsSignals(input: LogisticsInput): LogisticsResult 
           estValueUsd: r.value.estValueUsd,
           estValueCr: r.value.estValueCr,
         })),
-        totalEstValueCr: valued ? round(total, 1) : null,
+        totalEstValueCr: crOrNull(rows),
+        delayedEstValueCr: crOrNull(idle),
+        inTransitEstValueCr: crOrNull(moving),
         valueRange: valued
-          ? { low: round(total * (1 - VALUE_BAND), 1), high: round(total * (1 + VALUE_BAND), 1) }
+          ? {
+              low: round(focusCr * (1 - VALUE_BAND), 1),
+              high: round(focusCr * (1 + VALUE_BAND), 1),
+            }
           : null,
         basis: valued ? CARGO_VALUE_BASIS : "qualitative",
         prices: input.prices,
@@ -567,7 +576,7 @@ export function computeLogisticsSignals(input: LogisticsInput): LogisticsResult 
         headline: `${input.label}: ${read}`,
         detail: {
           vessels: idle.map((r) => r.v.mmsi),
-          totalEstValueCr: valued ? round(total, 1) : null,
+          delayedEstValueCr: crOrNull(idle),
         },
         severity: valued ? 3 : 2,
         dedupeKey: `logistics:${input.companyId}:choke:${asOf}`,

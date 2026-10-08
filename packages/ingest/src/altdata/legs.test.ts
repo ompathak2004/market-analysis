@@ -4,8 +4,11 @@ import {
   type AirSample,
   endpointAirport,
   legDedupeKey,
+  replayFrom,
+  type StoredFlight,
   segmentLegs,
   summarizeLeg,
+  supersededFlights,
 } from "./legs.js";
 
 const MIN = 60_000;
@@ -85,5 +88,85 @@ describe("segmentLegs", () => {
     expect(legDedupeKey("80abcd", new Date(T0 + 5 * MIN))).toBe(
       legDedupeKey("80abcd", new Date(T0 + 25 * MIN)),
     );
+  });
+});
+
+describe("incremental flight derivation", () => {
+  const MAX = 48 * 60 * MIN;
+
+  function trip(): AirSample[] {
+    if (!VABB || !VIDP) throw new Error("airports missing");
+    const cruise = Array.from({ length: 24 }, (_, i) =>
+      sample(
+        5 + i * 5,
+        VABB.lat + ((VIDP.lat - VABB.lat) * i) / 23,
+        VABB.lon + ((VIDP.lon - VABB.lon) * i) / 23,
+        false,
+        i === 23 ? 3_000 : 30_000,
+      ),
+    );
+    return [sample(0, VABB.lat, VABB.lon, true), ...cruise, sample(125, VIDP.lat, VIDP.lon, true)];
+  }
+
+  function derive(store: Map<string, StoredFlight>, samples: AirSample[], nowMin: number) {
+    const now = new Date(T0 + nowMin * MIN);
+    const stored = [...store.values()];
+    const from = replayFrom(stored, now, MAX);
+    const visible = samples.filter((s) => s.ts <= now && s.ts >= from);
+    const legs = segmentLegs(visible, { now }).map((leg) => {
+      const sum = summarizeLeg(leg);
+      const key = legDedupeKey("80abcd", sum.firstTs);
+      const prev = store.get(key);
+      store.set(key, {
+        id: prev?.id ?? store.size + 1 + nowMin * 1000,
+        dedupeKey: key,
+        departedAt: sum.departedAt,
+        arrivedAt: sum.arrivedAt,
+      });
+      return { key, departedAt: sum.departedAt, endAt: sum.arrivedAt ?? sum.lastTs };
+    });
+    const removed = new Set(supersededFlights(stored, legs, from));
+    for (const [key, f] of store) if (removed.has(f.id)) store.delete(key);
+  }
+
+  it("keeps one row per trip across overlapping passes and long after it lands", () => {
+    const samples = trip();
+    const store = new Map<string, StoredFlight>();
+    for (const nowMin of [12, 42, 72, 102, 132, 162, 400, 3_000]) derive(store, samples, nowMin);
+    const flights = [...store.values()];
+    expect(flights).toHaveLength(1);
+    expect(flights[0]?.departedAt?.getTime()).toBe(T0);
+    expect(flights[0]?.arrivedAt?.getTime()).toBe(T0 + 125 * MIN);
+  });
+
+  it("replays from the earliest open flight, else the last landing", () => {
+    const now = new Date(T0 + 600 * MIN);
+    const done = {
+      id: 1,
+      dedupeKey: "a",
+      departedAt: new Date(T0),
+      arrivedAt: new Date(T0 + 90 * MIN),
+    };
+    const open = { id: 2, dedupeKey: "b", departedAt: new Date(T0 + 300 * MIN), arrivedAt: null };
+    expect(replayFrom([done], now, MAX).getTime()).toBe(T0 + 90 * MIN);
+    expect(replayFrom([done, open], now, MAX).getTime()).toBe(T0 + 300 * MIN);
+    expect(replayFrom([], now, MAX).getTime()).toBe(now.getTime() - MAX);
+  });
+
+  it("removes a completed row that a re-derived leg overlaps under another key", () => {
+    const truncated = {
+      id: 7,
+      dedupeKey: "80abcd:old",
+      departedAt: new Date(T0 + 40 * MIN),
+      arrivedAt: new Date(T0 + 125 * MIN),
+    };
+    const earlier = {
+      id: 8,
+      dedupeKey: "80abcd:earlier",
+      departedAt: new Date(T0 - 300 * MIN),
+      arrivedAt: new Date(T0 - 200 * MIN),
+    };
+    const leg = { key: "80abcd:new", departedAt: new Date(T0), endAt: new Date(T0 + 125 * MIN) };
+    expect(supersededFlights([truncated, earlier], [leg], new Date(T0))).toEqual([7]);
   });
 });

@@ -1,4 +1,4 @@
-import { mapLimit } from "@ma/core";
+import { DeadlineExceededError, mapLimit } from "@ma/core";
 import { companySync, sql } from "@ma/db";
 import type { AppContext } from "../context";
 import type { JobRun, JobStats } from "./run";
@@ -101,6 +101,10 @@ export async function forEachCompany(
       await markSynced(ctx, name, id);
       return r;
     } catch (err) {
+      if (err instanceof DeadlineExceededError) {
+        skipped++;
+        return null;
+      }
       errors.push(err);
       ctx.logger.warn({ job: name, companyId: id, err }, "company sync failed");
       await markFailed(ctx, name, id, err);

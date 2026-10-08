@@ -1,3 +1,4 @@
+import { MINUTE } from "@ma/core";
 import type { Airport } from "../data/types.js";
 import { nearestAirport } from "../geo.js";
 
@@ -24,15 +25,13 @@ export interface SegmentOptions {
   minDurationMs?: number;
 }
 
-const MIN = 60_000;
-
 export function segmentLegs<S extends AirSample>(
   samples: readonly S[],
   opts: SegmentOptions = {},
 ): Leg<S>[] {
-  const gap = opts.gapMs ?? 20 * MIN;
+  const gap = opts.gapMs ?? 20 * MINUTE;
   const minSamples = opts.minSamples ?? 2;
-  const minDuration = opts.minDurationMs ?? 10 * MIN;
+  const minDuration = opts.minDurationMs ?? 10 * MINUTE;
   const now = (opts.now ?? new Date()).getTime();
   const sorted = [...samples].sort((a, b) => a.ts.getTime() - b.ts.getTime());
   const legs: Leg<S>[] = [];
@@ -122,7 +121,9 @@ export function summarizeLeg(leg: Leg): LegSummary {
     lastTs: last.ts,
     departedAt,
     arrivedAt,
-    durationMin: arrivedAt ? Math.round((arrivedAt.getTime() - departedAt.getTime()) / MIN) : null,
+    durationMin: arrivedAt
+      ? Math.round((arrivedAt.getTime() - departedAt.getTime()) / MINUTE)
+      : null,
     dep,
     arr,
     completeness: dep && arr ? "full" : dep ? "departure_only" : arr ? "arrival_only" : "enroute",
@@ -132,5 +133,47 @@ export function summarizeLeg(leg: Leg): LegSummary {
 }
 
 export function legDedupeKey(hex: string, firstTs: Date): string {
-  return `${hex}:${Math.floor(firstTs.getTime() / (30 * MIN))}`;
+  return `${hex}:${Math.floor(firstTs.getTime() / (30 * MINUTE))}`;
+}
+
+export interface StoredFlight {
+  id: number;
+  dedupeKey: string;
+  departedAt: Date | null;
+  arrivedAt: Date | null;
+}
+
+export interface DerivedLeg {
+  key: string;
+  departedAt: Date;
+  endAt: Date;
+}
+
+export function replayFrom(flights: readonly StoredFlight[], now: Date, maxMs: number): Date {
+  const floor = now.getTime() - maxMs;
+  const open = flights.flatMap((f) => (f.arrivedAt === null && f.departedAt ? [f.departedAt] : []));
+  const arrived = flights.flatMap((f) => (f.arrivedAt ? [f.arrivedAt] : []));
+  const start = open.length
+    ? Math.min(...open.map((d) => d.getTime()))
+    : arrived.length
+      ? Math.max(...arrived.map((d) => d.getTime()))
+      : floor;
+  return new Date(Math.max(floor, start));
+}
+
+export function supersededFlights(
+  stored: readonly StoredFlight[],
+  legs: readonly DerivedLeg[],
+  from: Date,
+): number[] {
+  const keys = new Set(legs.map((l) => l.key));
+  return stored
+    .filter((f) => {
+      if (keys.has(f.dedupeKey) || !f.departedAt) return false;
+      const start = f.departedAt.getTime();
+      if (f.arrivedAt === null && start >= from.getTime()) return true;
+      const end = (f.arrivedAt ?? f.departedAt).getTime();
+      return legs.some((l) => start <= l.endAt.getTime() && end >= l.departedAt.getTime());
+    })
+    .map((f) => f.id);
 }

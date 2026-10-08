@@ -73,7 +73,7 @@ export async function eventImpact(
           lte(signals.asOf, to),
         ),
       )
-      .orderBy(signals.companyId, desc(signals.asOf)),
+      .orderBy(signals.companyId, desc(signals.asOf), desc(signals.modelVersion)),
   ]);
   const finById = new Map(fins.map((f) => [f.companyId, f]));
   const distressById = new Map(distress.map((d) => [d.companyId, d.value]));

@@ -1,21 +1,31 @@
-import { chunk, mapLimit } from "@ma/core";
+import { chunk, DAY, HOUR, MINUTE, mapLimit } from "@ma/core";
 import {
   aircraftFlights,
   aircraftPositions,
   altdataCoverage,
   altdataEvents,
   and,
+  asc,
   companies,
   corporateAircraft,
   corporateAircraftCompanies,
   eq,
+  gt,
   gte,
   inArray,
   isNull,
   ne,
+  or,
   sql,
 } from "@ma/db";
-import { legDedupeKey, segmentLegs, summarizeLeg } from "../altdata/legs.js";
+import {
+  type DerivedLeg,
+  legDedupeKey,
+  replayFrom,
+  segmentLegs,
+  summarizeLeg,
+  supersededFlights,
+} from "../altdata/legs.js";
 import type { IngestContext } from "../context.js";
 import {
   AIRCRAFT_OVERRIDES,
@@ -30,14 +40,14 @@ import { AdsbSource, type PositionSample } from "../sources/adsb.js";
 import { type AircraftDbRow, downloadAircraftDb, lookupAdsbdb } from "../sources/aircraft-db.js";
 import type { OpenSkySource } from "../sources/opensky.js";
 import { loadAliasMatcher } from "./relationships.js";
+import { beginPass, endPass } from "./resume.js";
 
-const MIN = 60_000;
-const HOUR = 60 * MIN;
-const DAY = 24 * HOUR;
 const LAST_KEY = "altdata:air:last";
 const TRIED_KEY = "altdata:adsbdb:tried";
 const MISMATCH_KEY = "altdata:adsbdb:mismatch";
 const DERIVE_CURSOR = "altdata:air:derive_from";
+const DERIVE_RESUME = "altdata:air:derive_resume";
+const REPLAY_MAX_MS = 48 * HOUR;
 const HEX_BATCH = 100;
 
 type Basis = SymbolLink[1];
@@ -486,7 +496,7 @@ async function emitAirEvents(
         onGround: s.onGround,
       },
       severity: 1,
-      dedupeKey: `${s.hex}:${kind}:${Math.floor(s.ts.getTime() / (30 * MIN))}`,
+      dedupeKey: `${s.hex}:${kind}:${Math.floor(s.ts.getTime() / (30 * MINUTE))}`,
     });
   }
   const next: Record<string, string> = {};
@@ -543,15 +553,31 @@ export async function deriveAircraftFlights(
   opts: DeriveFlightsOptions = {},
 ): Promise<Record<string, number>> {
   const now = opts.now ?? new Date();
-  const cursorRaw = await ctx.redis.get(DERIVE_CURSOR);
-  const cursor = cursorRaw ? new Date(cursorRaw) : new Date(now.getTime() - 48 * HOUR);
-  const from = new Date(cursor.getTime() - 3 * HOUR);
+  const pass = await beginPass(
+    ctx.redis,
+    { cursorKey: DERIVE_CURSOR, resumeKey: DERIVE_RESUME },
+    now,
+    new Date(now.getTime() - REPLAY_MAX_MS),
+  );
+  const seenFrom = new Date(pass.cursor.getTime() - 3 * HOUR);
   const fleet = await ctx.db
     .select({ id: corporateAircraft.id, hex: corporateAircraft.icaoHex })
     .from(corporateAircraft)
-    .where(sql`${corporateAircraft.lastSeenAt} >= ${from.toISOString()}`);
+    .where(
+      and(
+        gt(corporateAircraft.id, pass.afterId),
+        or(
+          gte(corporateAircraft.lastSeenAt, seenFrom),
+          sql`exists (select 1 from ${aircraftFlights} f where f.aircraft_id = ${corporateAircraft.id}
+            and f.arrived_at is null and f.source in ('sampled', 'merged'))`,
+        ),
+      ),
+    )
+    .orderBy(asc(corporateAircraft.id));
   const stats = {
     aircraft: fleet.length,
+    processed: 0,
+    resumed: pass.resumed ? 1 : 0,
     samples: 0,
     legs: 0,
     open: 0,
@@ -559,22 +585,36 @@ export async function deriveAircraftFlights(
     removed: 0,
     opensky: 0,
   };
-  let nextCursor = now;
+  let lastId = pass.afterId;
   for (const a of fleet) {
     if (expired(opts, 30_000)) break;
+    const stored = await ctx.db
+      .select({
+        id: aircraftFlights.id,
+        dedupeKey: aircraftFlights.dedupeKey,
+        departedAt: aircraftFlights.departedAt,
+        arrivedAt: aircraftFlights.arrivedAt,
+      })
+      .from(aircraftFlights)
+      .where(
+        and(
+          eq(aircraftFlights.aircraftId, a.id),
+          inArray(aircraftFlights.source, ["sampled", "merged"]),
+          sql`coalesce(${aircraftFlights.arrivedAt}, ${aircraftFlights.departedAt}) >= ${new Date(now.getTime() - REPLAY_MAX_MS).toISOString()}`,
+        ),
+      );
+    const from = replayFrom(stored, now, REPLAY_MAX_MS);
     const rows = await ctx.db
       .select()
       .from(aircraftPositions)
       .where(and(eq(aircraftPositions.hex, a.hex), gte(aircraftPositions.ts, from)))
       .orderBy(aircraftPositions.ts);
     stats.samples += rows.length;
-    const legs = segmentLegs(rows, { now });
-    const keys: string[] = [];
-    for (const leg of legs) {
+    const derived: DerivedLeg[] = [];
+    for (const leg of segmentLegs(rows, { now })) {
       const sum = summarizeLeg(leg);
       const key = legDedupeKey(a.hex, sum.firstTs);
-      keys.push(key);
-      if (leg.open && sum.firstTs < nextCursor) nextCursor = sum.firstTs;
+      derived.push({ key, departedAt: sum.departedAt, endAt: sum.arrivedAt ?? sum.lastTs });
       const values = {
         aircraftId: a.id,
         hex: a.hex,
@@ -618,21 +658,15 @@ export async function deriveAircraftFlights(
       if (leg.open) stats.open++;
       if (sum.completeness === "full") stats.full++;
     }
-    const removed = await ctx.db
-      .delete(aircraftFlights)
-      .where(
-        and(
-          eq(aircraftFlights.aircraftId, a.id),
-          eq(aircraftFlights.source, "sampled"),
-          isNull(aircraftFlights.arrivedAt),
-          gte(aircraftFlights.departedAt, from),
-          keys.length ? sql`not ${inArray(aircraftFlights.dedupeKey, keys)}` : sql`true`,
-        ),
-      )
-      .returning({ id: aircraftFlights.id });
-    stats.removed += removed.length;
+    const superseded = supersededFlights(stored, derived, from);
+    if (superseded.length) {
+      await ctx.db.delete(aircraftFlights).where(inArray(aircraftFlights.id, superseded));
+      stats.removed += superseded.length;
+    }
+    lastId = a.id;
+    stats.processed++;
   }
-  await ctx.redis.set(DERIVE_CURSOR, nextCursor.toISOString());
+  await endPass(ctx.redis, pass, { complete: stats.processed === fleet.length, lastId });
   if (opts.opensky && (await opts.opensky.available())) {
     stats.opensky = await mergeOpenSky(ctx, opts.opensky, fleet, opts);
   }
@@ -668,8 +702,8 @@ async function mergeOpenSky(
         .where(
           and(
             eq(aircraftFlights.aircraftId, a.id),
-            sql`${aircraftFlights.departedAt} <= ${new Date(f.lastSeen.getTime() + 45 * MIN).toISOString()}`,
-            sql`coalesce(${aircraftFlights.arrivedAt}, now()) >= ${new Date(f.firstSeen.getTime() - 45 * MIN).toISOString()}`,
+            sql`${aircraftFlights.departedAt} <= ${new Date(f.lastSeen.getTime() + 45 * MINUTE).toISOString()}`,
+            sql`coalesce(${aircraftFlights.arrivedAt}, now()) >= ${new Date(f.firstSeen.getTime() - 45 * MINUTE).toISOString()}`,
           ),
         )
         .limit(1);
@@ -697,7 +731,7 @@ async function mergeOpenSky(
             hex: a.hex,
             departedAt: f.firstSeen,
             arrivedAt: f.lastSeen,
-            durationMin: Math.round((f.lastSeen.getTime() - f.firstSeen.getTime()) / MIN),
+            durationMin: Math.round((f.lastSeen.getTime() - f.firstSeen.getTime()) / MINUTE),
             depIcao: dep?.icao ?? null,
             depCity: dep?.city ?? null,
             depCountry: dep?.country ?? null,
@@ -730,26 +764,4 @@ async function updateHomeAirports(ctx: IngestContext): Promise<void> {
       order by aircraft_id, count(*) desc, max(arrived_at) desc
     ) h
     where h.aircraft_id = a.id and a.home_icao is distinct from h.icao`);
-}
-
-export async function activeAircraftIds(ctx: IngestContext): Promise<number[]> {
-  const rows = await ctx.db
-    .select({ id: corporateAircraft.id })
-    .from(corporateAircraft)
-    .where(eq(corporateAircraft.active, true));
-  return rows.map((r) => r.id);
-}
-
-export async function aircraftCompanyIds(ctx: IngestContext): Promise<number[]> {
-  const rows = await ctx.db
-    .selectDistinct({ id: corporateAircraftCompanies.companyId })
-    .from(corporateAircraftCompanies)
-    .innerJoin(corporateAircraft, eq(corporateAircraft.id, corporateAircraftCompanies.aircraftId))
-    .where(
-      and(
-        eq(corporateAircraft.active, true),
-        inArray(corporateAircraftCompanies.basis, ["owner", "subsidiary", "promoter_group"]),
-      ),
-    );
-  return rows.map((r) => r.id);
 }

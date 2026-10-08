@@ -61,4 +61,4 @@ Signal kinds: `customer_concentration_pct`, `top{N}_customers_pct`, `customer_mo
 
 ## Secrets and services
 
-`DATABASE_URL` (Aiven Postgres), `REDIS_URL` (managed Redis), `API_KEY` (bearer for `/api/v1`), `CRON_SECRET` (bearer for `/api/cron`), `FIRECRAWL_API_KEY`, `CEREBRAS_API_KEY`, `AISSTREAM_API_KEY`, `OPENSKY_CLIENT_ID`/`OPENSKY_CLIENT_SECRET`. See `.env.example`.
+`DATABASE_URL` (Aiven Postgres), `REDIS_URL` (managed Redis), `API_KEY` (`x-api-key` for `/api/v1`; only `/api/v1/search` is public, rate-limited per IP), `CRON_SECRET` (bearer for `/api/cron`), `FIRECRAWL_API_KEY`, `CEREBRAS_API_KEY`, `AISSTREAM_API_KEY`, `OPENSKY_CLIENT_ID`/`OPENSKY_CLIENT_SECRET`. See `.env.example`.

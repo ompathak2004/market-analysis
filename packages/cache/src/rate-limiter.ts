@@ -1,4 +1,4 @@
-import { RateLimitedError, sleep } from "@ma/core";
+import { DeadlineExceededError, RateLimitedError, remainingMs, sleep } from "@ma/core";
 import type { RedisClient } from "./redis.js";
 
 const TOKEN_BUCKET = `
@@ -39,19 +39,25 @@ export class RateLimiter {
   async acquire(bucket: string): Promise<void> {
     const rule = this.rules[bucket];
     if (!rule) return;
-    const refillPerMs = rule.capacity / rule.perMs;
+    const wait = await this.take(`ratelimit:${bucket}`, rule);
+    if (wait <= 0) return;
+    if (wait > this.maxWaitMs) throw new RateLimitedError(bucket, wait);
+    const left = remainingMs();
+    if (wait > left) throw new DeadlineExceededError(wait, Math.max(0, left));
+    await sleep(wait);
+    return this.acquire(bucket);
+  }
+
+  async tryAcquire(bucket: string, subject: string): Promise<number> {
+    const rule = this.rules[bucket];
+    if (!rule) return 0;
+    return this.take(`ratelimit:${bucket}:${subject}`, rule);
+  }
+
+  private take(key: string, rule: RateLimitRule): Promise<number> {
     const client = this.redis as RedisClient & {
       takeToken: (key: string, cap: number, refill: number, now: number) => Promise<number>;
     };
-    const wait = await client.takeToken(
-      `ratelimit:${bucket}`,
-      rule.capacity,
-      refillPerMs,
-      Date.now(),
-    );
-    if (wait <= 0) return;
-    if (wait > this.maxWaitMs) throw new RateLimitedError(bucket, wait);
-    await sleep(wait);
-    return this.acquire(bucket);
+    return client.takeToken(key, rule.capacity, rule.capacity / rule.perMs, Date.now());
   }
 }
