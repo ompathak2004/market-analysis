@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const INSIGHT_MODEL_VERSION = 1;
+export const INSIGHT_MODEL_VERSION = 2;
 
 export const verdictLabel = z.enum(["bearish", "cautious", "neutral", "constructive", "bullish"]);
 export type VerdictLabel = z.infer<typeof verdictLabel>;
@@ -19,6 +19,7 @@ export function verdictLabelFor(score: number): VerdictLabel {
 }
 
 const evidenceIds = z.array(z.string()).default([]);
+const claim = z.object({ point: z.string().min(1), evidence: evidenceIds });
 
 export const companyBriefSchema = z.object({
   verdict: z.object({
@@ -26,11 +27,9 @@ export const companyBriefSchema = z.object({
     label: verdictLabel,
     confidence: z.number().min(0).max(1),
     oneLiner: z.string().min(1).max(240),
+    evidence: evidenceIds,
   }),
-  thesis: z
-    .array(z.object({ point: z.string().min(1), evidence: evidenceIds }))
-    .min(3)
-    .max(6),
+  thesis: z.array(claim).min(3).max(6),
   risks: z
     .array(
       z.object({
@@ -51,13 +50,17 @@ export const companyBriefSchema = z.object({
     read: z.string(),
     vsPeers: z.string().nullable(),
     vsConsensus: z.string().nullable(),
+    evidence: evidenceIds,
   }),
-  supplyChain: z.object({ read: z.string().nullable() }),
-  managementTravel: z.object({ read: z.string().nullable() }),
-  logistics: z.object({ read: z.string().nullable() }),
+  supplyChain: z.object({ read: z.string().nullable(), evidence: evidenceIds }),
+  managementTravel: z.object({ read: z.string().nullable(), evidence: evidenceIds }),
+  logistics: z.object({ read: z.string().nullable(), evidence: evidenceIds }),
   uncertainty: z.array(z.string()),
 });
 export type CompanyBrief = z.infer<typeof companyBriefSchema>;
+
+export const companyBriefDraftSchema = companyBriefSchema.extend({ whatChanged: z.array(claim) });
+export type CompanyBriefDraft = z.infer<typeof companyBriefDraftSchema>;
 
 export const brokerDigestSchema = z.object({
   consensusRead: z.string(),
@@ -68,6 +71,7 @@ export const brokerDigestSchema = z.object({
       says: z.string(),
       target: z.number().nullable(),
       changed: z.string().nullable(),
+      evidence: evidenceIds,
     }),
   ),
   divergence: z.object({
@@ -83,6 +87,7 @@ export const brokerDigestSchema = z.object({
     read: z.string(),
   }),
   revisionMomentum: z.object({ direction: z.enum(["up", "down", "flat"]), read: z.string() }),
+  evidence: evidenceIds,
 });
 export type BrokerDigest = z.infer<typeof brokerDigestSchema>;
 
@@ -96,6 +101,7 @@ export const marketBriefSchema = z.object({
   breadth: z.string(),
   notableCalls: z.array(z.string()),
   riskFlags: z.array(z.string()),
+  evidence: evidenceIds,
 });
 export type MarketBrief = z.infer<typeof marketBriefSchema>;
 
@@ -130,7 +136,7 @@ export const brokerThesisSchema = z.object({
   estimatesChanged: z.string().nullable(),
 });
 export type BrokerThesis = z.infer<typeof brokerThesisSchema>;
-export const BROKER_THESIS_MODEL_VERSION = 1;
+export const BROKER_THESIS_MODEL_VERSION = 2;
 
 export type RuleGroup =
   | "price"

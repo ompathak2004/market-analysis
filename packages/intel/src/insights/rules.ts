@@ -2,8 +2,6 @@ import type { AltdataSignal } from "../altdata/types.js";
 import type { AnnualRow, CompanyInputs } from "./inputs.js";
 import type { RuleGroup, RuleInsight } from "./schemas.js";
 
-export const RULES_MODEL_VERSION = 1;
-
 export const RULE_THRESHOLDS = {
   farBelowHighPct: 20,
   nearHighPct: 5,

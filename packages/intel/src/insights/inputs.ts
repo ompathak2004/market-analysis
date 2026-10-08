@@ -231,7 +231,7 @@ export interface CompanyInputs {
   evidence: Evidence[];
 }
 
-export const num = (v: string | number | null | undefined): number | null => {
+const num = (v: string | number | null | undefined): number | null => {
   if (v == null || v === "") return null;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
@@ -243,15 +243,15 @@ export const round = (v: number | null, digits = 1): number | null => {
   return Math.round(v * f) / f;
 };
 
-export const pctChange = (now: number | null, then: number | null): number | null =>
+const pctChange = (now: number | null, then: number | null): number | null =>
   now == null || then == null || then === 0 ? null : ((now - then) / Math.abs(then)) * 100;
 
-export const cagrPct = (now: number | null, then: number | null, years: number): number | null =>
+const cagrPct = (now: number | null, then: number | null, years: number): number | null =>
   now == null || then == null || now <= 0 || then <= 0
     ? null
     : ((now / then) ** (1 / years) - 1) * 100;
 
-export function median(values: Array<number | null>): number | null {
+function median(values: Array<number | null>): number | null {
   const v = values
     .filter((x): x is number => x != null && Number.isFinite(x))
     .sort((a, b) => a - b);

@@ -4,7 +4,7 @@ import type { IntelContext } from "./context.js";
 import { inputMessage, TRIAGE_SYSTEM } from "./prompts.js";
 import { INSIGHT_MODEL_VERSION, type TriageItem, triageBatchSchema } from "./schemas.js";
 import { isRoutineAnnouncement } from "./triage-rules.js";
-import { numbersGroundedInInputs } from "./validate.js";
+import { NO_EVIDENCE, validateClaims } from "./validate.js";
 
 export const TRIAGE_MODEL_VERSION = INSIGHT_MODEL_VERSION;
 export const TRIAGE_BATCH = 20;
@@ -48,7 +48,8 @@ export function reconcileTriage(
   for (const item of items) {
     const candidate = byId.get(item.announcementId);
     if (!candidate || out.has(item.announcementId)) continue;
-    const grounded = numbersGroundedInInputs(item.soWhat, triageItemInput(candidate)).length === 0;
+    const grounded =
+      validateClaims(item.soWhat, triageItemInput(candidate), { known: NO_EVIDENCE }).length === 0;
     const soWhat = (grounded && item.soWhat.trim() ? item.soWhat : candidate.subject).slice(0, 160);
     out.set(item.announcementId, { candidate, item: { ...item, soWhat } });
   }
