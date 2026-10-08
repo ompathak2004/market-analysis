@@ -70,9 +70,26 @@ export async function syncUniverse(
   return { companies: upserted.length };
 }
 
+export const GROUP_ALIASES: Record<string, string[]> = {
+  RELIANCE: [
+    "reliance jio",
+    "jio platforms",
+    "jio infocomm",
+    "reliance retail",
+    "reliance industries limited",
+  ],
+  BHARTIARTL: ["airtel", "bharti airtel"],
+  TATAMOTORS: ["tata motors", "jaguar land rover"],
+  MARUTI: ["maruti suzuki", "maruti"],
+  ADANIENT: ["adani enterprises"],
+  HINDALCO: ["novelis"],
+  TATASTEEL: ["tata steel"],
+  LT: ["larsen & toubro", "larsen and toubro", "l&t"],
+};
+
 export function aliasesFor(name: string, nseSymbol: string | null): string[] {
   const base = normalizeCompanyName(name);
-  const out = new Set<string>([base]);
+  const out = new Set<string>([base, ...(nseSymbol ? (GROUP_ALIASES[nseSymbol] ?? []) : [])]);
   const noIndia = base.replace(/\s+\(?india\)?$/, "");
   if (noIndia !== base && noIndia.split(" ").length >= 2) out.add(noIndia);
   if (nseSymbol && nseSymbol.length >= 4 && !/^\d/.test(nseSymbol))

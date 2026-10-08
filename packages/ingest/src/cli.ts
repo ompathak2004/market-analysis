@@ -1,5 +1,5 @@
 import { createRedis } from "@ma/cache";
-import { createLogger, loadConfig } from "@ma/core";
+import { createLogger, loadConfig, mapLimit } from "@ma/core";
 import { closeDb, companies, createDb, eq, indexConstituents, indices } from "@ma/db";
 import { createIngestContext } from "./context.js";
 import { syncFundamentals } from "./pipelines/fundamentals.js";
@@ -53,17 +53,30 @@ try {
       console.log(await syncAnnouncements(ctx, await symbolId(arg ?? "RELIANCE")));
       break;
     case "relationships": {
-      const id = await symbolId(arg ?? "SONACOMS");
-      const f = await syncFundamentals(ctx, id);
+      const ids = arg?.startsWith("NIFTY")
+        ? await companyIdsFor(arg)
+        : [await symbolId(arg ?? "SONACOMS")];
       const matcher = await loadAliasMatcher(ctx);
-      const sources = [
-        ...(f?.annualReports.slice(0, 2) ?? []).map((a) => ({
-          ...a,
-          kind: "annual_report" as const,
-        })),
-        ...(f?.concalls.slice(0, 4) ?? []).map((c) => ({ ...c, kind: "concall" as const })),
-      ];
-      console.log(await extractRelationshipsForCompany(ctx, id, sources, matcher));
+      const results = await mapLimit(ids, 2, async (id) => {
+        const f = await syncFundamentals(ctx, id);
+        if (!f) return null;
+        const sources = [
+          ...f.annualReports.slice(0, 2).map((a) => ({ ...a, kind: "annual_report" as const })),
+          ...f.concalls.slice(0, 4).map((c) => ({ ...c, kind: "concall" as const })),
+        ];
+        const r = await extractRelationshipsForCompany(ctx, id, sources, matcher).catch(
+          (err: unknown) => {
+            logger.warn({ companyId: id, err }, "relationship extraction failed");
+            return null;
+          },
+        );
+        console.log(id, r);
+        return r;
+      });
+      console.log({
+        companies: ids.length,
+        relationships: results.reduce((n, r) => n + (r?.relationships ?? 0), 0),
+      });
       break;
     }
     default:

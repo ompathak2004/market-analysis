@@ -4,6 +4,7 @@ import {
   extractConcentration,
   extractNamedMentions,
   extractTopCustomerShares,
+  matchCompanies,
   normalizeCompanyName,
   toCrore,
 } from "./relationships.js";
@@ -63,5 +64,28 @@ describe("extractTopCustomerShares", () => {
       [5, 51],
       [10, 72],
     ]);
+  });
+});
+
+describe("buildAliasMatcher symbol handling", () => {
+  it("does not match a symbol-derived alias case-insensitively", () => {
+    const m = buildAliasMatcher([
+      {
+        companyId: 1,
+        name: "Fertilisers and Chemicals Travancore Ltd.",
+        aliases: ["fact"],
+        symbol: "FACT",
+      },
+      {
+        companyId: 2,
+        name: "Reliance Industries Ltd.",
+        aliases: ["reliance jio"],
+        symbol: "RELIANCE",
+      },
+    ]);
+    const text =
+      "In fact, revenue from Reliance Jio contributed 30% of sales; FACT remains a customer too.";
+    const ids = [...matchCompanies(text, m)].map((x) => x.companyId);
+    expect(ids).toEqual([2]);
   });
 });

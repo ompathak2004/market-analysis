@@ -1,6 +1,6 @@
 import { parseIndianNumber } from "@ma/core";
 
-export const RELATIONSHIP_EXTRACTOR_VERSION = 1;
+export const RELATIONSHIP_EXTRACTOR_VERSION = 2;
 
 export interface AliasEntry {
   companyId: number;
@@ -42,7 +42,8 @@ export function buildAliasMatcher(entries: AliasEntry[]): AliasMatcher {
   for (const e of entries) {
     for (const alias of [e.name, ...e.aliases]) {
       const key = normalizeCompanyName(alias);
-      if (key.length >= 4 && !GENERIC.has(key)) byAlias.set(key, e.companyId);
+      if (key.length < 4 || GENERIC.has(key) || key === e.symbol?.toLowerCase()) continue;
+      byAlias.set(key, e.companyId);
     }
     if (
       e.symbol &&
@@ -96,6 +97,17 @@ const SYMBOL_STOPLIST = new Set([
   "POWERGRID",
   "MARICO",
   "PAGEIND",
+  "CLEAN",
+  "AMBER",
+  "GLAND",
+  "DOMS",
+  "NAVA",
+  "TEGA",
+  "ATUL",
+  "ERIS",
+  "GROWW",
+  "SOBHA",
+  "LODHA",
 ]);
 
 const GENERIC = new Set([
