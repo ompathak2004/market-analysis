@@ -4,58 +4,61 @@ Handoff document. Update the status table and the "Next" list at the end of ever
 
 ## Goal
 
-A Bloomberg-like terminal for Indian equities with a genuine intelligence layer: supply-chain relationships extracted from filings, value estimation, customer momentum, distress scoring, event impact analysis, and aggregated broker calls — served through a fast cached API and a keyboard-driven terminal UI.
+A Bloomberg-like terminal for Indian equities with a genuine intelligence layer: supply-chain relationships extracted from filings, value estimation, customer momentum, distress scoring, event impact analysis, Moneycontrol broker research, LLM-generated company and market briefs with cited evidence, and corporate-aircraft and vessel alt-data — served from one Next.js app on Vercel with a keyboard-driven terminal UI.
 
 ## Status
 
 | Milestone | State | Where |
 | --- | --- | --- |
-| Monorepo, config, logger, Drizzle schema + migration `0000_init` | done | `main` |
+| Monorepo, config, logger, Drizzle schema, migrations `0000_init` and `0001_platform` | done | `main` |
 | Two-tier cache (LRU + Redis, SWR, single-flight) and rate limiter | done | `main` |
-| Ingest: document store, NSE/Yahoo/Screener sources (Trendlyne since replaced by Moneycontrol), pipelines, relationship extractor | done | PR #1 `vorflux/ingest` |
-| Intel: estimates, momentum, distress, event impact | done | PR #2 `vorflux/intel` |
-| Fastify API + scheduler worker | done | PR #3 `vorflux/server` |
-| Next.js terminal UI (home, DES/GP/FA/ANR/SPLC/NEWS, command bar) | done | PR #4 `vorflux/web` |
-| Docker images + compose, AGENTS.md, docs | done | PR #5 |
-| Vercel deployment of `apps/web` | pending | needs public API URL |
-| Widen data: NIFTY500 prices/fundamentals/relationships | partial | run worker jobs |
-
-PRs are stacked: merge #1 → #2 → #3 → #4 → #5 in order.
-
-## Data currently loaded (Aiven Postgres)
-
-NIFTY50 + NIFTY500 universes with aliases; 2y daily prices for NIFTY50, HEROMOTOCO, ENDURANCE; fundamentals for NIFTY50 + SONACOMS/HEROMOTOCO/ENDURANCE; RELIANCE announcements; ~10 broker calls; relationship documents for SONACOMS and ENDURANCE; signals: concentration (SONACOMS), momentum (ENDURANCE↔HEROMOTOCO), distress for 42 non-financials.
+| Ingest: document store, NSE/Yahoo/Screener sources, pipelines, relationship extractor | done | `main` |
+| Intel: estimates, momentum, distress, event impact | done | `main` |
+| Vercel-only platform: `/api/v1` route handlers, `/api/cron/[job]` runner, `vercel.json` crons | done | `apps/web/src/server` |
+| Moneycontrol research: shareholding, ratings, consensus, estimates, targets, surprises, broker report PDFs | done | `packages/ingest/src/sources/moneycontrol.ts`, `pipelines/research.ts` |
+| Cerebras intelligence layer: rule insights, company brief, broker digest, market brief, triage, broker theses | done | `packages/llm`, `packages/intel/src/insights` |
+| Alt-data: aircraft registry + adsb.lol/OpenSky sampling, AISStream collection, travel and logistics signals | done | `packages/ingest/src/altdata`, `packages/intel/src/altdata` |
+| Gloomberg-style terminal UI (home, DES/GP/FA/ANR/SPLC/NEWS/JET/SHIP/INTL, SIG, MOV, custom scrollbars) | done | `apps/web/src/{app,components,styles}` |
+| Vercel deployment with crons against Aiven Postgres + managed Redis | in progress | project `market-analysis` |
+| Widen data: NIFTY500 prices/fundamentals/relationships | partial | run jobs repeatedly |
 
 ## Runbook
 
 ```
 set -a && . ./.env && set +a
 pnpm db:migrate
-W="pnpm exec tsx --conditions=@ma/source apps/server/src/worker/main.ts"
-$W universe        # indices + companies + aliases (daily)
-$W prices          # 1mo bars for the universe (4h, IST market hours)
-$W fundamentals    # 40 stalest companies per run (hourly)
-$W moneycontrol    # 10 stalest INTEL_UNIVERSE companies: page, SWOT, estimates (30m)
-$W broker-reports  # 12 unfetched broker report PDFs (15m)
-$W announcements   # NSE (2h)
-$W relationships   # 15 stalest non-financials: 2 ARs + 4 concalls (6h)
-$W intel           # estimates → momentum → risk (12h)
+pnpm job universe           # indices + companies + aliases (daily)
+pnpm job prices             # stalest companies, 1mo bars (15 min in market hours)
+pnpm job fundamentals       # 40 stalest companies per run (hourly)
+pnpm job announcements      # NSE (10 min)
+pnpm job relationships      # 15 stalest non-financials: 2 ARs + 4 concalls
+pnpm job intel              # estimates → momentum → risk (twice daily)
+pnpm job moneycontrol       # 10 stalest INTEL_UNIVERSE companies: research pages, estimates
+pnpm job broker-reports     # 12 unfetched broker report PDFs
+pnpm job insights           # company briefs + broker digests whose inputs changed
+pnpm job broker-theses      # summarise fetched broker reports into analyst_calls.thesis
+pnpm job market-brief       # pre-open and post-close market read
+pnpm job triage             # classify new announcements
+pnpm job aircraft-registry  # seed corporate aircraft and link to companies
+pnpm job aircraft-sample    # sample positions from adsb.lol / OpenSky
+pnpm job ais-collect        # AISStream burst over watched zones
+pnpm job altdata-derive     # legs, calls, transits from positions
+pnpm job altdata-signals    # travel + logistics signals
+pnpm job fleets             # owned-vessel fleets from filings
+pnpm job altdata-cleanup    # retention
 ```
 
-Run without arguments to start the scheduler with all jobs. Redis locks make it safe to run several workers.
+`pnpm job <name> [budgetMs]` runs one job once with the same lock, run record and cache invalidation as the cron route. On Vercel each job is triggered by `vercel.json` through `GET /api/cron/<job>` with `Authorization: Bearer $CRON_SECRET`.
 
 ## Next
 
-1. **Broker report theses**: `broker-reports` stores report PDFs and links them through `analyst_calls.report_document_id`; summarise that text into `analyst_calls.thesis` and show it in the ANR pane in place of the missing headline.
-2. **Backfill**: `prices` for NIFTY500 (`cli.ts prices NIFTY500`), then `fundamentals` and `relationships` jobs repeatedly until `documents.fetched_at` is fresh for the universe; re-run `intel`.
-3. **Host the API permanently**: `apps/web` is deployed on Vercel (project `market-analysis`, https://market-analysis-liard.vercel.app) with `API_URL`/`API_KEY` env vars; `API_URL` currently points at a temporary tunnel to the development sandbox. Run `docker compose up api worker` on a VM or container host and update `API_URL` (`vercel env add API_URL production`).
-4. **Relationship recall**: add a sentence classifier (small LLM or fine-tuned model) behind `extractNamedMentions` to catch mentions without lexical cues; keep the regex path as a fast pre-filter.
-5. **BSE announcements** as a second filings source; **NSE corporate actions**.
-6. **Watchlists and alerts**: user-defined lists in the UI, notify on new analyst calls and signal threshold crossings.
-7. **Auth for the web app** when exposing it publicly (currently the API key is the only gate).
-8. **Observability**: `/v1/cache/metrics` exists; add request timing histograms and `ingest_runs` dashboards.
-9. **UI read models are provisional**: `apps/web/src/server/queries/ui.ts` reads `insights`, alt-data tables and broker calls directly. Swap to `queries/insights.ts` (track-llm) and `queries/altdata.ts` (track-altdata) once they land, keeping the `types.ts` shapes the panes consume.
-10. **JET routes map**: the routes pane draws a hub-and-spoke schematic because airports have no coordinates in the schema. Add an ICAO → lat/lon table and switch `RoutesPane` to `MiniMap`.
-11. **Terminal font glyphs**: the bundled JetBrains Mono subset lacks ₹ and ↵; they fall back to system fonts. Rebuild the woff2 subset with those code points.
-12. **CSS specificity**: Biome reports 10 `noDescendingSpecificity` warnings in `styles/{charts,controls,pane,table}.css`; reorder selectors when those files are next touched.
-13. **Alt-data is empty locally**: JET and SHIP show designed empty states until `corporate_aircraft` and `facilities` are seeded and the alt-data jobs run.
+1. **Backfill**: run `prices`, `fundamentals`, `relationships` and `moneycontrol` repeatedly until `company_sync` is fresh for `DATA_UNIVERSE`; then `intel` and `insights`. `index_prices_daily` must be populated for the market brief breadth and sector sections.
+2. **Alt-data coverage**: Indian port geofences see almost no AISStream traffic; measure `altdata_coverage` over 24–72 h and either widen the watched zones or gate the SHIP pane on a coverage threshold. Jets depend on `aircraft-registry` links, which are provisional until confirmed from filings.
+3. **Relationship recall**: add a sentence classifier behind `extractNamedMentions` to catch mentions without lexical cues; keep the regex path as a fast pre-filter.
+4. **BSE announcements** as a second filings source; **NSE corporate actions**.
+5. **Watchlists and alerts**: user-defined lists in the UI, notify on new analyst calls, signal threshold crossings and verdict changes.
+6. **Auth for the web app** when exposing it publicly (currently the API key is the only gate on `/api/v1`; pages are open).
+7. **Observability**: `/api/v1/cache/metrics` reports cache, Firecrawl credit and LLM token budgets; add request timing histograms and `ingest_runs` dashboards.
+8. **JET routes map**: the routes pane draws a hub-and-spoke schematic because airports have no coordinates in the schema. Add an ICAO → lat/lon table and switch `RoutesPane` to `MiniMap`.
+9. **Terminal font glyphs**: the bundled JetBrains Mono subset lacks ₹ and ↵; they fall back to system fonts. Rebuild the woff2 subset with those code points.
+10. **CSS specificity**: Biome reports 10 `noDescendingSpecificity` warnings in `styles/{charts,controls,pane,table}.css`; reorder selectors when those files are next touched.

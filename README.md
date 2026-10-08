@@ -1,6 +1,6 @@
 # market-analysis
 
-Bloomberg-like intelligence terminal for Indian equities: supply-chain relationships extracted from filings, relationship value estimates, customer momentum, distress scores, event impact analysis and aggregated broker calls, behind a cached API and a keyboard-driven terminal UI.
+Bloomberg-like intelligence terminal for Indian equities: supply-chain relationships extracted from filings, relationship value estimates, customer momentum, distress scores, event impact analysis, Moneycontrol broker research, Cerebras-generated company and market briefs with cited evidence, and corporate-aircraft and vessel alt-data — one Next.js app on Vercel serving the terminal UI, the cached `/api/v1` read API and the cron jobs.
 
 - Start here: [`AGENTS.md`](AGENTS.md) (codebase map and conventions)
 - Models: [`docs/methodology.md`](docs/methodology.md)
@@ -10,16 +10,15 @@ Bloomberg-like intelligence terminal for Indian equities: supply-chain relations
 ## Quick start
 
 ```
-cp .env.example .env      # fill DATABASE_URL (Aiven), REDIS_URL, FIRECRAWL_API_KEY, API_KEY
+cp .env.example .env      # fill DATABASE_URL, REDIS_URL, API_KEY, CRON_SECRET, FIRECRAWL_API_KEY, CEREBRAS_API_KEY
 pnpm install
 pnpm db:migrate
-pnpm dev:server           # API on :4000
-pnpm dev:worker           # scheduler
-pnpm dev:web              # terminal UI on :3000
+pnpm dev:web              # terminal UI, /api/v1 and /api/cron on :3000
+pnpm job universe         # run one job once; see docs/plan.md for the full runbook
 ```
 
-Or with Docker: `docker compose up --build` (runs migrations, api, worker, web).
+Deploy `apps/web` to Vercel; `apps/web/vercel.json` schedules every job through `/api/cron/<job>`.
 
 ## Terminal commands
 
-`CTRL+K` then `DES RELIANCE`, `GP INFY`, `FA TCS`, `ANR INDGN`, `SPLC SONACOMS`, `NEWS RELIANCE`, `HOME`, `MOV`, `SIG distress_score`. Keys `1`–`6` switch company tabs.
+`CTRL+K` then `DES RELIANCE`, `GP INFY`, `FA TCS`, `ANR INDGN`, `SPLC SONACOMS`, `NEWS RELIANCE`, `HOME`, `MOV`, `SIG distress_score`. Keys `1`–`9` switch company tabs (DES, GP, FA, ANR, SPLC, NEWS, JET, SHIP, INTL).
