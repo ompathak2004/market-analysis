@@ -502,10 +502,14 @@ export function computeLogisticsSignals(input: LogisticsInput): LogisticsResult 
       );
       return { v, dest, value };
     });
-    const total = rows.reduce((s, r) => s + (r.value.estValueCr ?? 0), 0);
-    const valued = rows.some((r) => r.value.estValueCr !== null);
+    const sumCr = (rs: typeof rows) => rs.reduce((s, r) => s + (r.value.estValueCr ?? 0), 0);
+    const isValued = (rs: typeof rows) => rs.some((r) => r.value.estValueCr !== null);
     const idle = rows.filter((r) => r.v.loiterMin >= LOITER_MIN);
+    const moving = rows.filter((r) => r.v.loiterMin < LOITER_MIN);
     const focus = idle.length ? idle : rows;
+    const focusCr = sumCr(focus);
+    const valued = isValued(focus);
+    const crOrNull = (rs: typeof rows) => (isValued(rs) ? round(sumCr(rs), 1) : null);
     const first = focus[0];
     let read: string;
     if (!first) {
@@ -517,7 +521,7 @@ export function computeLogisticsSignals(input: LogisticsInput): LogisticsResult 
       const where = first.v.chokepoint.replace(/_/g, " ");
       const state = idle.length ? `idle at ${where} ~${hours} h` : `inside ${where}`;
       const valueText = valued
-        ? `, ≈ ₹${crore(total)} Cr of ${first.value.commodity} ${idle.length ? "delayed" : "in transit"} — working-capital timing risk, not a loss`
+        ? `, ≈ ₹${crore(focusCr)} Cr of ${first.value.commodity} ${idle.length ? "delayed" : "in transit"} — working-capital timing risk, not a loss`
         : "";
       read = `${focus.length} inbound ${sizes} ${state}${valueText}; cargo and destination inferred.`;
     }
@@ -550,9 +554,14 @@ export function computeLogisticsSignals(input: LogisticsInput): LogisticsResult 
           estValueUsd: r.value.estValueUsd,
           estValueCr: r.value.estValueCr,
         })),
-        totalEstValueCr: valued ? round(total, 1) : null,
+        totalEstValueCr: crOrNull(rows),
+        delayedEstValueCr: crOrNull(idle),
+        inTransitEstValueCr: crOrNull(moving),
         valueRange: valued
-          ? { low: round(total * (1 - VALUE_BAND), 1), high: round(total * (1 + VALUE_BAND), 1) }
+          ? {
+              low: round(focusCr * (1 - VALUE_BAND), 1),
+              high: round(focusCr * (1 + VALUE_BAND), 1),
+            }
           : null,
         basis: valued ? CARGO_VALUE_BASIS : "qualitative",
         prices: input.prices,
@@ -567,7 +576,7 @@ export function computeLogisticsSignals(input: LogisticsInput): LogisticsResult 
         headline: `${input.label}: ${read}`,
         detail: {
           vessels: idle.map((r) => r.v.mmsi),
-          totalEstValueCr: valued ? round(total, 1) : null,
+          delayedEstValueCr: crOrNull(idle),
         },
         severity: valued ? 3 : 2,
         dedupeKey: `logistics:${input.companyId}:choke:${asOf}`,

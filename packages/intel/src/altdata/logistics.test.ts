@@ -156,6 +156,35 @@ describe("computeLogisticsSignals", () => {
     expect(result.events.map((e) => e.kind)).toEqual(["sea.chokepoint_exposure"]);
   });
 
+  it("keeps delayed and in-transit cargo totals apart", () => {
+    const tanker = {
+      name: "OCEAN STAR",
+      class: "tanker" as const,
+      sizeClass: "VLCC",
+      dwtEst: 300_000,
+      chokepoint: "hormuz",
+      destination: "SIKKA",
+      destinationFacilityId: 2,
+      enteredMs: NOW - DAY_MS,
+    };
+    const result = computeLogisticsSignals(
+      input({
+        inbound: [
+          { ...tanker, mmsi: 538_000_001, loiterMin: 480, transitId: 9 },
+          { ...tanker, mmsi: 538_000_002, loiterMin: 30, transitId: 10 },
+        ],
+      }),
+    );
+    const exposure = result.signals.find((s) => s.kind === "logistics_chokepoint_exposure");
+    expect(exposure?.value).toBe(2);
+    expect(exposure?.inputs.delayedEstValueCr).toBe(1276.8);
+    expect(exposure?.inputs.inTransitEstValueCr).toBe(1276.8);
+    expect(exposure?.inputs.totalEstValueCr).toBe(2553.6);
+    expect(exposure?.inputs.valueRange).toEqual({ low: 957.6, high: 1596 });
+    expect(exposure?.inputs.read).toMatch(/^1 inbound VLCC idle .*₹1,277 Cr of crude delayed/);
+    expect(result.events[0]?.detail.delayedEstValueCr).toBe(1276.8);
+  });
+
   it("reports fleet activity for shipping companies", () => {
     const result = computeLogisticsSignals(
       input({
