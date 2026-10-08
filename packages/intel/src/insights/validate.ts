@@ -1,9 +1,12 @@
 export type JsonPath = Array<string | number>;
 
+export type ViolationReason = "ungrounded" | "uncited";
+
 export interface Violation {
   path: JsonPath;
   sentence: string;
   numbers: number[];
+  reason: ViolationReason;
 }
 
 export type FigureUnit = "pct" | "amount" | null;
@@ -169,6 +172,11 @@ export function splitSentences(text: string): string[] {
     .filter(Boolean);
 }
 
+const claimText = (o: Record<string, unknown>): string => {
+  const text = o.point ?? o.text ?? o.says;
+  return typeof text === "string" ? text : "";
+};
+
 export interface ClaimCheck {
   known: ReadonlySet<string>;
   sections?: Readonly<Record<string, unknown>>;
@@ -181,8 +189,14 @@ export function validateClaims(output: unknown, inputs: unknown, check: ClaimChe
     const citedPool = cited ? cited.flatMap((id) => pools.byId.get(id) ?? []) : [];
     for (const sentence of splitSentences(text)) {
       const tokens = extractTokens(sentence);
+      if (!tokens.length) continue;
+      if (cited && !cited.length) {
+        out.push({ path, sentence, numbers: tokens.map((t) => t.value), reason: "uncited" });
+        continue;
+      }
       const bad = tokens.filter((t) => !isGrounded(t, citedPool, pools.global));
-      if (bad.length) out.push({ path, sentence, numbers: bad.map((t) => t.value) });
+      if (bad.length)
+        out.push({ path, sentence, numbers: bad.map((t) => t.value), reason: "ungrounded" });
     }
   };
   const walk = (v: unknown, path: JsonPath, cited: string[] | null) => {
@@ -192,10 +206,15 @@ export function validateClaims(output: unknown, inputs: unknown, check: ClaimChe
     } else if (v && typeof v === "object") {
       const o = v as Record<string, unknown>;
       let scope = cited;
-      if (Array.isArray(o.evidence))
+      if (Array.isArray(o.evidence)) {
         scope = o.evidence.filter(
           (id): id is string => typeof id === "string" && check.known.has(id),
         );
+        if (!scope.length && typeof path.at(-1) === "number") {
+          out.push({ path, sentence: claimText(o), numbers: [], reason: "uncited" });
+          return;
+        }
+      }
       for (const [k, x] of Object.entries(o)) if (k !== "evidence") walk(x, [...path, k], scope);
     }
   };
@@ -265,6 +284,10 @@ export function dropViolations<T>(
 export function describeViolations(violations: readonly Violation[]): string {
   return violations
     .slice(0, 12)
-    .map((v) => `- "${v.sentence}" uses ${v.numbers.join(", ")} which is not in INPUT`)
+    .map((v) =>
+      v.reason === "uncited"
+        ? `- "${v.sentence}" cites no valid id from INPUT.evidence`
+        : `- "${v.sentence}" uses ${v.numbers.join(", ")} which is not in INPUT`,
+    )
     .join("\n");
 }

@@ -26,12 +26,16 @@ describe("finalizeBrief", () => {
 
   it("forces the label to match the score band and clamps values", () => {
     const { brief } = finalizeBrief(
-      briefFixture({ verdict: { score: 83.6, label: "neutral", confidence: 1.4, oneLiner: "x" } }),
+      briefFixture({
+        verdict: { score: 83.6, label: "neutral", confidence: 1.4, oneLiner: "x", evidence: [] },
+      }),
       inputs,
     );
     expect(brief.verdict).toMatchObject({ score: 84, label: "bullish", confidence: 1 });
     const low = finalizeBrief(
-      briefFixture({ verdict: { score: -5, label: "bullish", confidence: 0.333, oneLiner: "x" } }),
+      briefFixture({
+        verdict: { score: -5, label: "bullish", confidence: 0.333, oneLiner: "x", evidence: [] },
+      }),
       inputs,
     ).brief.verdict;
     expect(low).toMatchObject({ score: 0, label: "bearish", confidence: 0.33 });
@@ -45,9 +49,9 @@ describe("finalizeBrief", () => {
           { point: "Mean target ₹2,100.", evidence: ["cns"] },
           { point: "Margin 20%.", evidence: ["fin"] },
         ],
-        whatChanged: ["Score rose."],
-        managementTravel: { read: "Executives flew to Mumbai." },
-        logistics: { read: "  " },
+        whatChanged: [{ point: "Score rose.", evidence: ["px"] }],
+        managementTravel: { read: "Executives flew to Mumbai.", evidence: [] },
+        logistics: { read: "  ", evidence: [] },
       }),
       inputs,
     );
@@ -62,7 +66,7 @@ describe("finalizeBrief", () => {
   it("reports ungrounded numbers", () => {
     const { violations } = finalizeBrief(
       briefFixture({
-        risks: [{ point: "Debt could rise to ₹4,321 crore.", severity: "high", evidence: [] }],
+        risks: [{ point: "Debt could rise to ₹4,321 crore.", severity: "high", evidence: ["fin"] }],
       }),
       inputs,
     );
@@ -71,7 +75,21 @@ describe("finalizeBrief", () => {
         path: ["risks", 0, "point"],
         sentence: "Debt could rise to ₹4,321 crore.",
         numbers: [4321],
+        reason: "ungrounded",
       },
+    ]);
+  });
+
+  it("reports claims that cite only invented ids", () => {
+    const { violations, removedEvidence } = finalizeBrief(
+      briefFixture({
+        risks: [{ point: "Execution risk.", severity: "high", evidence: ["brk:404"] }],
+      }),
+      inputs,
+    );
+    expect(removedEvidence).toEqual(["brk:404"]);
+    expect(violations).toEqual([
+      { path: ["risks", 0], sentence: "Execution risk.", numbers: [], reason: "uncited" },
     ]);
   });
 });
@@ -87,7 +105,7 @@ describe("applyViolations", () => {
       ],
     });
     const out = applyViolations(brief, [
-      { path: ["thesis", 3, "point"], sentence: "Four 777.", numbers: [777] },
+      { path: ["thesis", 3, "point"], sentence: "Four 777.", numbers: [777], reason: "ungrounded" },
     ]);
     expect(out?.thesis).toHaveLength(3);
     expect(out?.verdict.confidence).toBe(0.56);
@@ -96,7 +114,14 @@ describe("applyViolations", () => {
 
   it("rejects the brief when fewer than three thesis points survive", () => {
     const out = applyViolations(briefFixture(), [
-      { path: ["thesis", 0, "point"], sentence: "x", numbers: [1] },
+      { path: ["thesis", 0, "point"], sentence: "x", numbers: [1], reason: "ungrounded" },
+    ]);
+    expect(out).toBeNull();
+  });
+
+  it("rejects the brief when no cited risk survives", () => {
+    const out = applyViolations(briefFixture(), [
+      { path: ["risks", 0], sentence: "", numbers: [], reason: "uncited" },
     ]);
     expect(out).toBeNull();
   });

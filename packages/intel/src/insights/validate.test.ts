@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPools,
+  describeViolations,
   dropViolations,
   extractTokens,
   isGrounded,
@@ -112,8 +113,43 @@ describe("validateClaims", () => {
       { known },
     );
     expect(out).toEqual([
-      { path: ["thesis", 1, "point"], sentence: "Target ₹9,999 implies upside.", numbers: [9999] },
+      {
+        path: ["thesis", 1, "point"],
+        sentence: "Target ₹9,999 implies upside.",
+        numbers: [9999],
+        reason: "ungrounded",
+      },
     ]);
+  });
+
+  it("rejects claims whose evidence does not resolve", () => {
+    const out = validateClaims(
+      {
+        thesis: [
+          { point: "Cited.", evidence: ["fin"] },
+          { point: "Invented source.", evidence: ["brk:404"] },
+          { point: "No source.", evidence: [] },
+        ],
+      },
+      {},
+      { known },
+    );
+    expect(out.map((v) => [v.path, v.reason, v.sentence])).toEqual([
+      [["thesis", 1], "uncited", "Invented source."],
+      [["thesis", 2], "uncited", "No source."],
+    ]);
+  });
+
+  it("flags figures in a narrative section with no valid citation", () => {
+    const out = validateClaims(
+      { valuation: { read: "Trades at 25x. Cheap.", evidence: [] } },
+      { pe: 25 },
+      { known },
+    );
+    expect(out).toEqual([
+      { path: ["valuation", "read"], sentence: "Trades at 25x.", numbers: [25], reason: "uncited" },
+    ]);
+    expect(describeViolations(out)).toContain("cites no valid id");
   });
 
   it("rejects fabricated growth and amounts", () => {
@@ -159,8 +195,8 @@ describe("dropViolations", () => {
     const { output, dropped } = dropViolations(
       value,
       [
-        { path: ["thesis", 1, "point"], sentence: "b 999", numbers: [999] },
-        { path: ["read"], sentence: "Bad 999.", numbers: [999] },
+        { path: ["thesis", 1, "point"], sentence: "b 999", numbers: [999], reason: "ungrounded" },
+        { path: ["read"], sentence: "Bad 999.", numbers: [999], reason: "ungrounded" },
       ],
       new Set(["thesis"]),
     );

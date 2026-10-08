@@ -13,7 +13,8 @@ import { assembleCompanyInputs, type CompanyInputs, currentInsight } from "./inp
 import { COMPANY_BRIEF_SYSTEM, groundingFeedback, inputMessage } from "./prompts.js";
 import {
   type CompanyBrief,
-  companyBriefSchema,
+  type CompanyBriefDraft,
+  companyBriefDraftSchema,
   INSIGHT_MODEL_VERSION,
   verdictLabelFor,
 } from "./schemas.js";
@@ -47,13 +48,13 @@ export const briefSections = (inputs: CompanyInputs): Record<string, unknown> =>
 });
 
 export function finalizeBrief(
-  raw: CompanyBrief,
+  raw: CompanyBriefDraft,
   inputs: CompanyInputs,
-): { brief: CompanyBrief; violations: Violation[]; removedEvidence: string[] } {
+): { brief: CompanyBriefDraft; violations: Violation[]; removedEvidence: string[] } {
   const known = new Set(inputs.evidence.map((e) => e.id));
   const { output, removed } = sanitizeEvidence(raw, known);
   const score = Math.round(Math.max(0, Math.min(100, output.verdict.score)));
-  const brief: CompanyBrief = {
+  const brief: CompanyBriefDraft = {
     ...output,
     verdict: {
       ...output.verdict,
@@ -62,27 +63,33 @@ export function finalizeBrief(
       confidence: Math.round(Math.max(0, Math.min(1, output.verdict.confidence)) * 100) / 100,
     },
     whatChanged: inputs.previousBrief ? output.whatChanged : [],
-    managementTravel: { read: inputs.travel ? nullIfBlank(output.managementTravel.read) : null },
-    logistics: { read: inputs.logistics ? nullIfBlank(output.logistics.read) : null },
-    supplyChain: { read: nullIfBlank(output.supplyChain.read) },
+    managementTravel: {
+      ...output.managementTravel,
+      read: inputs.travel ? nullIfBlank(output.managementTravel.read) : null,
+    },
+    logistics: {
+      ...output.logistics,
+      read: inputs.logistics ? nullIfBlank(output.logistics.read) : null,
+    },
+    supplyChain: { ...output.supplyChain, read: nullIfBlank(output.supplyChain.read) },
   };
   const violations = validateClaims(brief, inputs, { known, sections: briefSections(inputs) });
   return { brief, violations, removedEvidence: removed };
 }
 
 export function applyViolations(
-  brief: CompanyBrief,
+  brief: CompanyBriefDraft,
   violations: readonly Violation[],
-): CompanyBrief | null {
+): CompanyBriefDraft | null {
   if (!violations.length) return brief;
   const { output, dropped } = dropViolations(brief, violations, BRIEF_ARRAYS);
   if (output.thesis.length < MIN_THESIS) return null;
-  const cleaned: CompanyBrief = {
+  const cleaned: CompanyBriefDraft = {
     ...output,
-    whatChanged: output.whatChanged.filter((s) => s.trim()),
+    whatChanged: output.whatChanged.filter((c) => c.point.trim()),
     uncertainty: [
       ...output.uncertainty.filter((s) => s.trim()),
-      `${dropped} statement${dropped === 1 ? "" : "s"} removed because the figures could not be traced to inputs.`,
+      `${dropped} statement${dropped === 1 ? "" : "s"} removed because ${dropped === 1 ? "it" : "they"} could not be traced to cited inputs.`,
     ],
     verdict: {
       ...output.verdict,
@@ -90,16 +97,25 @@ export function applyViolations(
       confidence: Math.max(0, Math.round((output.verdict.confidence - 0.1) * 100) / 100),
     },
     valuation: {
+      ...output.valuation,
       read: output.valuation.read.trim() || "Valuation read not available.",
       vsPeers: nullIfBlank(output.valuation.vsPeers),
       vsConsensus: nullIfBlank(output.valuation.vsConsensus),
     },
-    supplyChain: { read: nullIfBlank(output.supplyChain.read) },
-    managementTravel: { read: nullIfBlank(output.managementTravel.read) },
-    logistics: { read: nullIfBlank(output.logistics.read) },
+    supplyChain: { ...output.supplyChain, read: nullIfBlank(output.supplyChain.read) },
+    managementTravel: {
+      ...output.managementTravel,
+      read: nullIfBlank(output.managementTravel.read),
+    },
+    logistics: { ...output.logistics, read: nullIfBlank(output.logistics.read) },
   };
-  return companyBriefSchema.safeParse(cleaned).success ? cleaned : null;
+  return companyBriefDraftSchema.safeParse(cleaned).success ? cleaned : null;
 }
+
+export const storedBrief = (draft: CompanyBriefDraft): CompanyBrief => ({
+  ...draft,
+  whatChanged: draft.whatChanged.map((c) => c.point),
+});
 
 export function hasBriefInputs(inputs: CompanyInputs): boolean {
   return inputs.price != null || inputs.fundamentals != null;
@@ -128,13 +144,13 @@ export async function generateCompanyBrief(
     return "fresh";
   const view = modelView(inputs);
   const log = ctx.logger.child({ product: "company_brief", symbol: inputs.company.symbol });
-  const calls: JsonResult<CompanyBrief>[] = [];
+  const calls: JsonResult<CompanyBriefDraft>[] = [];
   const ask = async (extra?: string) => {
     const res = await ctx.llm.complete({
       name: "company_brief",
       system: COMPANY_BRIEF_SYSTEM,
       user: inputMessage(view, extra),
-      schema: companyBriefSchema,
+      schema: companyBriefDraftSchema,
       maxOutputTokens: 4_000,
     });
     calls.push(res);
@@ -148,9 +164,12 @@ export async function generateCompanyBrief(
   const brief = applyViolations(result.brief, result.violations);
   if (!brief) {
     log.warn({ violations: result.violations.length }, "brief rejected after grounding");
-    throw new LlmInvalidOutput("company_brief", "fewer than 3 grounded thesis points");
+    throw new LlmInvalidOutput(
+      "company_brief",
+      "not enough grounded, cited thesis points or risks",
+    );
   }
-  const last = calls.at(-1) as JsonResult<CompanyBrief>;
+  const last = calls.at(-1) as JsonResult<CompanyBriefDraft>;
   return writeCurrentInsight(ctx.db, {
     companyId,
     kind: "company_brief",
@@ -158,7 +177,7 @@ export async function generateCompanyBrief(
     model: last.model,
     inputHash: hash,
     inputs: inputs as unknown as Record<string, unknown>,
-    output: brief as unknown as Record<string, unknown>,
+    output: storedBrief(brief) as unknown as Record<string, unknown>,
     confidence: brief.verdict.confidence,
     promptTokens: calls.reduce((s, c) => s + c.promptTokens, 0),
     completionTokens: calls.reduce((s, c) => s + c.completionTokens, 0),

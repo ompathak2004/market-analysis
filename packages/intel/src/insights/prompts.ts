@@ -17,9 +17,10 @@ export const COMPANY_BRIEF_SYSTEM = [
   "- verdict.confidence is 0-1. Lower it when inputs are sparse (missing sections are null), broker coverage is below 3 or data is older than 30 days.",
   "- verdict.oneLiner is one sentence of at most 200 characters.",
   "- thesis: 4-6 points; risks: 2-4 points with severity; catalysts: 1-4 points with a timing hint or null.",
-  "- Every thesis, risk and catalyst point cites one or more ids from INPUT.evidence[].id in its evidence array. Use only ids that exist.",
+  "- Every thesis, risk, catalyst and whatChanged point cites one or more ids from INPUT.evidence[].id in its evidence array. Use only ids that exist; points without a valid id are discarded.",
+  "- verdict, valuation, supplyChain, managementTravel and logistics each have an evidence array listing the ids behind any figure they quote.",
   "- Reason over INPUT.ruleInsights, which are our own deterministic reads, and the raw sections they come from.",
-  "- whatChanged compares against INPUT.previousBrief; return [] when previousBrief is null.",
+  "- whatChanged lists points that compare against INPUT.previousBrief; return [] when previousBrief is null.",
   "- valuation.vsPeers and valuation.vsConsensus are null when there is no peer or consensus data.",
   "- supplyChain.read is null when INPUT.supplyChain is null; managementTravel.read is null when INPUT.travel is null; logistics.read is null when INPUT.logistics is null.",
   "- uncertainty lists what you could not assess and which inputs were missing.",
@@ -40,7 +41,8 @@ export const MARKET_BRIEF_SYSTEM = [
   "",
   "Task: write the daily Indian market brief from INPUT.",
   "- headline: one line on the day's dominant move.",
-  "- bullets: exactly 5 bullets, each citing ids from INPUT.evidence[].id.",
+  "- bullets: exactly 5 bullets, each citing one or more ids from INPUT.evidence[].id; bullets without a valid id are discarded.",
+  "- evidence lists the ids behind any figure in headline, sectorRotation, breadth, notableCalls and riskFlags.",
   "- sectorRotation and breadth: one or two sentences each, from INPUT.sectors and INPUT.breadth.",
   "- notableCalls: broker calls worth knowing; [] when there are none.",
   "- riskFlags: at most 4 short sentences on specific risks visible in INPUT (distress, concentration, high-materiality announcements); name companies, not evidence ids; [] when none.",
@@ -74,5 +76,5 @@ export function inputMessage(input: unknown, extra?: string): string {
 }
 
 export function groundingFeedback(list: string): string {
-  return `Your previous answer used numbers that are not in INPUT. Rewrite those statements using only figures from INPUT, or drop them:\n${list}`;
+  return `Your previous answer had statements that INPUT does not support. Rewrite them using only figures from INPUT and cite valid ids from INPUT.evidence, or drop them:\n${list}`;
 }

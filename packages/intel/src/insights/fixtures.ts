@@ -1,5 +1,5 @@
 import type { CompanyInputs } from "./inputs.js";
-import type { CompanyBrief } from "./schemas.js";
+import type { CompanyBriefDraft } from "./schemas.js";
 
 export function companyFixture(overrides: Partial<CompanyInputs> = {}): CompanyInputs {
   return {
@@ -203,35 +203,47 @@ export function companyFixture(overrides: Partial<CompanyInputs> = {}): CompanyI
       { id: "cns", kind: "source", label: "Consensus", url: null },
       { id: "brk:11", kind: "broker_pdf", label: "Alpha Securities note", url: "https://x.test/a" },
       { id: "ann:501", kind: "announcement", label: "Order win", url: null },
+      { id: "sig:supply_chain", kind: "source", label: "Supply-chain signals", url: null },
     ],
     ...overrides,
   };
 }
 
-export function briefFixture(overrides: Partial<CompanyBrief> = {}): CompanyBrief {
+export function briefFixture(overrides: Partial<CompanyBriefDraft> = {}): CompanyBriefDraft {
   return {
     verdict: {
       score: 71,
       label: "constructive",
       confidence: 0.66,
       oneLiner: "Growth well ahead of the sector with a clean balance sheet.",
+      evidence: ["fin"],
     },
     thesis: [
       { point: "Revenue grew 14.3% YoY vs the sector median of 7.5%.", evidence: ["fin"] },
       { point: "Operating margin of 20% beats the 14% sector median.", evidence: ["fin"] },
       { point: "Mean target of ₹2,100 implies 20% upside.", evidence: ["cns"] },
     ],
-    risks: [{ point: "Top customers are 31% of revenue.", severity: "medium", evidence: [] }],
+    risks: [
+      {
+        point: "Top customers are 31% of revenue.",
+        severity: "medium",
+        evidence: ["sig:supply_chain"],
+      },
+    ],
     catalysts: [{ point: "Order win worth ₹1,200 crore.", when: null, evidence: ["ann:501"] }],
     whatChanged: [],
     valuation: {
       read: "Shares trade 22.2% below the 52-week high.",
       vsPeers: null,
       vsConsensus: null,
+      evidence: ["px"],
     },
-    supplyChain: { read: "Customer share prices fell 6.4% over 3 months." },
-    managementTravel: { read: null },
-    logistics: { read: null },
+    supplyChain: {
+      read: "Customer share prices fell 6.4% over 3 months.",
+      evidence: ["sig:supply_chain"],
+    },
+    managementTravel: { read: null, evidence: [] },
+    logistics: { read: null, evidence: [] },
     uncertainty: [],
     ...overrides,
   };
