@@ -1,9 +1,16 @@
-import { analystCalls, and, announcements, companies, desc, eq, gte, sql } from "@ma/db";
+import { type analystCalls, and, announcements, companies, desc, eq, gte, sql } from "@ma/db";
 import type { BrokerThesis, RuleInsight, VerdictLabel } from "@ma/intel";
-import { verdictLabelFor } from "@ma/intel";
+import { brokerThesisSchema, verdictLabelFor } from "@ma/intel";
 import { toNum } from "../../lib/format";
 import type { AppContext } from "../context";
-import { analystView, companyOverview, financials, findCompany, priceHistory } from "./core";
+import {
+  analystView,
+  companyOverview,
+  financials,
+  findCompany,
+  latestAnalystCalls,
+  priceHistory,
+} from "./core";
 
 export interface FilingItem {
   id: number;
@@ -162,15 +169,25 @@ export async function recentFilings(ctx: AppContext, limit = 40): Promise<Filing
   return rows ?? [];
 }
 
-function thesisOf(v: unknown): BrokerThesis | null {
-  if (!v || typeof v !== "object") return null;
-  const t = v as BrokerThesis;
-  return Array.isArray(t.keyPoints) ? t : null;
-}
-
-type CallRow = typeof analystCalls.$inferSelect;
+type CallRow = Pick<
+  typeof analystCalls.$inferSelect,
+  | "id"
+  | "broker"
+  | "publishedAt"
+  | "action"
+  | "rating"
+  | "priorRating"
+  | "targetPrice"
+  | "priorTargetPrice"
+  | "priceAtCall"
+  | "reportUrl"
+  | "title"
+  | "summary"
+  | "thesis"
+>;
 
 function callOf(c: CallRow): BrokerCall {
+  const thesis = brokerThesisSchema.safeParse(c.thesis);
   return {
     id: c.id,
     broker: c.broker,
@@ -184,34 +201,22 @@ function callOf(c: CallRow): BrokerCall {
     reportUrl: c.reportUrl ?? null,
     title: c.title ?? null,
     summary: c.summary ?? null,
-    thesis: thesisOf(c.thesis),
+    thesis: thesis.success ? thesis.data : null,
   };
 }
 
 export async function latestBrokerCalls(ctx: AppContext, limit = 40): Promise<LatestBrokerCall[]> {
-  const rows = await ctx.api.getOrLoad(
-    `ui:calls:${limit}`,
-    async () => {
-      const rows = await ctx.db
-        .select({ call: analystCalls, symbol: companies.nseSymbol, name: companies.name })
-        .from(analystCalls)
-        .innerJoin(companies, eq(companies.id, analystCalls.companyId))
-        .orderBy(desc(analystCalls.publishedAt), desc(analystCalls.id))
-        .limit(limit);
-      return rows.map((r) => {
-        const c = callOf(r.call);
-        const base = c.priceAtCall;
-        return {
-          ...c,
-          symbol: r.symbol ?? "",
-          name: r.name,
-          upsidePct: c.targetPrice != null && base ? ((c.targetPrice - base) / base) * 100 : null,
-        };
-      });
-    },
-    { ttlMs: 5 * MINUTE, staleMs: 30 * MINUTE },
-  );
-  return rows ?? [];
+  const rows = (await latestAnalystCalls(ctx, limit)) ?? [];
+  return rows.map((r) => {
+    const c = callOf(r);
+    const base = c.priceAtCall;
+    return {
+      ...c,
+      symbol: r.symbol ?? "",
+      name: r.name,
+      upsidePct: c.targetPrice != null && base ? ((c.targetPrice - base) / base) * 100 : null,
+    };
+  });
 }
 
 export async function companyCalls(ctx: AppContext, symbol: string): Promise<CompanyCalls> {
