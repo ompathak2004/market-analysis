@@ -71,6 +71,7 @@ export const brokerDigestSchema = z.object({
       says: z.string(),
       target: z.number().nullable(),
       changed: z.string().nullable(),
+      evidence: evidenceIds,
     }),
   ),
   divergence: z.object({
@@ -86,6 +87,7 @@ export const brokerDigestSchema = z.object({
     read: z.string(),
   }),
   revisionMomentum: z.object({ direction: z.enum(["up", "down", "flat"]), read: z.string() }),
+  evidence: evidenceIds,
 });
 export type BrokerDigest = z.infer<typeof brokerDigestSchema>;
 
@@ -134,7 +136,7 @@ export const brokerThesisSchema = z.object({
   estimatesChanged: z.string().nullable(),
 });
 export type BrokerThesis = z.infer<typeof brokerThesisSchema>;
-export const BROKER_THESIS_MODEL_VERSION = 1;
+export const BROKER_THESIS_MODEL_VERSION = 2;
 
 export type RuleGroup =
   | "price"

@@ -4,11 +4,10 @@ import type { IntelContext } from "./context.js";
 import { inputMessage, TRIAGE_SYSTEM } from "./prompts.js";
 import { INSIGHT_MODEL_VERSION, type TriageItem, triageBatchSchema } from "./schemas.js";
 import { isRoutineAnnouncement } from "./triage-rules.js";
-import { validateClaims } from "./validate.js";
+import { NO_EVIDENCE, validateClaims } from "./validate.js";
 
 export const TRIAGE_MODEL_VERSION = INSIGHT_MODEL_VERSION;
 export const TRIAGE_BATCH = 20;
-const NO_EVIDENCE: ReadonlySet<string> = new Set();
 export const ROUTINE_SO_WHAT = "Routine compliance filing; no impact on the investment case.";
 
 export interface TriageCandidate {

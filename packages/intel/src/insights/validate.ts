@@ -177,6 +177,8 @@ const claimText = (o: Record<string, unknown>): string => {
   return typeof text === "string" ? text : "";
 };
 
+export const NO_EVIDENCE: ReadonlySet<string> = new Set();
+
 export interface ClaimCheck {
   known: ReadonlySet<string>;
   sections?: Readonly<Record<string, unknown>>;

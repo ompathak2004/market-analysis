@@ -1,4 +1,5 @@
 import { isoDate } from "@ma/core";
+import { LlmInvalidOutput } from "@ma/llm";
 import {
   hasNewBrokerCall,
   type InsightOutcome,
@@ -14,8 +15,11 @@ import {
   currentInsight,
   round,
 } from "./inputs.js";
-import { BROKER_DIGEST_SYSTEM, inputMessage } from "./prompts.js";
+import { BROKER_DIGEST_SYSTEM, groundingFeedback, inputMessage } from "./prompts.js";
 import { type BrokerDigest, brokerDigestSchema, INSIGHT_MODEL_VERSION } from "./schemas.js";
+import { describeViolations, dropViolations, type Violation, validateClaims } from "./validate.js";
+
+const DIGEST_ARRAYS = new Set(["byBroker"]);
 
 export interface DigestComputed {
   targetDispersion: { low: number; high: number; mean: number; spreadPct: number } | null;
@@ -78,6 +82,7 @@ export function computeDigest(
 export function digestInputs(inputs: CompanyInputs) {
   const computed = computeDigest(inputs);
   const ids = new Set(inputs.brokers.map((b) => b.evidenceId));
+  if (inputs.consensus) ids.add("cns");
   return {
     company: inputs.company,
     price: inputs.price ? { last: inputs.price.last, asOf: inputs.price.asOf } : null,
@@ -90,17 +95,20 @@ export function digestInputs(inputs: CompanyInputs) {
   };
 }
 
-export function finalizeDigest(
-  raw: BrokerDigest,
-  input: ReturnType<typeof digestInputs>,
-): BrokerDigest {
+type DigestInput = ReturnType<typeof digestInputs>;
+
+const digestKnown = (input: DigestInput) => new Set(input.evidence.map((e) => e.id));
+
+export function finalizeDigest(raw: BrokerDigest, input: DigestInput): BrokerDigest {
   const byName = new Map(input.brokers.map((b) => [b.broker.toLowerCase(), b]));
+  const known = digestKnown(input);
   const d = input.computed.targetDispersion;
   return {
     ...raw,
-    byBroker: raw.byBroker
-      .filter((b) => byName.has(b.broker.toLowerCase()))
-      .map((b) => ({ ...b, target: byName.get(b.broker.toLowerCase())?.target ?? null })),
+    byBroker: raw.byBroker.flatMap((b) => {
+      const view = byName.get(b.broker.toLowerCase());
+      return view ? [{ ...b, target: view.target, evidence: [view.evidenceId] }] : [];
+    }),
     targetDispersion: {
       low: d?.low ?? 0,
       high: d?.high ?? 0,
@@ -109,7 +117,22 @@ export function finalizeDigest(
       read: d ? raw.targetDispersion.read : "Not enough targets to measure dispersion.",
     },
     revisionMomentum: { ...raw.revisionMomentum, direction: input.computed.revisionDirection },
+    evidence: [...new Set(raw.evidence)].filter((id) => known.has(id)),
   };
+}
+
+export const digestViolations = (digest: BrokerDigest, input: DigestInput): Violation[] =>
+  validateClaims(digest, input, { known: digestKnown(input) });
+
+export function groundDigest(
+  digest: BrokerDigest,
+  violations: readonly Violation[],
+  input: DigestInput,
+): BrokerDigest | null {
+  if (!violations.length) return digest;
+  const { output } = dropViolations(digest, violations, DIGEST_ARRAYS);
+  if (!output.byBroker.length || digestViolations(output, input).length) return null;
+  return output;
 }
 
 export async function generateBrokerDigest(
@@ -131,24 +154,38 @@ export async function generateBrokerDigest(
     })
   )
     return "fresh";
-  const res = await ctx.llm.complete({
-    name: "broker_digest",
-    system: BROKER_DIGEST_SYSTEM,
-    user: inputMessage(input),
-    schema: brokerDigestSchema,
-    maxOutputTokens: 3_000,
-  });
-  const digest = finalizeDigest(res.data, input);
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let model = ctx.llm.model;
+  const ask = async (extra?: string) => {
+    const res = await ctx.llm.complete({
+      name: "broker_digest",
+      system: BROKER_DIGEST_SYSTEM,
+      user: inputMessage(input, extra),
+      schema: brokerDigestSchema,
+      maxOutputTokens: 3_000,
+    });
+    promptTokens += res.promptTokens;
+    completionTokens += res.completionTokens;
+    model = res.model;
+    const digest = finalizeDigest(res.data, input);
+    return { digest, violations: digestViolations(digest, input) };
+  };
+  let result = await ask();
+  if (result.violations.length)
+    result = await ask(groundingFeedback(describeViolations(result.violations)));
+  const digest = groundDigest(result.digest, result.violations, input);
+  if (!digest) throw new LlmInvalidOutput("broker_digest", "no grounded broker views");
   return writeCurrentInsight(ctx.db, {
     companyId,
     kind: "broker_digest",
     modelVersion: INSIGHT_MODEL_VERSION,
-    model: res.model,
+    model,
     inputHash: hash,
     inputs: input as unknown as Record<string, unknown>,
     output: digest as unknown as Record<string, unknown>,
     confidence: null,
-    promptTokens: res.promptTokens,
-    completionTokens: res.completionTokens,
+    promptTokens,
+    completionTokens,
   });
 }
