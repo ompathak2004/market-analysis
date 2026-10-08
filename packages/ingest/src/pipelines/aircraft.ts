@@ -19,7 +19,6 @@ import { legDedupeKey, segmentLegs, summarizeLeg } from "../altdata/legs.js";
 import type { IngestContext } from "../context.js";
 import {
   AIRCRAFT_OVERRIDES,
-  AIRLINER_TYPES,
   BIZJET_TYPES,
   CHARTER_OWNER,
   OWNER_GROUPS,
@@ -39,7 +38,7 @@ const LAST_KEY = "altdata:air:last";
 const TRIED_KEY = "altdata:adsbdb:tried";
 const MISMATCH_KEY = "altdata:adsbdb:mismatch";
 const DERIVE_CURSOR = "altdata:air:derive_from";
-const HEX_ONLY_TYPES = new Set([...AIRLINER_TYPES, "E35L"]);
+const HEX_BATCH = 100;
 
 type Basis = SymbolLink[1];
 
@@ -373,22 +372,14 @@ export async function sampleAircraftPositions(
 ): Promise<Record<string, number>> {
   const fleet = await loadActiveAircraft(ctx);
   const byHex = new Map(fleet.map((a) => [a.hex, a]));
-  const types = [
-    ...new Set(
-      fleet.map((a) => a.icaoType).filter((t): t is string => !!t && !HEX_ONLY_TYPES.has(t)),
-    ),
-  ].slice(0, 18);
-  const hexOnly = fleet
-    .filter((a) => !a.icaoType || HEX_ONLY_TYPES.has(a.icaoType))
-    .map((a) => a.hex);
   const adsb = new AdsbSource(ctx.http);
   let requests = 0;
   let failures = 0;
-  const jobs: Array<() => Promise<PositionSample[]>> = [
-    ...types.map((t) => () => adsb.byType(t)),
-    ...hexOnly.map((h) => () => adsb.byHex(h)),
-  ];
-  const results = await mapLimit(jobs, 3, async (fn) => {
+  const jobs: Array<() => Promise<PositionSample[]>> = chunk(
+    fleet.map((a) => a.hex),
+    HEX_BATCH,
+  ).map((hexes) => () => adsb.byHex(hexes));
+  const results = await mapLimit(jobs, 1, async (fn) => {
     if (expired(opts, 10_000)) return [];
     requests++;
     try {

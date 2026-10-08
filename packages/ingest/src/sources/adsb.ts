@@ -70,8 +70,9 @@ export class AdsbSource {
     return this.fetch(`/v2/type/${encodeURIComponent(icaoType.toUpperCase())}`);
   }
 
-  byHex(hex: string): Promise<PositionSample[]> {
-    return this.fetch(`/v2/hex/${encodeURIComponent(hex.toLowerCase())}`);
+  byHex(hex: string | readonly string[]): Promise<PositionSample[]> {
+    const list = (typeof hex === "string" ? [hex] : hex).map((h) => h.toLowerCase());
+    return this.fetch(`/v2/hex/${list.map(encodeURIComponent).join(",")}`);
   }
 
   point(lat: number, lon: number, radiusNm: number): Promise<PositionSample[]> {
