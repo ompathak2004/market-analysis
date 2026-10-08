@@ -1,0 +1,129 @@
+<!doctype html><html><body>
+<input type="hidden" id="sc_id" value="RI">
+<div id="mc_insight">
+<div class="mcpperf grey_bx minht_50 device-desktop">
+	<p class="insightTitle">Stock Score</p>
+	<div class="insightLeft" onclick="javascript:stock_score_popup();">
+		<span class="scoreLightYellow insightScore">68</span><span class="insighCal">/100</span>
+	</div>
+	<div class="insightRight">
+		<div class="multicolor-bar-container">
+			<div class="multicolor-bar"></div>
+			<div class="insightPointer"></div>
+		</div>
+		Superior Financial Strength, Average Growth Trend Stock Priced at High Valuations
+	</div>
+</div>
+<div class="clearfix mcibx_cnt minht_350">
+	<div class="grey_bx mcinbx minht_350">
+		<div class="common_lock gray mobile_lock_show"><div class="pro_overlay"><p>Get detailed analysis with Moneycontrol Stock Insights.</p></div></div>
+		<a href="#price_volume" class="mcinhead">Price</a>
+		<ul>
+			<li class="  fnoInsight">
+			26.91% away from 52 week high</li>
+		</ul>
+	</div>
+	<div class="grey_bx mcinbx minht_350">
+		<a href="#financials" class="mcinhead">Financials</a>
+		<div class="fpioi"><div class="pio">Piotroski Score</div><p><em>indicates</em></p></div>
+	</div>
+	<div class="grey_bx mcinbx minht_350">
+		<a href="#peers" class="mcinhead">Industry Comparison</a>
+		<ul><li class="green">Market Cap - Market Leader</li></ul>
+	</div>
+	<div class="grey_bx mcinbx minht_350">
+		<a href="#sharepattern" class="mcinhead">Shareholding Pattern</a>
+		<ul><li class="green">Promoters increased holding from 49.11% to 49.62% in Jun 2026 qtr.</li></ul>
+	</div>
+</div>
+</div>
+<div id="sharepattern">
+<script>
+	$(document).ready(function(){
+		var summary_jsn = '{"Promoter":49.62,"FII":16.9,"DII":20.92,"Public":8.43,"Others":4.12}';
+		var trend_jsn = '{"Promoter":{"Mar 2026":{"Holding":49.11,"Pledge":0},"Jun 2026":{"Holding":49.62,"Pledge":0}},"FII":{"Mar 2026":{"Holding":18.33},"Jun 2026":{"Holding":16.9}},"DII":{"Mar 2026":{"Holding":20.28},"Jun 2026":{"Holding":20.92}}}';
+	});
+</script>
+</div>
+<div id="broker_research">
+	<div class="brrs_bx grey_bx">
+		<div class="br_date">12 Mar, 2026</div>
+		<div class="clearfix">
+			<div class="brstk_name"><h3>Motilal Oswal</h3></div>
+			<div class="download_report">
+				<a href="https://images.moneycontrol.com/static-mcnews/2026/03/20260313040346_Reliance-Industries-1303026-moti.pdf" target="_blank" title="Motilal Oswal"></a>
+			</div>
+		</div>
+		<button class="button_buy ">BUY</button>
+		<table cellpadding="0" cellspacing="0" width="100%"><tbody><tr>
+			<td>Reco Price <strong>1391.85</strong></td>
+			<td width="70">Target Price <strong>1750</strong></td>
+		</tr></tbody></table>
+	</div>
+	<div class="brrs_bx grey_bx">
+		<div class="br_date">-</div>
+		<div class="clearfix">
+			<div class="brstk_name"><h3>Motilal Oswal</h3></div>
+			<div class="download_report">
+				<a href="https://images.moneycontrol.com/static-mcnews/2025/11/20251120063554_Reliance-Industries-20112025-moti.pdf" target="_blank" title="Motilal Oswal"></a>
+			</div>
+		</div>
+		<button class="button_buy ">BUY</button>
+		<table cellpadding="0" cellspacing="0" width="100%"><tbody><tr>
+			<td>Reco Price <strong>-</strong></td>
+			<td width="70">Target Price <strong>1765</strong></td>
+		</tr></tbody></table>
+	</div>
+	<div class="brrs_bx grey_bx">
+		<div class="br_date">29 Aug, 2025</div>
+		<div class="clearfix">
+			<div class="brstk_name"><h3>Prabhudas Lilladher</h3></div>
+			<div class="download_report"><a href="javascript:void(0)"></a></div>
+		</div>
+		<button class="button_hold ">HOLD</button>
+		<table cellpadding="0" cellspacing="0" width="100%"><tbody><tr>
+			<td>Reco Price <strong>1,357.20</strong></td>
+			<td width="70">Target Price <strong>-</strong></td>
+		</tr></tbody></table>
+	</div>
+	<div class="brrs_bx grey_bx">
+		<div class="br_date">-</div>
+		<div class="clearfix"><div class="brstk_name"><h3>Undated Broker</h3></div></div>
+		<button class="button_sell ">SELL</button>
+	</div>
+</div>
+<div class="swot_feature" data-target="#swotmobfeature">
+	<ul class="clearfix">
+		<li class="swli1 swotliClass" id="swot_ls">
+			<a class="kbyistrengths" href="javascript:void(0)" onclick="getSwotDetails('S', 'https://www.moneycontrol.com/swot-analysis/relianceindustries/RI/strength');" title="Strengths">
+				<strong>Strengths (13)</strong>
+				<em>High Growth Stock with Promoters increasing shareholding</em>
+			</a>
+		</li>
+		<li class="swli2 swotliClass" id="swot_lw">
+			<a class="kbyiweaknesses" href="javascript:void(0)" title="Weaknesses">
+				<strong>Weaknesses (4)</strong>
+				<em>FII/FPI decreased their shareholding last quarter</em>
+			</a>
+		</li>
+		<li class="swli3 swotliClass" id="swot_lo">
+			<a class="kbyiopportunities" href="javascript:void(0)" title="Opportunities">
+				<strong>Opportunities (1)</strong>
+				<em>Companies with Price to Earnings (PE) less than average 3 Year PE, 5 Year PE and 10 Year PE  </em>
+			</a>
+		</li>
+		<li class="swli4 swotliClass" id="swot_lt">
+			<a class="kbyithreats" href="javascript:void(0)" title="Threats">
+				<strong>Threats (4)</strong>
+				<em>Below 200 DMA</em>
+			</a>
+		</li>
+	</ul>
+</div>
+<div id="company_info">
+	<div class="com_overviewcnt">
+		<div class="morepls_cnt">Reliance Industries Ltd is India`s largest private sector enterprise.</div>
+		<div style="display: none;">{"success":1,"data":{"overview":"Reliance Industries Ltd is India`s largest private sector enterprise.","address":{"address1":"3rd Floor,","address2":"Maker Chambers IV,,222, Nariman Point,","city":"Mumbai","state":"Maharashtra","pincode":"400021","web":"http://www.ril.com"},"management":[{"name":"Mukesh D Ambani","designation":"Chairman & Managing Director"},{"name":"Nikhil R Meswani","designation":""}]}}</div>
+	</div>
+</div>
+</body></html>

@@ -9,7 +9,7 @@ Indian-equities intelligence terminal: Bloomberg-style supply-chain intelligence
 | `packages/core` | `@ma/core` | Zod-validated env `loadConfig()`, pino logger with bounded error serializer, `AppError`/`NotFoundError`/`UpstreamError`/`RateLimitedError`, `chunk`, `mapLimit`, `parseIndianNumber`, `addYears`. |
 | `packages/db` | `@ma/db` | Drizzle schema (`src/schema.ts`), `createDb`, migrations in `drizzle/`, re-exports Drizzle operators. |
 | `packages/cache` | `@ma/cache` | `Cache` (L1 LRU + L2 Redis, stale-while-revalidate, single-flight, hit/miss metrics), `RateLimiter` (Redis token bucket). |
-| `packages/ingest` | `@ma/ingest` | `DocumentStore`, sources (NSE, Yahoo, Screener, Trendlyne, Firecrawl), extractors, pipelines, `IngestContext`, CLI. |
+| `packages/ingest` | `@ma/ingest` | `DocumentStore`, sources (NSE, Yahoo, Screener, Moneycontrol, Firecrawl), extractors, pipelines, `IngestContext`, CLI. |
 | `packages/intel` | `@ma/intel` | Estimates, momentum, DuPont distress, event-impact OLS, CLI. |
 | `apps/server` | `@ma/server` | Fastify API (`src/app.ts`, `src/queries.ts`) and scheduler worker (`src/worker`). |
 | `apps/web` | `@ma/web` | Next.js 15 terminal UI. Server components call the API with `API_KEY`; the browser never sees it. |
