@@ -1,6 +1,11 @@
 import { isoDate } from "@ma/core";
 import { LlmInvalidOutput } from "@ma/llm";
-import { type InsightOutcome, type IntelContext, isFresh, writeCurrentInsight } from "./context.js";
+import {
+  type InsightOutcome,
+  type IntelContext,
+  shouldRegenerate,
+  writeCurrentInsight,
+} from "./context.js";
 import { hashOf } from "./hash.js";
 import { assembleMarketInputs, currentInsight, type MarketInputs } from "./inputs.js";
 import { groundingFeedback, inputMessage, MARKET_BRIEF_SYSTEM } from "./prompts.js";
@@ -14,6 +19,7 @@ import {
 } from "./validate.js";
 
 const MARKET_ARRAYS = new Set(["bullets", "notableCalls", "riskFlags"]);
+const MARKET_COOLDOWN_MS = 6 * 3_600_000;
 
 export function hasMarketInputs(inputs: MarketInputs): boolean {
   return inputs.indices.length > 0 || (inputs.breadth?.sample ?? 0) > 0;
@@ -38,7 +44,14 @@ export async function generateMarketBrief(
   const { asOf: _a, ...stable } = inputs;
   const hash = hashOf(stable);
   const current = await currentInsight(ctx.db, "market_brief", null);
-  if (!opts.force && isFresh(current, hash, INSIGHT_MODEL_VERSION)) return "fresh";
+  if (
+    !shouldRegenerate(current, hash, INSIGHT_MODEL_VERSION, {
+      force: opts.force ?? false,
+      material: false,
+      cooldownMs: MARKET_COOLDOWN_MS,
+    })
+  )
+    return "fresh";
   const view = {
     ...inputs,
     evidence: inputs.evidence.map(({ id, kind, label }) => ({ id, kind, label })),

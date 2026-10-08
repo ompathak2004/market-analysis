@@ -1,6 +1,13 @@
 import { isoDate } from "@ma/core";
 import { type JsonResult, LlmInvalidOutput } from "@ma/llm";
-import { type InsightOutcome, type IntelContext, isFresh, writeCurrentInsight } from "./context.js";
+import {
+  hasNewBrokerCall,
+  hasNewMaterialAnnouncement,
+  type InsightOutcome,
+  type IntelContext,
+  shouldRegenerate,
+  writeCurrentInsight,
+} from "./context.js";
 import { inputHash } from "./hash.js";
 import { assembleCompanyInputs, type CompanyInputs, currentInsight } from "./inputs.js";
 import { COMPANY_BRIEF_SYSTEM, groundingFeedback, inputMessage } from "./prompts.js";
@@ -99,7 +106,16 @@ export async function generateCompanyBrief(
   if (!hasBriefInputs(inputs)) return "skipped";
   const hash = inputHash(inputs);
   const current = await currentInsight(ctx.db, "company_brief", companyId);
-  if (!opts.force && isFresh(current, hash, INSIGHT_MODEL_VERSION)) return "fresh";
+  const material =
+    hasNewBrokerCall(current?.inputs ?? null, inputs.brokers) ||
+    hasNewMaterialAnnouncement(current?.inputs ?? null, inputs.announcements);
+  if (
+    !shouldRegenerate(current, hash, INSIGHT_MODEL_VERSION, {
+      force: opts.force ?? false,
+      material,
+    })
+  )
+    return "fresh";
   const view = modelView(inputs);
   const log = ctx.logger.child({ product: "company_brief", symbol: inputs.company.symbol });
   const calls: JsonResult<CompanyBrief>[] = [];

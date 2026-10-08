@@ -1,6 +1,11 @@
 import { isoDate } from "@ma/core";
-import type { InsightOutcome, IntelContext } from "./context.js";
-import { writeCurrentInsight } from "./context.js";
+import {
+  hasNewBrokerCall,
+  type InsightOutcome,
+  type IntelContext,
+  shouldRegenerate,
+  writeCurrentInsight,
+} from "./context.js";
 import { brokersHash } from "./hash.js";
 import {
   assembleCompanyInputs,
@@ -118,9 +123,14 @@ export async function generateBrokerDigest(
   if (!inputs.brokers.length) return "skipped";
   const hash = brokersHash(inputs);
   const current = await currentInsight(ctx.db, "broker_digest", companyId);
-  if (!opts.force && current?.inputHash === hash && current.modelVersion === INSIGHT_MODEL_VERSION)
-    return "fresh";
   const input = digestInputs(inputs);
+  if (
+    !shouldRegenerate(current, hash, INSIGHT_MODEL_VERSION, {
+      force: opts.force ?? false,
+      material: hasNewBrokerCall(current?.inputs ?? null, input.brokers),
+    })
+  )
+    return "fresh";
   const res = await ctx.llm.complete({
     name: "broker_digest",
     system: BROKER_DIGEST_SYSTEM,

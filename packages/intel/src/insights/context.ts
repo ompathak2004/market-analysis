@@ -14,7 +14,7 @@ export interface IntelContext {
 export type InsightRow = typeof insights.$inferSelect;
 export type InsightOutcome = InsightRow | "fresh" | "skipped";
 
-export const FRESH_MS = 24 * 3_600_000;
+export const COOLDOWN_MS = 24 * 3_600_000;
 
 export interface NewInsight {
   companyId: number | null;
@@ -56,13 +56,51 @@ export async function writeCurrentInsight(db: Db, row: NewInsight): Promise<Insi
   });
 }
 
-export const isFresh = (
+export interface RegenPolicy {
+  force: boolean;
+  material: boolean;
+  cooldownMs?: number;
+  now?: number;
+}
+
+export function shouldRegenerate(
   row: InsightRow | null,
   hash: string,
   modelVersion: number,
-  now = Date.now(),
-) =>
-  !!row &&
-  row.inputHash === hash &&
-  row.modelVersion === modelVersion &&
-  now - row.generatedAt.getTime() < FRESH_MS;
+  policy: RegenPolicy,
+): boolean {
+  if (!row || policy.force || row.modelVersion !== modelVersion) return true;
+  if (row.inputHash === hash) return false;
+  if (policy.material) return true;
+  const age = (policy.now ?? Date.now()) - row.generatedAt.getTime();
+  return age >= (policy.cooldownMs ?? COOLDOWN_MS);
+}
+
+const evidenceIdsIn = (list: unknown, pick?: (item: Record<string, unknown>) => boolean) =>
+  new Set(
+    (Array.isArray(list) ? list : [])
+      .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+      .filter((x) => !pick || pick(x))
+      .map((x) => x.evidenceId)
+      .filter((id): id is string => typeof id === "string"),
+  );
+
+export function hasNewBrokerCall(
+  previousInputs: unknown,
+  brokers: ReadonlyArray<{ evidenceId: string }>,
+): boolean {
+  const seen = evidenceIdsIn((previousInputs as { brokers?: unknown } | null)?.brokers);
+  return brokers.some((b) => !seen.has(b.evidenceId));
+}
+
+export function hasNewMaterialAnnouncement(
+  previousInputs: unknown,
+  announcements: ReadonlyArray<{ evidenceId: string; materiality: string | null }>,
+): boolean {
+  const high = (a: { materiality?: unknown }) => a.materiality === "high";
+  const seen = evidenceIdsIn(
+    (previousInputs as { announcements?: unknown } | null)?.announcements,
+    high,
+  );
+  return announcements.some((a) => high(a) && !seen.has(a.evidenceId));
+}
