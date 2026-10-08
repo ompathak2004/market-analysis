@@ -40,6 +40,7 @@ import { AdsbSource, type PositionSample } from "../sources/adsb.js";
 import { type AircraftDbRow, downloadAircraftDb, lookupAdsbdb } from "../sources/aircraft-db.js";
 import type { OpenSkySource } from "../sources/opensky.js";
 import { loadAliasMatcher } from "./relationships.js";
+import { beginPass, endPass } from "./resume.js";
 
 const LAST_KEY = "altdata:air:last";
 const TRIED_KEY = "altdata:adsbdb:tried";
@@ -47,7 +48,6 @@ const MISMATCH_KEY = "altdata:adsbdb:mismatch";
 const DERIVE_CURSOR = "altdata:air:derive_from";
 const DERIVE_RESUME = "altdata:air:derive_resume";
 const REPLAY_MAX_MS = 48 * HOUR;
-const RESUME_TTL_S = 24 * 3600;
 const HEX_BATCH = 100;
 
 type Basis = SymbolLink[1];
@@ -553,19 +553,19 @@ export async function deriveAircraftFlights(
   opts: DeriveFlightsOptions = {},
 ): Promise<Record<string, number>> {
   const now = opts.now ?? new Date();
-  const [cursorRaw, resumeRaw] = await Promise.all([
-    ctx.redis.get(DERIVE_CURSOR),
-    ctx.redis.get(DERIVE_RESUME),
-  ]);
-  const resume = parseResume(resumeRaw);
-  const cursor = cursorRaw ? new Date(cursorRaw) : new Date(now.getTime() - REPLAY_MAX_MS);
-  const seenFrom = new Date(cursor.getTime() - 3 * HOUR);
+  const pass = await beginPass(
+    ctx.redis,
+    { cursorKey: DERIVE_CURSOR, resumeKey: DERIVE_RESUME },
+    now,
+    new Date(now.getTime() - REPLAY_MAX_MS),
+  );
+  const seenFrom = new Date(pass.cursor.getTime() - 3 * HOUR);
   const fleet = await ctx.db
     .select({ id: corporateAircraft.id, hex: corporateAircraft.icaoHex })
     .from(corporateAircraft)
     .where(
       and(
-        gt(corporateAircraft.id, resume?.afterId ?? 0),
+        gt(corporateAircraft.id, pass.afterId),
         or(
           gte(corporateAircraft.lastSeenAt, seenFrom),
           sql`exists (select 1 from ${aircraftFlights} f where f.aircraft_id = ${corporateAircraft.id}
@@ -577,7 +577,7 @@ export async function deriveAircraftFlights(
   const stats = {
     aircraft: fleet.length,
     processed: 0,
-    resumed: resume ? 1 : 0,
+    resumed: pass.resumed ? 1 : 0,
     samples: 0,
     legs: 0,
     open: 0,
@@ -585,7 +585,7 @@ export async function deriveAircraftFlights(
     removed: 0,
     opensky: 0,
   };
-  let lastId = resume?.afterId ?? 0;
+  let lastId = pass.afterId;
   for (const a of fleet) {
     if (expired(opts, 30_000)) break;
     const stored = await ctx.db
@@ -666,36 +666,12 @@ export async function deriveAircraftFlights(
     lastId = a.id;
     stats.processed++;
   }
-  if (stats.processed === fleet.length) {
-    await ctx.redis.set(DERIVE_CURSOR, (resume?.passStart ?? now).toISOString());
-    await ctx.redis.del(DERIVE_RESUME);
-  } else {
-    const next: DeriveResume = { passStart: resume?.passStart ?? now, afterId: lastId };
-    await ctx.redis.set(DERIVE_RESUME, JSON.stringify(next), "EX", RESUME_TTL_S);
-  }
+  await endPass(ctx.redis, pass, { complete: stats.processed === fleet.length, lastId });
   if (opts.opensky && (await opts.opensky.available())) {
     stats.opensky = await mergeOpenSky(ctx, opts.opensky, fleet, opts);
   }
   await updateHomeAirports(ctx);
   return stats;
-}
-
-interface DeriveResume {
-  passStart: Date;
-  afterId: number;
-}
-
-function parseResume(raw: string | null): DeriveResume | null {
-  if (!raw) return null;
-  try {
-    const v = JSON.parse(raw) as { passStart?: string; afterId?: number };
-    const passStart = v.passStart ? new Date(v.passStart) : null;
-    if (!passStart || Number.isNaN(passStart.getTime()) || !Number.isInteger(v.afterId))
-      return null;
-    return { passStart, afterId: v.afterId as number };
-  } catch {
-    return null;
-  }
 }
 
 async function mergeOpenSky(

@@ -35,8 +35,10 @@ import type { Box } from "../data/types.js";
 import { AIRPORTS, bboxOfCircle, mergeBoxes, pointInBox } from "../geo.js";
 import { type AisStatic, collectAis } from "../sources/aisstream.js";
 import { recordCoverage } from "./aircraft.js";
+import { beginPass, endPass } from "./resume.js";
 
 const SEA_CURSOR = "altdata:sea:derive_from";
+const SEA_RESUME = "altdata:sea:derive_resume";
 export const FLEET_PARSER_VERSION = 1;
 
 interface Deadline {
@@ -373,9 +375,13 @@ export async function deriveVesselActivity(
   opts: Deadline & { now?: Date } = {},
 ): Promise<Record<string, number>> {
   const now = opts.now ?? new Date();
-  const cursorRaw = await ctx.redis.get(SEA_CURSOR);
-  const cursor = cursorRaw ? new Date(cursorRaw) : new Date(now.getTime() - 48 * HOUR);
-  const recentFrom = new Date(cursor.getTime() - 2 * HOUR);
+  const pass = await beginPass(
+    ctx.redis,
+    { cursorKey: SEA_CURSOR, resumeKey: SEA_RESUME },
+    now,
+    new Date(now.getTime() - 48 * HOUR),
+  );
+  const recentFrom = new Date(pass.cursor.getTime() - 2 * HOUR);
   const lookback = new Date(now.getTime() - 36 * HOUR);
   const watched = await loadWatchedFacilities(ctx);
   const byId = new Map(watched.map((f) => [f.id, f]));
@@ -392,10 +398,22 @@ export async function deriveVesselActivity(
   }
 
   const candidates = await ctx.db.execute<{ mmsi: number }>(sql`
-    select distinct mmsi from vessel_positions where ts >= ${recentFrom.toISOString()}
-    union select mmsi from vessel_calls where left_at is null
-    union select mmsi from chokepoint_transits where left_at is null`);
-  const stats = { vessels: 0, calls: 0, openCalls: 0, transits: 0, loitering: 0, events: 0 };
+    select mmsi from (
+      select mmsi from vessel_positions where ts >= ${recentFrom.toISOString()}
+      union select mmsi from vessel_calls where left_at is null
+      union select mmsi from chokepoint_transits where left_at is null
+    ) c where mmsi > ${pass.afterId} order by mmsi`);
+  const stats = {
+    vessels: 0,
+    resumed: pass.resumed ? 1 : 0,
+    calls: 0,
+    openCalls: 0,
+    transits: 0,
+    loitering: 0,
+    events: 0,
+  };
+  let complete = true;
+  let lastMmsi = pass.afterId;
   const callZones = watched.map((f) => ({
     id: f.id,
     lat: f.lat,
@@ -405,7 +423,11 @@ export async function deriveVesselActivity(
   const transitZones = CHOKEPOINTS.map((c) => ({ slug: c.slug, box: c.box }));
 
   for (const { mmsi } of candidates) {
-    if (expired(opts, 20_000)) break;
+    if (expired(opts, 20_000)) {
+      complete = false;
+      break;
+    }
+    lastMmsi = mmsi;
     stats.vessels++;
     const meta = (
       await ctx.db
@@ -623,7 +645,7 @@ export async function deriveVesselActivity(
       stats.events += res.length;
     }
   }
-  await ctx.redis.set(SEA_CURSOR, now.toISOString());
+  await endPass(ctx.redis, pass, { complete, lastId: lastMmsi });
   return stats;
 }
 
