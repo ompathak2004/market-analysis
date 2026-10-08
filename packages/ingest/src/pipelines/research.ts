@@ -1,4 +1,4 @@
-import { isoDate, NotFoundError, sha256 } from "@ma/core";
+import { assertTimeLeft, isoDate, NotFoundError, sha256 } from "@ma/core";
 import {
   analystCalls,
   analystRatings,
@@ -35,6 +35,8 @@ const PAGE_MAX_AGE_MS = 12 * HOUR_MS;
 const SWOT_MAX_AGE_MS = 7 * DAY_MS;
 const ESTIMATES_TTL_MS = 12 * HOUR_MS;
 const REPORT_FAILURE_TTL_S = 24 * 3600;
+const MAX_DISCOVERY_PAGES = 4;
+const DISCOVERY_PAGE_RESERVE_MS = 15_000;
 
 export interface MoneycontrolSyncResult {
   resolved: number;
@@ -356,7 +358,7 @@ export async function fetchBrokerReports(
   limit: number,
   opts: { stop?: () => boolean } = {},
 ): Promise<BrokerReportsResult> {
-  const queue = await pendingBrokerReports(ctx, limit);
+  const queue = await pendingBrokerReports(ctx, limit, opts.stop);
   const out: BrokerReportsResult = { fetched: 0, linked: 0, failed: 0, skipped: 0 };
   for (const item of queue) {
     if (opts.stop?.()) {
@@ -389,10 +391,13 @@ export async function fetchBrokerReports(
 async function pendingBrokerReports(
   ctx: IngestContext,
   limit: number,
+  stop?: () => boolean,
 ): Promise<Array<{ url: string; companyId: number }>> {
   const pageSize = Math.max(limit * 4, 50);
   const queue: Array<{ url: string; companyId: number }> = [];
-  for (let offset = 0; queue.length < limit; offset += pageSize) {
+  for (let pageNo = 0; queue.length < limit && pageNo < MAX_DISCOVERY_PAGES; pageNo++) {
+    if (stop?.()) break;
+    assertTimeLeft(DISCOVERY_PAGE_RESERVE_MS);
     const page = await ctx.db
       .select({
         url: analystCalls.reportUrl,
@@ -403,7 +408,7 @@ async function pendingBrokerReports(
       .groupBy(analystCalls.reportUrl)
       .orderBy(desc(sql`max(${analystCalls.publishedAt})`), analystCalls.reportUrl)
       .limit(pageSize)
-      .offset(offset);
+      .offset(pageNo * pageSize);
     const urls = page.filter((p): p is typeof p & { url: string } => p.url !== null);
     const failed = urls.length ? await ctx.redis.mget(...urls.map((p) => failureKey(p.url))) : [];
     queue.push(...urls.filter((_, i) => !failed[i]));
