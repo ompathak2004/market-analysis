@@ -907,9 +907,15 @@ async function loadAltdata(
       ),
     );
   const day = rows.some((r) => r.asOf === asOf) ? asOf : yesterday;
+  const newest = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) {
+    if (r.asOf !== day) continue;
+    const seen = newest.get(r.kind);
+    if (!seen || r.modelVersion > seen.modelVersion) newest.set(r.kind, r);
+  }
   const pick = (prefix: string): AltdataSignal[] | null => {
-    const list = rows
-      .filter((r) => r.asOf === day && r.kind.startsWith(prefix))
+    const list = [...newest.values()]
+      .filter((r) => r.kind.startsWith(prefix))
       .sort((a, b) => a.kind.localeCompare(b.kind))
       .map((r) => {
         const inputs = r.inputs as AltdataSignal["inputs"];
@@ -1032,6 +1038,8 @@ export async function assembleCompanyInputs(
   if (facts)
     evidence(ev, "facts", "source", "Moneycontrol stock score and SWOT", company.moneycontrolUrl);
   const previousBrief = await loadPreviousBrief(db, companyId);
+  if (previousBrief)
+    evidence(ev, "prev", "source", `Previous brief (${previousBrief.generatedAt})`, null);
   const { screenerSlug: _s, moneycontrolUrl: _m, ...ref } = company;
   const inputs: CompanyInputs = {
     asOf,
@@ -1313,9 +1321,14 @@ export async function assembleMarketInputs(
     value: number;
     prev: number | null;
   }>(sql`
-    with r as (
-      select s.company_id, s.kind, s.value, row_number() over (partition by s.company_id, s.kind order by s.as_of desc, s.model_version desc) rn
+    with latest as (
+      select distinct on (s.company_id, s.kind) s.company_id, s.kind, s.model_version
       from signals s where s.kind in ('distress_score', 'customer_concentration_pct') and s.as_of <= ${asOf}
+      order by s.company_id, s.kind, s.as_of desc, s.model_version desc
+    ), r as (
+      select s.company_id, s.kind, s.value, row_number() over (partition by s.company_id, s.kind order by s.as_of desc) rn
+      from signals s join latest l on l.company_id = s.company_id and l.kind = s.kind and l.model_version = s.model_version
+      where s.as_of <= ${asOf}
     )
     select c.nse_symbol symbol, c.name, a.kind, a.value, b.value prev
     from r a join companies c on c.id = a.company_id
