@@ -12,6 +12,7 @@ describe("isRoutineAnnouncement", () => {
     "Allotment of ESOP shares",
     "Intimation of Schedule of Analyst / Institutional Investor Meet",
     "Voting Results and Scrutinizer's Report",
+    "Disclosure of Related Party Transactions for the half year ended March 31, 2026",
   ])("treats %s as routine", (subject) => {
     expect(isRoutineAnnouncement(subject)).toBe(true);
   });
@@ -21,6 +22,12 @@ describe("isRoutineAnnouncement", () => {
     "Acquisition of 51% stake in XYZ Ltd",
     "Receipt of order worth Rs 1,200 crore",
     "Credit Rating",
+    "Postal Ballot Notice",
+    "Shareholders Meeting",
+    "Postal Ballot - Scheme of Amalgamation with ABC Ltd",
+    "Shareholders meeting to approve acquisition of XYZ Ltd",
+    "Disclosure of related party transactions - material related party transaction with promoter",
+    "Record date for bonus issue",
   ])("keeps %s for the model", (subject) => {
     expect(isRoutineAnnouncement(subject)).toBe(false);
   });
@@ -32,6 +39,18 @@ describe("isRoutineAnnouncement", () => {
     expect(isRoutineAnnouncement("General Updates", "The company has won a large order")).toBe(
       false,
     );
+  });
+
+  it("lets material details override a routine subject", () => {
+    expect(
+      isRoutineAnnouncement(
+        "Voting Results and Scrutinizer's Report",
+        "Approval of the scheme of merger of the subsidiary into the company",
+      ),
+    ).toBe(false);
+    expect(
+      isRoutineAnnouncement("Newspaper advertisement", "Notice of buyback of equity shares"),
+    ).toBe(false);
   });
 });
 
