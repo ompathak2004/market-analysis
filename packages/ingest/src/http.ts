@@ -18,6 +18,8 @@ export interface FetchOptions {
   lastModified?: string | null;
   timeoutMs?: number;
   retries?: number;
+  method?: "GET" | "POST";
+  body?: string;
 }
 
 export class HttpClient {
@@ -25,6 +27,10 @@ export class HttpClient {
     private readonly limiter: RateLimiter,
     private readonly logger: Logger,
   ) {}
+
+  post(url: string, body: string, opts: FetchOptions = {}): Promise<HttpResponse> {
+    return this.get(url, { ...opts, method: "POST", body });
+  }
 
   async get(url: string, opts: FetchOptions = {}): Promise<HttpResponse> {
     const host = new URL(url).hostname;
@@ -59,6 +65,8 @@ export class HttpClient {
     if (opts.etag) headers["if-none-match"] = opts.etag;
     if (opts.lastModified) headers["if-modified-since"] = opts.lastModified;
     const res = await fetch(url, {
+      method: opts.method ?? "GET",
+      body: opts.body ?? null,
       headers,
       redirect: "follow",
       signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
