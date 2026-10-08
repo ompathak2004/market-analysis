@@ -35,6 +35,9 @@ importers:
       '@ma/intel':
         specifier: workspace:*
         version: link:../../packages/intel
+      '@ma/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
       next:
         specifier: ^15.5.4
         version: 15.5.26(@types/node@22.20.4)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -136,12 +139,34 @@ importers:
 
   packages/intel:
     dependencies:
+      '@ma/cache':
+        specifier: workspace:*
+        version: link:../cache
       '@ma/core':
         specifier: workspace:*
         version: link:../core
       '@ma/db':
         specifier: workspace:*
         version: link:../db
+      '@ma/llm':
+        specifier: workspace:*
+        version: link:../llm
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.18.0
+        version: 22.20.4
+
+  packages/llm:
+    dependencies:
+      '@ma/cache':
+        specifier: workspace:*
+        version: link:../cache
+      '@ma/core':
+        specifier: workspace:*
+        version: link:../core
       zod:
         specifier: ^3.25.76
         version: 3.25.76
