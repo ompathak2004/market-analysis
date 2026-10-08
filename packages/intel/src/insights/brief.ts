@@ -20,9 +20,9 @@ import {
 import {
   describeViolations,
   dropViolations,
-  numbersGroundedInInputs,
   sanitizeEvidence,
   type Violation,
+  validateClaims,
 } from "./validate.js";
 
 const BRIEF_ARRAYS = new Set(["thesis", "risks", "catalysts", "whatChanged", "uncertainty"]);
@@ -36,6 +36,15 @@ export function modelView(inputs: CompanyInputs) {
 }
 
 const nullIfBlank = (v: string | null) => (v?.trim() ? v : null);
+
+export const briefSections = (inputs: CompanyInputs): Record<string, unknown> => ({
+  px: inputs.price,
+  fin: inputs.fundamentals,
+  shp: inputs.shareholding,
+  cns: inputs.consensus,
+  facts: inputs.facts,
+  "sig:supply_chain": inputs.supplyChain?.signals ?? null,
+});
 
 export function finalizeBrief(
   raw: CompanyBrief,
@@ -57,7 +66,8 @@ export function finalizeBrief(
     logistics: { read: inputs.logistics ? nullIfBlank(output.logistics.read) : null },
     supplyChain: { read: nullIfBlank(output.supplyChain.read) },
   };
-  return { brief, violations: numbersGroundedInInputs(brief, inputs), removedEvidence: removed };
+  const violations = validateClaims(brief, inputs, { known, sections: briefSections(inputs) });
+  return { brief, violations, removedEvidence: removed };
 }
 
 export function applyViolations(

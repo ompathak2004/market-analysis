@@ -13,9 +13,9 @@ import { INSIGHT_MODEL_VERSION, type MarketBrief, marketBriefSchema } from "./sc
 import {
   describeViolations,
   dropViolations,
-  numbersGroundedInInputs,
   sanitizeEvidence,
   type Violation,
+  validateClaims,
 } from "./validate.js";
 
 const MARKET_ARRAYS = new Set(["bullets", "notableCalls", "riskFlags"]);
@@ -25,13 +25,22 @@ export function hasMarketInputs(inputs: MarketInputs): boolean {
   return inputs.indices.length > 0 || (inputs.breadth?.sample ?? 0) > 0;
 }
 
+const marketSections = (inputs: MarketInputs): Record<string, unknown> => ({
+  brd: inputs.breadth,
+  sec: inputs.sectors,
+  ...Object.fromEntries(inputs.indices.map((i) => [`idx:${i.code}`, i])),
+});
+
 export function finalizeMarketBrief(
   raw: MarketBrief,
   inputs: MarketInputs,
 ): { brief: MarketBrief; violations: Violation[] } {
   const known = new Set(inputs.evidence.map((e) => e.id));
   const { output } = sanitizeEvidence(raw, known);
-  return { brief: output, violations: numbersGroundedInInputs(output, inputs) };
+  return {
+    brief: output,
+    violations: validateClaims(output, inputs, { known, sections: marketSections(inputs) }),
+  };
 }
 
 export async function generateMarketBrief(
