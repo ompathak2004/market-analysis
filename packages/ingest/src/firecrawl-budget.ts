@@ -3,6 +3,16 @@ import { UpstreamError } from "@ma/core";
 
 const RETAIN_SECONDS = 40 * 24 * 3600;
 
+const RESERVE = `
+local after = redis.call('INCRBY', KEYS[1], ARGV[1])
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+if after > tonumber(ARGV[2]) then
+  redis.call('DECRBY', KEYS[1], ARGV[1])
+  return {0, after - tonumber(ARGV[1])}
+end
+return {1, after}
+`;
+
 export const firecrawlMonth = (at = new Date()): string => at.toISOString().slice(0, 7);
 
 export interface FirecrawlCredits {
@@ -10,6 +20,11 @@ export interface FirecrawlCredits {
   used: number;
   limit: number;
   remaining: number;
+}
+
+export interface FirecrawlReservation {
+  readonly key: string;
+  readonly credits: number;
 }
 
 export class FirecrawlBudget {
@@ -37,22 +52,32 @@ export class FirecrawlBudget {
     };
   }
 
-  async ensure(credits: number): Promise<void> {
-    const used = await this.used();
-    if (used + credits > this.monthlyCredits) {
+  async reserve(credits: number): Promise<FirecrawlReservation> {
+    const key = this.key();
+    const amount = Math.max(1, Math.ceil(credits));
+    const [ok, used] = (await this.redis.eval(
+      RESERVE,
+      1,
+      key,
+      amount,
+      this.monthlyCredits,
+      RETAIN_SECONDS,
+    )) as [number, number];
+    if (!ok) {
       throw new UpstreamError("firecrawl", "budget exhausted", {
         used,
         limit: this.monthlyCredits,
-        requested: credits,
+        requested: amount,
       });
     }
+    return { key, credits: amount };
   }
 
-  async consume(credits: number): Promise<number> {
-    if (credits <= 0) return this.used();
-    const key = this.key();
-    const total = await this.redis.incrby(key, Math.ceil(credits));
-    await this.redis.expire(key, RETAIN_SECONDS);
+  async settle(reservation: FirecrawlReservation, actualCredits: number): Promise<number> {
+    const delta = Math.max(0, Math.ceil(actualCredits)) - reservation.credits;
+    if (delta === 0) return Number((await this.redis.get(reservation.key)) ?? 0);
+    const total = await this.redis.incrby(reservation.key, delta);
+    await this.redis.expire(reservation.key, RETAIN_SECONDS);
     return total;
   }
 }
