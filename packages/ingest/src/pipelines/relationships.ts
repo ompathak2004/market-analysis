@@ -154,12 +154,8 @@ async function upsertSignal(
     .insert(signals)
     .values({ companyId, asOf, kind, value, inputs, modelVersion: RELATIONSHIP_EXTRACTOR_VERSION })
     .onConflictDoUpdate({
-      target: [signals.companyId, signals.asOf, signals.kind],
-      set: {
-        value: sql`excluded.value`,
-        inputs: sql`excluded.inputs`,
-        modelVersion: sql`excluded.model_version`,
-      },
+      target: [signals.companyId, signals.asOf, signals.kind, signals.modelVersion],
+      set: { value: sql`excluded.value`, inputs: sql`excluded.inputs` },
     });
 }
 

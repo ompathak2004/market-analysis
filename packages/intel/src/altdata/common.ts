@@ -78,6 +78,7 @@ export async function writeAltdataSignals(
       and(
         eq(signals.companyId, companyId),
         eq(signals.asOf, asOf),
+        eq(signals.modelVersion, modelVersion),
         inArray(signals.kind, [...allKinds]),
         kinds.length ? sql`${signals.kind} not in ${kinds}` : undefined,
       ),
@@ -96,12 +97,8 @@ export async function writeAltdataSignals(
       })),
     )
     .onConflictDoUpdate({
-      target: [signals.companyId, signals.asOf, signals.kind],
-      set: {
-        value: sql`excluded.value`,
-        inputs: sql`excluded.inputs`,
-        modelVersion: sql`excluded.model_version`,
-      },
+      target: [signals.companyId, signals.asOf, signals.kind, signals.modelVersion],
+      set: { value: sql`excluded.value`, inputs: sql`excluded.inputs` },
     });
   return rows.length;
 }

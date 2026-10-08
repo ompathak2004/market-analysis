@@ -15,6 +15,13 @@
       "when": 1791469650319,
       "tag": "0001_platform",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791479636163,
+      "tag": "0002_signals_model_version",
+      "breakpoints": true
     }
   ]
 }
