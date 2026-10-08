@@ -1,4 +1,4 @@
-import { chunk } from "@ma/core";
+import { chunk, DAY, HOUR, MINUTE } from "@ma/core";
 import {
   altdataEvents,
   and,
@@ -36,8 +36,6 @@ import { AIRPORTS, bboxOfCircle, mergeBoxes, pointInBox } from "../geo.js";
 import { type AisStatic, collectAis } from "../sources/aisstream.js";
 import { recordCoverage } from "./aircraft.js";
 
-const MIN = 60_000;
-const HOUR = 60 * MIN;
 const SEA_CURSOR = "altdata:sea:derive_from";
 export const FLEET_PARSER_VERSION = 1;
 
@@ -469,7 +467,7 @@ export async function deriveVesselActivity(
       const draughtIn = prior?.draughtIn ?? meta.draughtM;
       const draughtOut = call.leftAt ? (prior?.draughtOut ?? meta.draughtM) : null;
       const dwellMin = Math.round(
-        ((call.leftAt ?? call.lastInsideAt).getTime() - call.enteredAt.getTime()) / MIN,
+        ((call.leftAt ?? call.lastInsideAt).getTime() - call.enteredAt.getTime()) / MINUTE,
       );
       const values = {
         mmsi,
@@ -758,7 +756,7 @@ export async function syncFleets(
       const { doc } = await ctx.docs.fetch(src.url, {
         source: "fleet",
         companyId: company.id,
-        maxAgeMs: 6 * 86_400_000,
+        maxAgeMs: 6 * DAY,
         via: src.via,
       });
       if (src.via === "firecrawl") stats.scrapes++;
@@ -820,13 +818,4 @@ export async function cleanupAltdataPositions(
     }
   }
   return stats;
-}
-
-export async function logisticsCompanyIds(ctx: IngestContext): Promise<number[]> {
-  const rows = await ctx.db.execute<{ id: number }>(sql`
-    select distinct fc.company_id as id from facility_companies fc
-    join facilities f on f.id = fc.facility_id and f.active and f.kind <> 'hq'
-    union select distinct company_id from vessel_fleet
-    union select distinct owner_company_id from vessels where owner_company_id is not null`);
-  return rows.map((r) => r.id);
 }

@@ -22,14 +22,14 @@ import {
   type LogisticsSignalKind,
 } from "./types.js";
 
-export const MIN_COVERAGE = 0.2;
-export const LOITER_MIN = 360;
-export const FILL_FACTOR = 0.95;
-export const PRODUCT_CRACK = 1.15;
-export const VALUE_BAND = 0.25;
-export const CARGO_VALUE_BASIS = "dwt_est × 0.95 fill × Brent × USDINR";
+const MIN_COVERAGE = 0.2;
+const LOITER_MIN = 360;
+const FILL_FACTOR = 0.95;
+const PRODUCT_CRACK = 1.15;
+const VALUE_BAND = 0.25;
+const CARGO_VALUE_BASIS = "dwt_est × 0.95 fill × Brent × USDINR";
 
-export const TANKER_BBL: Record<string, number> = {
+const TANKER_BBL: Record<string, number> = {
   VLCC: 2_000_000,
   Suezmax: 1_000_000,
   "Aframax/LR2": 700_000,
@@ -40,7 +40,7 @@ export const TANKER_BBL: Record<string, number> = {
 
 const PRODUCT_SIZES = new Set(["MR", "Small tanker", "Panamax/LR1"]);
 
-export const LOGISTICS_KIND_BASE: Record<LogisticsSignalKind, number> = {
+const LOGISTICS_KIND_BASE: Record<LogisticsSignalKind, number> = {
   logistics_arrivals_7d: 1,
   logistics_throughput_proxy: 0.7,
   logistics_chokepoint_exposure: 0.6,
@@ -128,7 +128,7 @@ export function coverageFactor(windows: number, windowsWithData: number): number
   return windows > 0 ? round(clamp(windowsWithData / windows, 0, 1), 3) : 0;
 }
 
-export function commodityClasses(commodities: readonly string[]): string[] {
+function commodityClasses(commodities: readonly string[]): string[] {
   return [...new Set(commodities.flatMap((c) => COMMODITY_CLASSES[c] ?? []))];
 }
 

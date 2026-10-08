@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DAY_MS, READ_MAX } from "./common.js";
 import {
-  CARGO_VALUE_BASIS,
   cargoValueEstimate,
   computeLogisticsSignals,
   coverageFactor,
@@ -75,7 +74,7 @@ describe("cargo value", () => {
     expect(v.cargoBbl).toBe(1_900_000);
     expect(v.estValueUsd).toBe(152_000_000);
     expect(v.estValueCr).toBe(1276.8);
-    expect(v.basis).toBe(CARGO_VALUE_BASIS);
+    expect(v.basis).toBe("dwt_est × 0.95 fill × Brent × USDINR");
   });
 
   it("applies the product crack and falls back to qualitative without prices", () => {

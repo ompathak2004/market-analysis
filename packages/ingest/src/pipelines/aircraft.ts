@@ -1,4 +1,4 @@
-import { chunk, mapLimit } from "@ma/core";
+import { chunk, DAY, HOUR, MINUTE, mapLimit } from "@ma/core";
 import {
   aircraftFlights,
   aircraftPositions,
@@ -31,9 +31,6 @@ import { type AircraftDbRow, downloadAircraftDb, lookupAdsbdb } from "../sources
 import type { OpenSkySource } from "../sources/opensky.js";
 import { loadAliasMatcher } from "./relationships.js";
 
-const MIN = 60_000;
-const HOUR = 60 * MIN;
-const DAY = 24 * HOUR;
 const LAST_KEY = "altdata:air:last";
 const TRIED_KEY = "altdata:adsbdb:tried";
 const MISMATCH_KEY = "altdata:adsbdb:mismatch";
@@ -486,7 +483,7 @@ async function emitAirEvents(
         onGround: s.onGround,
       },
       severity: 1,
-      dedupeKey: `${s.hex}:${kind}:${Math.floor(s.ts.getTime() / (30 * MIN))}`,
+      dedupeKey: `${s.hex}:${kind}:${Math.floor(s.ts.getTime() / (30 * MINUTE))}`,
     });
   }
   const next: Record<string, string> = {};
@@ -668,8 +665,8 @@ async function mergeOpenSky(
         .where(
           and(
             eq(aircraftFlights.aircraftId, a.id),
-            sql`${aircraftFlights.departedAt} <= ${new Date(f.lastSeen.getTime() + 45 * MIN).toISOString()}`,
-            sql`coalesce(${aircraftFlights.arrivedAt}, now()) >= ${new Date(f.firstSeen.getTime() - 45 * MIN).toISOString()}`,
+            sql`${aircraftFlights.departedAt} <= ${new Date(f.lastSeen.getTime() + 45 * MINUTE).toISOString()}`,
+            sql`coalesce(${aircraftFlights.arrivedAt}, now()) >= ${new Date(f.firstSeen.getTime() - 45 * MINUTE).toISOString()}`,
           ),
         )
         .limit(1);
@@ -697,7 +694,7 @@ async function mergeOpenSky(
             hex: a.hex,
             departedAt: f.firstSeen,
             arrivedAt: f.lastSeen,
-            durationMin: Math.round((f.lastSeen.getTime() - f.firstSeen.getTime()) / MIN),
+            durationMin: Math.round((f.lastSeen.getTime() - f.firstSeen.getTime()) / MINUTE),
             depIcao: dep?.icao ?? null,
             depCity: dep?.city ?? null,
             depCountry: dep?.country ?? null,
@@ -730,26 +727,4 @@ async function updateHomeAirports(ctx: IngestContext): Promise<void> {
       order by aircraft_id, count(*) desc, max(arrived_at) desc
     ) h
     where h.aircraft_id = a.id and a.home_icao is distinct from h.icao`);
-}
-
-export async function activeAircraftIds(ctx: IngestContext): Promise<number[]> {
-  const rows = await ctx.db
-    .select({ id: corporateAircraft.id })
-    .from(corporateAircraft)
-    .where(eq(corporateAircraft.active, true));
-  return rows.map((r) => r.id);
-}
-
-export async function aircraftCompanyIds(ctx: IngestContext): Promise<number[]> {
-  const rows = await ctx.db
-    .selectDistinct({ id: corporateAircraftCompanies.companyId })
-    .from(corporateAircraftCompanies)
-    .innerJoin(corporateAircraft, eq(corporateAircraft.id, corporateAircraftCompanies.aircraftId))
-    .where(
-      and(
-        eq(corporateAircraft.active, true),
-        inArray(corporateAircraftCompanies.basis, ["owner", "subsidiary", "promoter_group"]),
-      ),
-    );
-  return rows.map((r) => r.id);
 }
