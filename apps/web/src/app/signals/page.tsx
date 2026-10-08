@@ -1,40 +1,37 @@
-import { Leaderboard, Panel, Unavailable } from "@/components/panels";
-import { ApiError, attempt, getLeaderboard } from "@/lib/api";
+import type { Metadata } from "next";
+import { Suspense } from "react";
+import { KindIndexPane, LeaderboardPane, OVERVIEW_KINDS } from "@/components/panes/screens/signals";
+import { PaneSkeleton } from "@/components/ui/pane";
 import { signalLabel } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-const KINDS = [
-  "distress_score",
-  "customer_momentum_1m",
-  "customer_momentum_3m",
-  "supplier_momentum_3m",
-  "customer_concentration_pct",
-  "top5_customers_pct",
-  "top10_customers_pct",
-  "customer_hhi",
-];
+export const metadata: Metadata = { title: "Signals · MA Terminal" };
 
 export default async function SignalsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ kind?: string }>;
+  searchParams: Promise<{ kind?: string; order?: string }>;
 }) {
-  const { kind } = await searchParams;
-  const kinds = kind ? [kind] : KINDS;
-  const boards = await Promise.all(kinds.map((k) => attempt(getLeaderboard(k, 25))));
+  const { kind, order } = await searchParams;
+  if (kind && /^[a-z0-9_]{1,64}$/.test(kind))
+    return (
+      <div className="grid grid-signals-one">
+        <Suspense
+          key={`${kind}${order}`}
+          fallback={<PaneSkeleton id="board" title={signalLabel(kind)} lines={20} />}
+        >
+          <LeaderboardPane kind={kind} limit={100} order={order === "asc" ? "asc" : "desc"} full />
+        </Suspense>
+        <KindIndexPane active={kind} />
+      </div>
+    );
   return (
-    <div className="grid grid-2">
-      {kinds.map((k, i) => (
-        <Panel key={k} title={signalLabel(k)} sub={<a href={`/signals?kind=${k}`}>{k}</a>}>
-          <div className="panel-body tight">
-            {boards[i]?.ok ? (
-              <Leaderboard kind={k} rows={boards[i].data.rows} />
-            ) : (
-              <Unavailable error={boards[i]?.error ?? new ApiError(0, "missing", "no result")} />
-            )}
-          </div>
-        </Panel>
+    <div className="grid grid-signals">
+      {OVERVIEW_KINDS.map((k) => (
+        <Suspense key={k} fallback={<PaneSkeleton id={k} title={signalLabel(k)} />}>
+          <LeaderboardPane kind={k} limit={25} order="desc" />
+        </Suspense>
       ))}
     </div>
   );
