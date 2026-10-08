@@ -1,3 +1,4 @@
+import { median } from "@ma/intel";
 import { Suspense } from "react";
 import { Badge, Chip } from "@/components/ui/chip";
 import { DataTable } from "@/components/ui/data-table";
@@ -27,11 +28,12 @@ function coord(lat: number, lon: number) {
   return `${Math.abs(lat).toFixed(2)}° ${lat >= 0 ? "N" : "S"} · ${Math.abs(lon).toFixed(2)}° ${lon >= 0 ? "E" : "W"}`;
 }
 
-function median(xs: number[]): number | null {
-  if (!xs.length) return null;
-  const s = [...xs].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? (s[m] ?? null) : ((s[m - 1] ?? 0) + (s[m] ?? 0)) / 2;
+function NoAisCoverage({ what }: { what: string }) {
+  return (
+    <Empty title="Coverage unavailable">
+      No AIS samples reached the mapped facilities in the last 7 days, so {what} cannot be assessed.
+    </Empty>
+  );
 }
 
 function FacilitiesPane({ l }: { l: CompanyLogistics }) {
@@ -201,7 +203,11 @@ function CallsPane({ l, filter, base }: { l: CompanyLogistics; filter: CallFilte
           { key: "f", header: "FACILITY", width: "md", priority: 3, cell: (c) => c.facilitySlug },
         ]}
         empty={
-          <Empty title="No calls">No vessel has entered a mapped geofence in the window.</Empty>
+          l.coverage.factor7d > 0 ? (
+            <Empty title="No calls">No vessel has entered a mapped geofence in the window.</Empty>
+          ) : (
+            <NoAisCoverage what="vessel calls" />
+          )
         }
       />
     </Pane>
@@ -210,7 +216,8 @@ function CallsPane({ l, filter, base }: { l: CompanyLogistics; filter: CallFilte
 
 function ChokepointPane({ l }: { l: CompanyLogistics }) {
   const rows = l.chokepointWatch;
-  const total = rows.reduce((s, r) => s + (r.estValueCr ?? 0), 0);
+  const valued = rows.flatMap((r) => (r.estValueCr != null ? [r.estValueCr] : []));
+  const total = valued.reduce((s, v) => s + v, 0);
   return (
     <Pane
       id="chokepoints"
@@ -227,9 +234,20 @@ function ChokepointPane({ l }: { l: CompanyLogistics }) {
               {
                 items: [
                   {
-                    label: "Est. delayed cargo",
-                    value: (
-                      <b className="accent">₹{Math.round(total).toLocaleString("en-IN")} Cr</b>
+                    label: "Delayed cargo proxy",
+                    title: "Class-typical cargo × Brent/USDINR; not a manifest value",
+                    value: valued.length ? (
+                      <>
+                        <b className="accent">~₹{num(total, 0)} Cr</b>
+                        {valued.length < rows.length ? (
+                          <span className="dim">
+                            {" "}
+                            partial · {valued.length}/{rows.length} valued
+                          </span>
+                        ) : null}
+                      </>
+                    ) : (
+                      <span className="muted">unavailable</span>
                     ),
                   },
                   { label: "Vessels loitering", value: String(rows.length) },
@@ -267,21 +285,23 @@ function ChokepointPane({ l }: { l: CompanyLogistics }) {
               },
               {
                 key: "val",
-                header: "VALUE",
+                header: "VALUE PROXY",
                 width: "num",
                 align: "right",
                 sortable: true,
                 sortValue: (r) => r.estValueCr,
-                cell: (r) => (r.estValueCr != null ? `₹${num(r.estValueCr, 0)} Cr` : "—"),
+                cell: (r) => (r.estValueCr != null ? `~₹${num(r.estValueCr, 0)} Cr` : "—"),
               },
             ]}
           />
         </>
-      ) : (
+      ) : l.coverage.factor7d > 0 ? (
         <Empty title="No chokepoint loitering">
           No inbound vessel bound for a mapped facility is idling at Hormuz, Bab-el-Mandeb or
           Malacca.
         </Empty>
+      ) : (
+        <NoAisCoverage what="chokepoint exposure" />
       )}
     </Pane>
   );
