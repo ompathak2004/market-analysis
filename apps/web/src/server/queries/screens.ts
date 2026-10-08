@@ -1,18 +1,125 @@
-import { analystCalls, and, announcements, companies, desc, eq, gte, sql } from "@ma/db";
-import type { BrokerThesis, RuleInsight, VerdictLabel } from "@ma/intel";
-import { verdictLabelFor } from "@ma/intel";
+import { type analystCalls, and, announcements, companies, desc, eq, gte, sql } from "@ma/db";
+import type { BrokerThesis } from "@ma/intel";
+import { brokerThesisSchema } from "@ma/intel";
+import { toNum } from "../../lib/format";
 import type { AppContext } from "../context";
-import { analystView, companyOverview, financials, findCompany, priceHistory } from "./core";
-import type {
-  BrokerCall,
-  CompanyCalls,
-  FilingItem,
-  KeyStats,
-  LatestBrokerCall,
-  Peer,
-  QuoteView,
-  RangeStats,
-} from "./types";
+import {
+  analystView,
+  companyOverview,
+  financials,
+  findCompany,
+  latestAnalystCalls,
+  priceHistory,
+} from "./core";
+
+export interface FilingItem {
+  id: number;
+  symbol: string;
+  name: string;
+  publishedAt: string;
+  subject: string;
+  category: string | null;
+  materiality: string | null;
+  soWhat: string | null;
+  attachmentUrl: string | null;
+}
+
+export interface BrokerCall {
+  id: number;
+  broker: string;
+  publishedAt: string;
+  action: string;
+  rating: string;
+  priorRating: string | null;
+  targetPrice: number | null;
+  priorTargetPrice: number | null;
+  priceAtCall: number | null;
+  reportUrl: string | null;
+  title: string | null;
+  summary: string | null;
+  thesis: BrokerThesis | null;
+}
+
+export interface LatestBrokerCall extends BrokerCall {
+  symbol: string;
+  name: string;
+  upsidePct: number | null;
+}
+
+export interface KeyStats {
+  symbol: string;
+  name: string;
+  sector: string | null;
+  industry: string | null;
+  isin: string | null;
+  marketCapCr: number | null;
+  price: number | null;
+  changePct: number | null;
+  peTtm: number | null;
+  pb: number | null;
+  roePct: number | null;
+  opmPct: number | null;
+  npmPct: number | null;
+  debtToEquity: number | null;
+  interestCover: number | null;
+  revenueGrowthPct: number | null;
+  profitGrowthPct: number | null;
+  revenueTtmCr: number | null;
+  netIncomeTtmCr: number | null;
+  latestAnnual: string | null;
+  latestQuarter: string | null;
+}
+
+export interface Peer {
+  symbol: string;
+  name: string;
+  industry: string | null;
+  marketCapCr: number | null;
+  close: number | null;
+  changePct: number | null;
+  distress: number | null;
+  self: boolean;
+}
+
+export interface RangeStats {
+  last: number | null;
+  lastDate: string | null;
+  high52: number | null;
+  low52: number | null;
+  fromHighPct: number | null;
+  fromLowPct: number | null;
+  returns: Array<{ label: string; pct: number | null }>;
+  volatilityPct: number | null;
+  avgVolume20: number | null;
+  sma50: number | null;
+  sma200: number | null;
+  bars: number;
+}
+
+export interface QuoteView {
+  symbol: string;
+  name: string;
+  sector: string | null;
+  industry: string | null;
+  isin: string | null;
+  marketCapCr: number | null;
+  price: number | null;
+  change: number | null;
+  changePct: number | null;
+  dayLow: number | null;
+  dayHigh: number | null;
+  high52: number | null;
+  low52: number | null;
+  peTtm: number | null;
+  marketState: string | null;
+  asOf: string | null;
+  source: "live" | "close" | "none";
+}
+
+export interface CompanyCalls {
+  calls: BrokerCall[];
+  price: number | null;
+}
 
 const MINUTE = 60_000;
 const DAY = 86_400_000;
@@ -22,19 +129,13 @@ function iso(v: Date | string | null | undefined): string | null {
   return typeof v === "string" ? new Date(v).toISOString() : v.toISOString();
 }
 
-function n(v: number | string | null | undefined): number | null {
-  if (v == null || v === "") return null;
-  const x = Number(v);
-  return Number.isFinite(x) ? x : null;
-}
-
 function daysAgo(days: number): Date {
   return new Date(Date.now() - days * DAY);
 }
 
 export async function recentFilings(ctx: AppContext, limit = 40): Promise<FilingItem[]> {
   const rows = await ctx.api.getOrLoad(
-    `ui:filings:${limit}`,
+    `announcements:latest-ui:${limit}`,
     async () => {
       const rows = await ctx.db
         .select({
@@ -68,15 +169,25 @@ export async function recentFilings(ctx: AppContext, limit = 40): Promise<Filing
   return rows ?? [];
 }
 
-function thesisOf(v: unknown): BrokerThesis | null {
-  if (!v || typeof v !== "object") return null;
-  const t = v as BrokerThesis;
-  return Array.isArray(t.keyPoints) ? t : null;
-}
-
-type CallRow = typeof analystCalls.$inferSelect;
+type CallRow = Pick<
+  typeof analystCalls.$inferSelect,
+  | "id"
+  | "broker"
+  | "publishedAt"
+  | "action"
+  | "rating"
+  | "priorRating"
+  | "targetPrice"
+  | "priorTargetPrice"
+  | "priceAtCall"
+  | "reportUrl"
+  | "title"
+  | "summary"
+  | "thesis"
+>;
 
 function callOf(c: CallRow): BrokerCall {
+  const thesis = brokerThesisSchema.safeParse(c.thesis);
   return {
     id: c.id,
     broker: c.broker,
@@ -90,34 +201,22 @@ function callOf(c: CallRow): BrokerCall {
     reportUrl: c.reportUrl ?? null,
     title: c.title ?? null,
     summary: c.summary ?? null,
-    thesis: thesisOf(c.thesis),
+    thesis: thesis.success ? thesis.data : null,
   };
 }
 
 export async function latestBrokerCalls(ctx: AppContext, limit = 40): Promise<LatestBrokerCall[]> {
-  const rows = await ctx.api.getOrLoad(
-    `ui:calls:${limit}`,
-    async () => {
-      const rows = await ctx.db
-        .select({ call: analystCalls, symbol: companies.nseSymbol, name: companies.name })
-        .from(analystCalls)
-        .innerJoin(companies, eq(companies.id, analystCalls.companyId))
-        .orderBy(desc(analystCalls.publishedAt), desc(analystCalls.id))
-        .limit(limit);
-      return rows.map((r) => {
-        const c = callOf(r.call);
-        const base = c.priceAtCall;
-        return {
-          ...c,
-          symbol: r.symbol ?? "",
-          name: r.name,
-          upsidePct: c.targetPrice != null && base ? ((c.targetPrice - base) / base) * 100 : null,
-        };
-      });
-    },
-    { ttlMs: 5 * MINUTE, staleMs: 30 * MINUTE },
-  );
-  return rows ?? [];
+  const rows = (await latestAnalystCalls(ctx, limit)) ?? [];
+  return rows.map((r) => {
+    const c = callOf(r);
+    const base = c.priceAtCall;
+    return {
+      ...c,
+      symbol: r.symbol ?? "",
+      name: r.name,
+      upsidePct: c.targetPrice != null && base ? ((c.targetPrice - base) / base) * 100 : null,
+    };
+  });
 }
 
 export async function companyCalls(ctx: AppContext, symbol: string): Promise<CompanyCalls> {
@@ -140,7 +239,7 @@ type FundRow = NonNullable<Awaited<ReturnType<typeof financials>>>["annual"][num
 function ttm(quarters: FundRow[], key: keyof FundRow): number | null {
   const last = quarters.slice(-4);
   if (last.length < 4) return null;
-  const vals = last.map((q) => n(q[key] as string | null));
+  const vals = last.map((q) => toNum(q[key] as string | null));
   if (vals.some((v) => v == null)) return null;
   return (vals as number[]).reduce((s, v) => s + v, 0);
 }
@@ -164,10 +263,10 @@ export async function keyStats(ctx: AppContext, symbol: string): Promise<KeyStat
   const annual = fin.annual;
   const lastA = annual.at(-1) ?? null;
   const prevA = annual.at(-2) ?? null;
-  const mcap = n(company.marketCapCr);
-  const netTtm = ttm(fin.quarterly, "netIncome") ?? n(lastA?.netIncome);
-  const revTtm = ttm(fin.quarterly, "revenue") ?? n(lastA?.revenue);
-  const equity = n(lastA?.totalEquity);
+  const mcap = toNum(company.marketCapCr);
+  const netTtm = ttm(fin.quarterly, "netIncome") ?? toNum(lastA?.netIncome);
+  const revTtm = ttm(fin.quarterly, "revenue") ?? toNum(lastA?.revenue);
+  const equity = toNum(lastA?.totalEquity);
   return {
     symbol: company.nseSymbol ?? symbol,
     name: company.name,
@@ -179,13 +278,13 @@ export async function keyStats(ctx: AppContext, symbol: string): Promise<KeyStat
     changePct: quote?.changePct ?? null,
     peTtm: netTtm && netTtm > 0 ? ratio(mcap, netTtm) : null,
     pb: equity && equity > 0 ? ratio(mcap, equity) : null,
-    roePct: ratio(n(lastA?.netIncome), equity, 100),
-    opmPct: ratio(n(lastA?.operatingProfit), n(lastA?.revenue), 100),
-    npmPct: ratio(n(lastA?.netIncome), n(lastA?.revenue), 100),
-    debtToEquity: ratio(n(lastA?.totalDebt), equity),
-    interestCover: ratio(n(lastA?.operatingProfit), n(lastA?.interestExpense)),
-    revenueGrowthPct: growth(n(lastA?.revenue), n(prevA?.revenue)),
-    profitGrowthPct: growth(n(lastA?.netIncome), n(prevA?.netIncome)),
+    roePct: ratio(toNum(lastA?.netIncome), equity, 100),
+    opmPct: ratio(toNum(lastA?.operatingProfit), toNum(lastA?.revenue), 100),
+    npmPct: ratio(toNum(lastA?.netIncome), toNum(lastA?.revenue), 100),
+    debtToEquity: ratio(toNum(lastA?.totalDebt), equity),
+    interestCover: ratio(toNum(lastA?.operatingProfit), toNum(lastA?.interestExpense)),
+    revenueGrowthPct: growth(toNum(lastA?.revenue), toNum(prevA?.revenue)),
+    profitGrowthPct: growth(toNum(lastA?.netIncome), toNum(prevA?.netIncome)),
     revenueTtmCr: revTtm,
     netIncomeTtmCr: netTtm,
     latestAnnual: lastA?.periodEnd ?? null,
@@ -197,7 +296,7 @@ export async function peers(ctx: AppContext, symbol: string, limit = 12): Promis
   const company = await findCompany(ctx, symbol);
   if (!company.sector) return [];
   const rows = await ctx.api.getOrLoad(
-    `ui:peers:${company.id}:${limit}`,
+    `company:peers:${company.id}:${limit}`,
     async () => {
       const rows = await ctx.db.execute<{
         symbol: string;
@@ -228,10 +327,10 @@ export async function peers(ctx: AppContext, symbol: string, limit = 12): Promis
         symbol: r.symbol,
         name: r.name,
         industry: r.industry ?? null,
-        marketCapCr: n(r.market_cap_cr),
-        close: n(r.close),
+        marketCapCr: toNum(r.market_cap_cr),
+        close: toNum(r.close),
         changePct: r.close != null && r.prev ? ((r.close - r.prev) / r.prev) * 100 : null,
-        distress: n(r.distress),
+        distress: toNum(r.distress),
         self: r.id === company.id,
       }));
     },
@@ -312,14 +411,14 @@ export async function quoteView(ctx: AppContext, symbol: string): Promise<QuoteV
     const sameDay = istDay(quote.marketTime) === lastBar.date;
     prev = sameDay ? Number(prevBar?.close ?? null) || null : Number(lastBar.close);
     if (sameDay) {
-      dayLow = n(lastBar.low);
-      dayHigh = n(lastBar.high);
+      dayLow = toNum(lastBar.low);
+      dayHigh = toNum(lastBar.high);
     }
   } else if (!quote && lastBar) {
     price = Number(lastBar.close);
     prev = prevBar ? Number(prevBar.close) : null;
-    dayLow = n(lastBar.low);
-    dayHigh = n(lastBar.high);
+    dayLow = toNum(lastBar.low);
+    dayHigh = toNum(lastBar.high);
   } else if (quote) {
     prev = quote.previousClose ?? null;
   }
@@ -336,7 +435,7 @@ export async function quoteView(ctx: AppContext, symbol: string): Promise<QuoteV
     sector: company.sector ?? null,
     industry: company.industry ?? null,
     isin: company.isin ?? null,
-    marketCapCr: n(company.marketCapCr),
+    marketCapCr: toNum(company.marketCapCr),
     price,
     change,
     changePct,
@@ -348,21 +447,6 @@ export async function quoteView(ctx: AppContext, symbol: string): Promise<QuoteV
     marketState: quote?.marketState ?? null,
     asOf: quote ? iso(quote.marketTime) : lastBar ? `${lastBar.date}T10:00:00.000Z` : null,
     source: quote ? "live" : lastBar ? "close" : "none",
-  };
-}
-
-export function ruleVerdict(items: RuleInsight[]): {
-  score: number;
-  label: VerdictLabel;
-  confidence: number;
-} {
-  const pos = items.filter((i) => i.tone === "positive").length;
-  const neg = items.filter((i) => i.tone === "negative").length;
-  const score = Math.max(5, Math.min(95, Math.round(50 + (pos - neg) * 6)));
-  return {
-    score,
-    label: verdictLabelFor(score),
-    confidence: Math.min(0.6, 0.15 + items.length * 0.03),
   };
 }
 

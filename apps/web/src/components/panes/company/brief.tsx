@@ -1,4 +1,4 @@
-import type { CompanyBrief, RuleInsight, VerdictLabel } from "@ma/intel";
+import { type CompanyBrief, type RuleInsight, type VerdictLabel, verdictLabelFor } from "@ma/intel";
 import type { ReactNode } from "react";
 import { Callout, CalloutGroup } from "@/components/ui/callout";
 import { Badge, Chip } from "@/components/ui/chip";
@@ -6,7 +6,7 @@ import { EvidenceList, EvidenceRefs } from "@/components/ui/evidence";
 import { Gauge } from "@/components/ui/gauge";
 import { Pane } from "@/components/ui/pane";
 import { getContext } from "@/server/context";
-import { type CompanyBriefView, companyBrief, ruleVerdict } from "@/server/queries";
+import { type CompanyBriefView, companyBrief } from "@/server/queries";
 import { attempt, modelFoot, PaneError } from "../shared";
 
 export const RULE_TONE: Record<RuleInsight["tone"], "pos" | "neg" | "neu"> = {
@@ -176,10 +176,19 @@ export function BriefBody({ view, full }: { view: LoadedBrief; full: boolean }) 
   );
 }
 
+function ruleVerdict(pos: number, neg: number, total: number) {
+  const score = Math.max(5, Math.min(95, Math.round(50 + (pos - neg) * 6)));
+  return {
+    score,
+    label: verdictLabelFor(score),
+    confidence: Math.min(0.6, 0.15 + total * 0.03),
+  };
+}
+
 export function RuleBriefBody({ items }: { items: RuleInsight[] }) {
-  const v = ruleVerdict(items);
   const pos = items.filter((i) => i.tone === "positive");
   const neg = items.filter((i) => i.tone === "negative");
+  const v = ruleVerdict(pos.length, neg.length, items.length);
   const line =
     pos.length || neg.length
       ? `${pos.length} supportive and ${neg.length} adverse observations across price, financials and research.`

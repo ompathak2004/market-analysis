@@ -73,12 +73,27 @@ function relColumns(side: "customer" | "supplier"): Column<Rel>[] {
       sortable: true,
       sortValue: (r) => toNum(side === "customer" ? r.supplierRevenuePct : r.customerCostPct),
       cell: (r) => {
-        const v = toNum(
-          side === "customer" ? r.supplierRevenuePct : (r.customerCostPct ?? r.disclosedPct),
-        );
+        const v = toNum(side === "customer" ? r.supplierRevenuePct : r.customerCostPct);
         return v == null ? "—" : pct(v, 1, false);
       },
     },
+    ...(side === "supplier"
+      ? [
+          {
+            key: "d",
+            header: <abbr title="Disclosed share of the supplier's revenue">SUP REV</abbr>,
+            width: "pct",
+            align: "right",
+            priority: 2,
+            sortable: true,
+            sortValue: (r) => toNum(r.disclosedPct),
+            cell: (r) => {
+              const v = toNum(r.disclosedPct);
+              return v == null ? "—" : pct(v, 1, false);
+            },
+          } satisfies Column<Rel>,
+        ]
+      : []),
     {
       key: "m",
       header: "METHOD",

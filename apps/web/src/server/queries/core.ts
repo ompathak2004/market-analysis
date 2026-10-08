@@ -216,6 +216,7 @@ export async function latestAnalystCalls(ctx: AppContext, limit = 50) {
     () =>
       ctx.db
         .select({
+          id: analystCalls.id,
           symbol: companies.nseSymbol,
           name: companies.name,
           broker: analystCalls.broker,

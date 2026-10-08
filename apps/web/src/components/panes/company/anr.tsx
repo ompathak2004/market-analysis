@@ -11,6 +11,7 @@ import { Bars } from "@/components/ui/sparkline";
 import { TargetRange } from "@/components/ui/target-range";
 import { Timeline } from "@/components/ui/timeline";
 import { fyLabel, num, pct, ratingBucket, shortDate } from "@/lib/format";
+import { targetStats } from "@/lib/targets";
 import { getContext } from "@/server/context";
 import {
   type BrokerCall,
@@ -115,16 +116,11 @@ export async function TargetsPane({ symbol }: { symbol: string }) {
   if (!res.ok)
     return <PaneError id="targets" title="TARGET PRICE" area="targets" code={res.code} />;
   const r = res.data;
-  const current = latestByBroker(r.calls)
-    .map((c) => c.targetPrice)
-    .filter((t): t is number => t != null && t > 0)
-    .sort((a, b) => a - b);
+  const stats = targetStats(latestByBroker(r.calls).map((c) => c.targetPrice));
   const target = r.priceTargets;
-  const low = target?.low ?? current[0] ?? null;
-  const high = target?.high ?? current.at(-1) ?? null;
-  const mean =
-    target?.mean ?? (current.length ? current.reduce((s, t) => s + t, 0) / current.length : null);
-  const median = current.length ? (current[Math.floor((current.length - 1) / 2)] ?? null) : null;
+  const low = target?.low ?? stats.low;
+  const high = target?.high ?? stats.high;
+  const mean = target?.mean ?? stats.mean;
   const upside = mean != null && r.price ? ((mean - r.price) / r.price) * 100 : null;
   const digest = dg.ok && dg.data.digest ? { ...dg.data, digest: dg.data.digest } : null;
   return (
@@ -132,7 +128,7 @@ export async function TargetsPane({ symbol }: { symbol: string }) {
       id="targets"
       title="TARGET PRICE"
       area="targets"
-      meta={target ? `as of ${shortDate(target.asOf)}` : `${current.length} targets`}
+      meta={target ? `as of ${shortDate(target.asOf)}` : `${stats.count} targets`}
       foot={<output>{digest?.meta ? modelFoot(digest.meta) : "Moneycontrol targets · INR"}</output>}
     >
       {low != null && high != null ? (
@@ -147,10 +143,10 @@ export async function TargetsPane({ symbol }: { symbol: string }) {
                 items: [
                   { label: "Price", value: num(r.price) },
                   { label: "Mean target", value: num(mean, 0) },
-                  { label: "Median target", value: num(median, 0) },
+                  { label: "Median target", value: num(stats.median, 0) },
                   { label: "Low / high", value: `${num(low, 0)} / ${num(high, 0)}` },
                   { label: "Upside to mean", value: <Chg v={upside} digits={1} /> },
-                  { label: "Brokers with target", value: String(current.length) },
+                  { label: "Brokers with target", value: String(stats.count) },
                 ],
               },
             ]}

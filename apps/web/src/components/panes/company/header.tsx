@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/chip";
 import { Chg } from "@/components/ui/num";
 import { MiniRange } from "@/components/ui/sparkline";
@@ -6,10 +7,19 @@ import { TAB_TITLE, TABS, type Tab } from "@/lib/commands";
 import { compactInr, num, pct } from "@/lib/format";
 import { getContext } from "@/server/context";
 import { quoteView } from "@/server/queries";
-import { asOf } from "../shared";
+import { asOf, attempt } from "../shared";
 
 export async function QuoteHeader({ symbol }: { symbol: string }) {
-  const q = await quoteView(getContext(), symbol);
+  const res = await attempt(quoteView(getContext(), symbol));
+  if (!res.ok)
+    return (
+      <EmptyQuoteHeader
+        symbol={symbol}
+        name="quote unavailable · retries on the next refresh"
+        tag={<Badge tone="neg">DATA UNAVAILABLE · {res.code}</Badge>}
+      />
+    );
+  const q = res.data;
   const fromHigh = q.price != null && q.high52 ? ((q.price - q.high52) / q.high52) * 100 : null;
   const live = q.source === "live" && q.marketState === "REGULAR";
   return (
@@ -82,14 +92,23 @@ export async function QuoteHeader({ symbol }: { symbol: string }) {
   );
 }
 
-export function QuoteHeaderSkeleton({ symbol }: { symbol: string }) {
+function EmptyQuoteHeader({
+  symbol,
+  name,
+  tag,
+}: {
+  symbol: string;
+  name: string;
+  tag?: ReactNode;
+}) {
   return (
     <header className="quote-header">
       <div className="quote-title">
         <h1>
           <span className="accent">{symbol}</span> IN EQUITY
         </h1>
-        <span className="quote-name">loading…</span>
+        <span className="quote-name">{name}</span>
+        {tag ? <span className="quote-tags">{tag}</span> : null}
       </div>
       <div className="quote-band">
         <div className="quote-cell quote-price">
@@ -105,6 +124,10 @@ export function QuoteHeaderSkeleton({ symbol }: { symbol: string }) {
       </div>
     </header>
   );
+}
+
+export function QuoteHeaderSkeleton({ symbol }: { symbol: string }) {
+  return <EmptyQuoteHeader symbol={symbol} name="loading…" />;
 }
 
 export function TabStrip({ symbol, tab }: { symbol: string; tab: Tab }) {

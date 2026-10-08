@@ -24,6 +24,15 @@ export function isTyping(target: EventTarget | null): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
+export function isSurface(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return true;
+  return (
+    target === document.body ||
+    target === document.documentElement ||
+    target.hasAttribute("data-pane")
+  );
+}
+
 const BY_COMBO = new Map<string, Binding>();
 for (const b of KEYMAP) for (const k of b.keys) BY_COMBO.set(k, b);
 
@@ -31,6 +40,7 @@ export function matchBinding(e: KeyboardEvent): Binding | null {
   const b = BY_COMBO.get(eventCombo(e));
   if (!b) return null;
   if (b.when === "idle" && isTyping(e.target)) return null;
+  if (b.when === "surface" && !isSurface(e.target)) return null;
   if (b.id === "cmd.open" && e.key === "`" && isTyping(e.target)) return null;
   return b;
 }

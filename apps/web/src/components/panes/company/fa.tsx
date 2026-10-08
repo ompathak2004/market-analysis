@@ -138,8 +138,11 @@ function checks(a: Fin[]): Check[] {
   const lev = (r: Fin | undefined) => ratio(v(r, "totalDebt"), v(r, "totalAssets"));
   const cr = (r: Fin | undefined) =>
     r ? ratio(toNum(r.currentAssets), toNum(r.currentLiabilities)) : null;
-  const gm = (r: Fin | undefined) =>
-    r ? ratio((v(r, "revenue") ?? 0) - (toNum(r.cogs) ?? 0), v(r, "revenue")) : null;
+  const gm = (r: Fin | undefined) => {
+    const rev = v(r, "revenue");
+    const cogs = r ? toNum(r.cogs) : null;
+    return rev && cogs != null ? (rev - cogs) / rev : null;
+  };
   const at = (r: Fin | undefined) => ratio(v(r, "revenue"), v(r, "totalAssets"));
   const cmp = (x: number | null, y: number | null, up = true) =>
     x == null || y == null ? null : up ? x > y : x < y;
@@ -235,15 +238,18 @@ export async function ChecksPane({ symbol }: { symbol: string }) {
   const list = annual.length >= 2 ? checks(annual) : [];
   const score = list.filter((c) => c.pass).length;
   const known = list.filter((c) => c.pass != null).length;
+  const share = known ? score / known : 0;
   return (
     <Pane
       id="checks"
       title="QUALITY CHECKS"
       area="checks"
-      meta={list.length ? `${score}/${known}` : "—"}
+      meta={list.length ? `${known}/${list.length} scored` : "—"}
       actions={
-        list.length ? (
-          <Badge tone={score >= 7 ? "pos" : score <= 3 ? "neg" : "warn"}>SCORE {score}/9</Badge>
+        known ? (
+          <Badge tone={share >= 7 / 9 ? "pos" : share <= 1 / 3 ? "neg" : "warn"}>
+            SCORE {score}/{known}
+          </Badge>
         ) : null
       }
       foot={<output>Piotroski-style · latest FY vs prior FY</output>}

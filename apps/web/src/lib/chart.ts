@@ -214,7 +214,3 @@ export function sparkPath(values: readonly number[], w: number, h: number): stri
     })
     .join("");
 }
-
-export function project(lat: number, lon: number, w: number, h: number) {
-  return { x: ((lon + 180) / 360) * w, y: ((90 - lat) / 180) * h };
-}
