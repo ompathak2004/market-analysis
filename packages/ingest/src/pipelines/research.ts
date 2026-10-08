@@ -356,24 +356,7 @@ export async function fetchBrokerReports(
   limit: number,
   opts: { stop?: () => boolean } = {},
 ): Promise<BrokerReportsResult> {
-  const pending = await ctx.db
-    .select({
-      url: analystCalls.reportUrl,
-      companyId: sql<number>`min(${analystCalls.companyId})`,
-      publishedAt: sql<string>`max(${analystCalls.publishedAt})`,
-    })
-    .from(analystCalls)
-    .where(and(sql`${analystCalls.reportUrl} is not null`, isNull(analystCalls.reportDocumentId)))
-    .groupBy(analystCalls.reportUrl)
-    .orderBy(desc(sql`max(${analystCalls.publishedAt})`))
-    .limit(limit * 4);
-
-  const urls = pending.filter((p): p is typeof p & { url: string } => p.url !== null);
-  const failedFlags = urls.length
-    ? await ctx.redis.mget(...urls.map((p) => failureKey(p.url)))
-    : [];
-  const queue = urls.filter((_, i) => !failedFlags[i]).slice(0, limit);
-
+  const queue = await pendingBrokerReports(ctx, limit);
   const out: BrokerReportsResult = { fetched: 0, linked: 0, failed: 0, skipped: 0 };
   for (const item of queue) {
     if (opts.stop?.()) {
@@ -401,6 +384,32 @@ export async function fetchBrokerReports(
     }
   }
   return out;
+}
+
+async function pendingBrokerReports(
+  ctx: IngestContext,
+  limit: number,
+): Promise<Array<{ url: string; companyId: number }>> {
+  const pageSize = Math.max(limit * 4, 50);
+  const queue: Array<{ url: string; companyId: number }> = [];
+  for (let offset = 0; queue.length < limit; offset += pageSize) {
+    const page = await ctx.db
+      .select({
+        url: analystCalls.reportUrl,
+        companyId: sql<number>`min(${analystCalls.companyId})`,
+      })
+      .from(analystCalls)
+      .where(and(sql`${analystCalls.reportUrl} is not null`, isNull(analystCalls.reportDocumentId)))
+      .groupBy(analystCalls.reportUrl)
+      .orderBy(desc(sql`max(${analystCalls.publishedAt})`), analystCalls.reportUrl)
+      .limit(pageSize)
+      .offset(offset);
+    const urls = page.filter((p): p is typeof p & { url: string } => p.url !== null);
+    const failed = urls.length ? await ctx.redis.mget(...urls.map((p) => failureKey(p.url))) : [];
+    queue.push(...urls.filter((_, i) => !failed[i]));
+    if (page.length < pageSize) break;
+  }
+  return queue.slice(0, limit);
 }
 
 function failureKey(url: string): string {
