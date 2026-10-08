@@ -1,6 +1,6 @@
 import { type analystCalls, and, announcements, companies, desc, eq, gte, sql } from "@ma/db";
-import type { BrokerThesis, RuleInsight, VerdictLabel } from "@ma/intel";
-import { brokerThesisSchema, verdictLabelFor } from "@ma/intel";
+import type { BrokerThesis } from "@ma/intel";
+import { brokerThesisSchema } from "@ma/intel";
 import { toNum } from "../../lib/format";
 import type { AppContext } from "../context";
 import {
@@ -447,21 +447,6 @@ export async function quoteView(ctx: AppContext, symbol: string): Promise<QuoteV
     marketState: quote?.marketState ?? null,
     asOf: quote ? iso(quote.marketTime) : lastBar ? `${lastBar.date}T10:00:00.000Z` : null,
     source: quote ? "live" : lastBar ? "close" : "none",
-  };
-}
-
-export function ruleVerdict(items: RuleInsight[]): {
-  score: number;
-  label: VerdictLabel;
-  confidence: number;
-} {
-  const pos = items.filter((i) => i.tone === "positive").length;
-  const neg = items.filter((i) => i.tone === "negative").length;
-  const score = Math.max(5, Math.min(95, Math.round(50 + (pos - neg) * 6)));
-  return {
-    score,
-    label: verdictLabelFor(score),
-    confidence: Math.min(0.6, 0.15 + items.length * 0.03),
   };
 }
 
