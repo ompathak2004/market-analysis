@@ -1,3 +1,4 @@
+import { haversineKm } from "@ma/core";
 import { type Db, sql } from "@ma/db";
 import {
   type AltdataEventInput,
@@ -6,7 +7,6 @@ import {
   emitAltdataEvents,
   fitRead,
   formatDay,
-  haversineKm,
   iso,
   isoDate,
   meanStd,

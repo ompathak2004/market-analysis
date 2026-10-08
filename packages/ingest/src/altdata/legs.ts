@@ -1,3 +1,4 @@
+import { MINUTE } from "@ma/core";
 import type { Airport } from "../data/types.js";
 import { nearestAirport } from "../geo.js";
 
@@ -24,15 +25,13 @@ export interface SegmentOptions {
   minDurationMs?: number;
 }
 
-const MIN = 60_000;
-
 export function segmentLegs<S extends AirSample>(
   samples: readonly S[],
   opts: SegmentOptions = {},
 ): Leg<S>[] {
-  const gap = opts.gapMs ?? 20 * MIN;
+  const gap = opts.gapMs ?? 20 * MINUTE;
   const minSamples = opts.minSamples ?? 2;
-  const minDuration = opts.minDurationMs ?? 10 * MIN;
+  const minDuration = opts.minDurationMs ?? 10 * MINUTE;
   const now = (opts.now ?? new Date()).getTime();
   const sorted = [...samples].sort((a, b) => a.ts.getTime() - b.ts.getTime());
   const legs: Leg<S>[] = [];
@@ -122,7 +121,9 @@ export function summarizeLeg(leg: Leg): LegSummary {
     lastTs: last.ts,
     departedAt,
     arrivedAt,
-    durationMin: arrivedAt ? Math.round((arrivedAt.getTime() - departedAt.getTime()) / MIN) : null,
+    durationMin: arrivedAt
+      ? Math.round((arrivedAt.getTime() - departedAt.getTime()) / MINUTE)
+      : null,
     dep,
     arr,
     completeness: dep && arr ? "full" : dep ? "departure_only" : arr ? "arrival_only" : "enroute",
@@ -132,5 +133,5 @@ export function summarizeLeg(leg: Leg): LegSummary {
 }
 
 export function legDedupeKey(hex: string, firstTs: Date): string {
-  return `${hex}:${Math.floor(firstTs.getTime() / (30 * MIN))}`;
+  return `${hex}:${Math.floor(firstTs.getTime() / (30 * MINUTE))}`;
 }
