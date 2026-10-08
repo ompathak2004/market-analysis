@@ -28,8 +28,8 @@ export function hashOf(value: unknown): string {
 }
 
 export function inputHash(inputs: CompanyInputs): string {
-  const { asOf: _a, ruleInsights: _r, evidence: _e, previousBrief, ...stable } = inputs;
-  return hashOf({ ...stable, previousBrief: previousBrief?.verdict ?? null });
+  const { asOf: _a, ruleInsights: _r, evidence: _e, previousBrief: _p, ...stable } = inputs;
+  return hashOf(stable);
 }
 
 export function brokersHash(inputs: Pick<CompanyInputs, "brokers" | "consensus">): string {

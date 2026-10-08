@@ -43,7 +43,7 @@ export const MARKET_BRIEF_SYSTEM = [
   "- bullets: exactly 5 bullets, each citing ids from INPUT.evidence[].id.",
   "- sectorRotation and breadth: one or two sentences each, from INPUT.sectors and INPUT.breadth.",
   "- notableCalls: broker calls worth knowing; [] when there are none.",
-  "- riskFlags: specific risks visible in INPUT (distress, concentration, high-materiality announcements); [] when none.",
+  "- riskFlags: at most 4 short sentences on specific risks visible in INPUT (distress, concentration, high-materiality announcements); name companies, not evidence ids; [] when none.",
   "- If a section of INPUT is empty, do not invent it.",
 ].join("\n");
 

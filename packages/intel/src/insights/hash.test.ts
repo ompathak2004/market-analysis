@@ -36,20 +36,13 @@ describe("inputHash", () => {
     ).toBe(h);
   });
 
-  it("only keeps the previous verdict", () => {
+  it("ignores the previous brief so a fresh brief does not invalidate itself", () => {
     const prev = {
       generatedAt: "2026-10-07T00:00:00Z",
       verdict: { score: 60, label: "constructive" as const, confidence: 0.6 },
       thesis: ["a"],
     };
-    const a = inputHash({ ...base, previousBrief: prev });
-    expect(
-      inputHash({ ...base, previousBrief: { ...prev, thesis: ["b"], generatedAt: "x" } }),
-    ).toBe(a);
-    expect(
-      inputHash({ ...base, previousBrief: { ...prev, verdict: { ...prev.verdict, score: 61 } } }),
-    ).not.toBe(a);
-    expect(a).not.toBe(h);
+    expect(inputHash({ ...base, previousBrief: prev })).toBe(h);
   });
 
   it("changes when material inputs change", () => {
