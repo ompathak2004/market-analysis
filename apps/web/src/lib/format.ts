@@ -27,23 +27,94 @@ export function signed(v: number | null | undefined, digits = 2): string {
   return `${v > 0 ? "+" : v < 0 ? "-" : ""}${num(Math.abs(v), digits)}`;
 }
 
-export function tone(v: number | null | undefined): "up" | "down" | "flat" {
-  if (v == null || v === 0 || !Number.isFinite(v)) return "flat";
-  return v > 0 ? "up" : "down";
+export type Tone = "pos" | "neg" | "neu";
+
+export function tone(v: number | null | undefined): Tone {
+  if (v == null || v === 0 || !Number.isFinite(v)) return "neu";
+  return v > 0 ? "pos" : "neg";
 }
+
+export function toNum(v: number | string | null | undefined): number | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function compactInr(v: number | string | null | undefined): string {
+  const n = toNum(v);
+  if (n == null) return "—";
+  const a = Math.abs(n);
+  if (a >= 100_000) return `₹${num(n / 100_000, 2)}L Cr`;
+  if (a >= 1_000) return `₹${num(n / 1_000, 1)}k Cr`;
+  return `₹${num(n, 0)} Cr`;
+}
+
+export function compact(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  const a = Math.abs(v);
+  if (a >= 10_000_000) return `${(v / 10_000_000).toFixed(2)}Cr`;
+  if (a >= 100_000) return `${(v / 100_000).toFixed(2)}L`;
+  if (a >= 1_000) return `${(v / 1_000).toFixed(1)}k`;
+  return v.toFixed(0);
+}
+
+export function clampText(s: string | null | undefined, max = 140): string {
+  if (!s) return "";
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
+function asDate(v: string | Date): Date {
+  return typeof v === "string" ? new Date(v.length === 10 ? `${v}T00:00:00Z` : v) : v;
+}
+
+export function istTime(v: string | Date | null | undefined): string {
+  if (!v) return "—";
+  return asDate(v).toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Kolkata",
+  });
+}
+
+export function istDateTime(v: string | Date | null | undefined): string {
+  if (!v) return "—";
+  return `${shortDate(v)} ${istTime(v)}`;
+}
+
+export function relTime(v: string | Date | null | undefined, now = Date.now()): string {
+  if (!v) return "—";
+  const diff = Math.round((now - asDate(v).getTime()) / 1000);
+  const a = Math.abs(diff);
+  const suffix = diff >= 0 ? "ago" : "ahead";
+  if (a < 60) return "now";
+  if (a < 3600) return `${Math.floor(a / 60)}m ${suffix}`;
+  if (a < 86_400) return `${Math.floor(a / 3600)}h ${suffix}`;
+  if (a < 86_400 * 45) return `${Math.floor(a / 86_400)}d ${suffix}`;
+  return shortDate(v);
+}
+
+export function minutes(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  const h = Math.floor(v / 60);
+  const m = Math.round(v % 60);
+  return h > 0 ? `${h}h${String(m).padStart(2, "0")}` : `${m}m`;
+}
+
+const IST_PARTS = new Intl.DateTimeFormat("en-GB", {
+  day: "2-digit",
+  month: "numeric",
+  year: "2-digit",
+  timeZone: "Asia/Kolkata",
+});
 
 export function shortDate(iso: string | Date | null | undefined): string {
   if (!iso) return "—";
-  const d = typeof iso === "string" ? new Date(iso.length === 10 ? `${iso}T00:00:00Z` : iso) : iso;
-  return d
-    .toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "2-digit",
-      timeZone: "Asia/Kolkata",
-    })
-    .replaceAll(" ", "-")
-    .toUpperCase();
+  const parts = IST_PARTS.formatToParts(asDate(iso));
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  const mon = MONTHS[Number(get("month")) - 1] ?? "";
+  return `${get("day")}-${mon.toUpperCase()}-${get("year")}`;
 }
 
 const FISCAL_QUARTER: Record<string, number> = { "06": 1, "09": 2, "12": 3, "03": 4 };
@@ -89,6 +160,21 @@ export const SIGNAL_LABEL: Record<string, string> = {
   supplier_momentum_3m: "SUPP MOM 3M",
   customer_hhi: "CUSTOMER HHI",
   distress_score: "DISTRESS SCORE",
+  travel_legs_7d: "LEGS 7D",
+  travel_frequency_anomaly: "TRAVEL ANOMALY",
+  travel_new_destination: "NEW DESTINATION",
+  travel_deal_hub_cluster: "DEAL-HUB CLUSTER",
+  travel_counterparty_visit: "COUNTERPARTY VISIT",
+  travel_colocation: "CO-LOCATION",
+  travel_event_window: "EVENT WINDOW",
+  travel_coverage: "TRAVEL COVERAGE",
+  logistics_arrivals_7d: "ARRIVALS 7D",
+  logistics_throughput_proxy: "THROUGHPUT PROXY",
+  logistics_chokepoint_exposure: "CHOKEPOINT EXPOSURE",
+  logistics_port_congestion: "PORT CONGESTION",
+  logistics_export_departures_7d: "EXPORT DEPARTURES 7D",
+  logistics_fleet_activity: "FLEET ACTIVITY",
+  logistics_coverage: "AIS COVERAGE",
 };
 
 export function signalLabel(kind: string): string {
