@@ -16,7 +16,8 @@
   },
   "dependencies": {
     "@ma/core": "workspace:*",
-    "@ma/db": "workspace:*"
+    "@ma/db": "workspace:*",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.18.0"
