@@ -51,10 +51,10 @@ Replicates the Dieselgate analysis: for a shock company and window, take its sup
 
 ## 6. Analyst calls (`packages/ingest/src/pipelines/analysts.ts`)
 
-Broker reports are aggregated from Trendlyne's public research listing. Each call is deduped on (symbol, broker, date, rating, target) and classified against the same broker's prior call: `initiate | upgrade | downgrade | raise_target | lower_target | maintain`. The UI links to the original report so users read the source, not a summary.
+Broker reports are aggregated from the broker research cards on each company's Moneycontrol stock page; a card with no date takes the date embedded in its report PDF URL, and cards with neither are dropped. Each call is deduped on (symbol, broker, date, rating, target) and classified against the same broker's prior call: `initiate | upgrade | downgrade | raise_target | lower_target | maintain`. The UI links to the original report so users read the source, not a summary.
 
 ## Known limitations
 
-- Trendlyne headlines are upstream data and occasionally name the wrong company; the stock link and `reportUrl` are row-aligned.
+- Moneycontrol research cards carry no headline or abstract and the reco price is sometimes missing (`-`, stored as null). Free-tier hits and misses expose the reported actual and a beat/inline/miss outcome but not the consensus estimate, so `earnings_surprises.estimate` and `surprise_pct` are usually null.
 - Relationship extraction is regex/cue based; recall on concalls is modest. A sentence-classifier is the natural upgrade.
 - Fundamentals come from Screener's consolidated tables; quarterly balance sheets are not available there.
