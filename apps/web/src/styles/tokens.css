@@ -1,0 +1,53 @@
+@layer tokens, base, shell, grid, pane, table, controls, charts, utilities;
+
+@layer tokens {
+  :root {
+    color-scheme: dark;
+    --bg: #0a0a0a;
+    --surface: #0d0d0d;
+    --surface-2: #121212;
+    --surface-3: #181818;
+    --border: #2a2a2a;
+    --border-soft: #1c1c1c;
+    --border-focus: #ff8800;
+    --fg: #d6d6d6;
+    --fg-bright: #ffffff;
+    --fg-dim: #8a8a8a;
+    --fg-muted: #5a5a5a;
+    --accent: #ff8800;
+    --accent-dim: #8a4a00;
+    --accent-wash: color-mix(in srgb, var(--accent) 12%, transparent);
+    --pos: #00cc66;
+    --neg: #ff4444;
+    --neu: #8a8a8a;
+    --warn: #ffb020;
+    --info: #4fb3ff;
+    --pos-wash: color-mix(in srgb, var(--pos) 14%, transparent);
+    --neg-wash: color-mix(in srgb, var(--neg) 14%, transparent);
+    --neu-wash: color-mix(in srgb, var(--neu) 14%, transparent);
+    --warn-wash: color-mix(in srgb, var(--warn) 14%, transparent);
+    --info-wash: color-mix(in srgb, var(--info) 14%, transparent);
+    --sel: #1e1e1e;
+    --hover: color-mix(in srgb, var(--fg-bright) 6%, transparent);
+    --scroll-thumb: color-mix(in srgb, var(--fg) 26%, transparent);
+    --scroll-thumb-hover: color-mix(in srgb, var(--fg) 42%, transparent);
+    --ring: 0 0 0 1px var(--border-focus);
+    --font: var(--font-mono), ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --fs: 12.5px;
+    --fs-sm: 11px;
+    --fs-lg: 15px;
+    --fs-xl: 22px;
+    --cell-h: 20px;
+    --chrome-h: 22px;
+    --top-h: 38px;
+    --status-h: 24px;
+    --gap: 1px;
+    --pad-x: 8px;
+  }
+
+  html[data-density="compact"] {
+    --fs: 12px;
+    --cell-h: 18px;
+    --chrome-h: 20px;
+  }
+}

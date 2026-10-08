@@ -1,0 +1,130 @@
+@layer utilities {
+  .scroll {
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    scrollbar-gutter: auto;
+  }
+
+  .scroll:hover,
+  .scroll:focus-within,
+  .scroll[data-scroll-active="true"] {
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
+
+  @supports selector(::-webkit-scrollbar) {
+    .scroll {
+      scrollbar-width: auto;
+      scrollbar-color: auto;
+    }
+
+    .scroll:hover,
+    .scroll:focus-within,
+    .scroll[data-scroll-active="true"] {
+      scrollbar-color: auto;
+    }
+
+    .scroll::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+      background: transparent;
+    }
+
+    .scroll::-webkit-scrollbar-track,
+    .scroll::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+
+    .scroll::-webkit-scrollbar-thumb {
+      background: transparent;
+      border-radius: 0;
+    }
+
+    .scroll:hover::-webkit-scrollbar-thumb,
+    .scroll:focus-within::-webkit-scrollbar-thumb,
+    .scroll[data-scroll-active="true"]::-webkit-scrollbar-thumb {
+      background: var(--scroll-thumb);
+    }
+
+    .scroll::-webkit-scrollbar-thumb:hover {
+      background: var(--scroll-thumb-hover);
+    }
+
+    .scroll::-webkit-scrollbar-button {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+  }
+
+  .truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .stack {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .num {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .upper {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .sm {
+    font-size: var(--fs-sm);
+  }
+
+  .lg {
+    font-size: var(--fs-lg);
+  }
+
+  .grow {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}

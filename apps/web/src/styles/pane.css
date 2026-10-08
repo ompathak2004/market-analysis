@@ -1,0 +1,234 @@
+@layer pane {
+  .pane {
+    display: grid;
+    grid-template-rows: var(--chrome-h) auto minmax(0, 1fr) auto;
+    background: var(--surface);
+    border: 1px solid var(--border-soft);
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    container: pane / inline-size;
+    outline: none;
+  }
+
+  .pane[data-focused="true"] {
+    border-color: var(--border-focus);
+  }
+
+  .pane[data-focused="true"] .pane-title {
+    color: var(--accent);
+  }
+
+  .pane[data-zoomed="true"] {
+    position: fixed;
+    top: var(--top-h);
+    bottom: var(--status-h);
+    left: 0;
+    right: 0;
+    z-index: 40;
+    border-color: var(--border-focus);
+  }
+
+  .pane-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 var(--pad-x);
+    background: var(--surface-3);
+    border-bottom: 1px solid var(--border-soft);
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    grid-row: 1;
+  }
+
+  .pane-title {
+    color: var(--fg-bright);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    font-size: var(--fs-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .pane-title::before {
+    content: ":: ";
+    color: var(--fg-muted);
+  }
+
+  .pane-meta {
+    color: var(--fg-muted);
+    font-size: var(--fs-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .pane-actions {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+    flex: 0 0 auto;
+    align-items: center;
+  }
+
+  .pane-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 2px var(--pad-x);
+    border-bottom: 1px solid var(--border-soft);
+    background: var(--surface);
+    overflow: hidden;
+    white-space: nowrap;
+    grid-row: 2;
+  }
+
+  .pane-body {
+    min-height: 0;
+    min-width: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    grid-row: 3;
+  }
+
+  .pane-body.pad {
+    padding: 6px var(--pad-x);
+  }
+
+  .pane-foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 var(--pad-x);
+    min-height: var(--chrome-h);
+    border-top: 1px solid var(--border-soft);
+    color: var(--fg-muted);
+    font-size: var(--fs-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    min-width: 0;
+    grid-row: 4;
+  }
+
+  .pane-foot > * {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .pane-foot output {
+    color: var(--fg-dim);
+    flex: 1 1 auto;
+  }
+
+  .pane-foot .right {
+    margin-left: auto;
+    flex: 0 0 auto;
+  }
+
+  .pane-section {
+    padding: 6px var(--pad-x);
+    border-bottom: 1px solid var(--border-soft);
+  }
+
+  .pane-section:last-child {
+    border-bottom: 0;
+  }
+
+  .pane-section > h3,
+  .section-title {
+    color: var(--fg-muted);
+    font-size: var(--fs-sm);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 500;
+    margin-bottom: 2px;
+  }
+
+  .empty {
+    display: grid;
+    align-content: center;
+    justify-items: start;
+    gap: 4px;
+    padding: 12px var(--pad-x);
+    color: var(--fg-dim);
+    min-height: 100%;
+  }
+
+  .empty .empty-title {
+    color: var(--fg);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: var(--fs-sm);
+  }
+
+  .empty .empty-title::before {
+    content: "○ ";
+    color: var(--fg-muted);
+  }
+
+  .empty p {
+    color: var(--fg-dim);
+    max-width: 60ch;
+  }
+
+  .empty .empty-hint {
+    color: var(--fg-muted);
+    font-size: var(--fs-sm);
+  }
+
+  .unavailable {
+    margin: 8px var(--pad-x);
+    padding: 6px var(--pad-x);
+    border-left: 2px solid var(--neg);
+    background: var(--neg-wash);
+    color: var(--fg);
+  }
+
+  .unavailable b {
+    color: var(--neg);
+    letter-spacing: 0.06em;
+  }
+
+  .skeleton {
+    display: grid;
+    gap: 6px;
+    padding: 8px var(--pad-x);
+  }
+
+  .skeleton i {
+    display: block;
+    height: 10px;
+    background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
+    background-size: 200% 100%;
+    animation: skeleton 1.4s linear infinite;
+  }
+
+  .skeleton i:nth-child(3n) {
+    width: 72%;
+  }
+
+  .skeleton i:nth-child(3n + 1) {
+    width: 90%;
+  }
+
+  @keyframes skeleton {
+    from {
+      background-position: 200% 0;
+    }
+
+    to {
+      background-position: -200% 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton i {
+      animation: none;
+    }
+  }
+}

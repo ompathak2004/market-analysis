@@ -1,0 +1,195 @@
+@layer grid {
+  .grid {
+    display: grid;
+    gap: var(--gap);
+    min-height: 0;
+    min-width: 0;
+    height: 100%;
+    background: var(--border-soft);
+  }
+
+  .grid > * {
+    min-width: 0;
+    min-height: 0;
+    grid-area: var(--area, auto);
+  }
+
+  .grid-home {
+    grid-template-columns: 0.9fr 1.2fr 1.4fr;
+    grid-template-rows: minmax(0, 1.05fr) minmax(0, 1fr);
+    grid-template-areas:
+      "indices brief calls"
+      "movers feed alt";
+  }
+
+  .grid-des {
+    grid-template-columns: 1.1fr 1.2fr 0.9fr;
+    grid-template-rows: minmax(0, 1.1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "brief insights stats"
+      "brief insights peers";
+  }
+
+  .grid-gp {
+    grid-template-columns: minmax(0, 1fr) 300px;
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-areas: "chart stats";
+  }
+
+  .grid-fa {
+    grid-template-columns: 1.4fr 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "annual checks"
+      "quarterly dupont";
+  }
+
+  .grid-anr {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    grid-template-areas:
+      "consensus targets estimates"
+      "research research timeline";
+  }
+
+  .grid-splc {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: minmax(0, 1.2fr) minmax(0, 1fr);
+    grid-template-areas:
+      "customers suppliers"
+      "signals signals";
+  }
+
+  .grid-news {
+    grid-template-columns: 1.3fr 1fr;
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-areas: "feed detail";
+  }
+
+  .grid-jet {
+    grid-template-columns: 1.5fr 1fr;
+    grid-template-rows: minmax(0, 0.8fr) minmax(0, 0.8fr) minmax(0, 1fr);
+    grid-template-areas:
+      "aircraft signals"
+      "legs signals"
+      "legs map";
+  }
+
+  .grid-ship {
+    grid-template-columns: 1.4fr 1fr;
+    grid-template-rows: repeat(3, minmax(0, 1fr));
+    grid-template-areas:
+      "facilities signals"
+      "calls chokepoints"
+      "calls map";
+  }
+
+  .grid-intl {
+    grid-template-columns: 1.4fr 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "thesis changes"
+      "thesis evidence";
+  }
+
+  .grid-signals {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+
+  .grid-signals-one {
+    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .grid-movers {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .grid-help {
+    grid-template-columns: 1.2fr 1fr 1fr;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .grid-solo {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  @media (min-width: 1600px) {
+    .grid-home {
+      grid-template-columns: 0.85fr 1.2fr 1.45fr;
+    }
+
+    .grid-gp {
+      grid-template-columns: minmax(0, 1fr) 360px;
+    }
+  }
+
+  @media (max-width: 1200px) {
+    .grid-home {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: repeat(4, minmax(0, 1fr));
+      grid-template-areas:
+        "indices brief"
+        "movers feed"
+        "calls feed"
+        "alt alt";
+    }
+
+    .grid-des {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: repeat(2, minmax(0, 1fr));
+      grid-template-areas:
+        "brief insights"
+        "stats peers";
+    }
+
+    .grid-anr {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: repeat(3, minmax(0, 1fr));
+      grid-template-areas:
+        "consensus targets"
+        "estimates timeline"
+        "research research";
+    }
+
+    .grid-signals {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid-help {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 900px) {
+    .grid,
+    .grid-home,
+    .grid-des,
+    .grid-gp,
+    .grid-fa,
+    .grid-anr,
+    .grid-splc,
+    .grid-news,
+    .grid-jet,
+    .grid-ship,
+    .grid-intl,
+    .grid-signals,
+    .grid-signals-one,
+    .grid-movers,
+    .grid-help {
+      height: auto;
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: none;
+      grid-auto-rows: minmax(320px, auto);
+      grid-template-areas: none;
+    }
+
+    .grid > * {
+      grid-area: auto;
+    }
+  }
+}
