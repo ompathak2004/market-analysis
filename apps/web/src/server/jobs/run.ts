@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { withDeadline } from "@ma/core";
 import { eq, ingestRuns } from "@ma/db";
 import type { AppContext } from "../context";
+import { invalidateAfterJob } from "./invalidation";
 
 const RELEASE_IF_OWNER = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) end return 0`;
 
@@ -74,6 +75,7 @@ export async function runJob(
     ctx.logger.error({ job: name, ms, err }, "job failed");
     return { status: "failed", runId, ms, error };
   } finally {
+    await invalidateAfterJob(ctx, name);
     await ctx.redis.eval(RELEASE_IF_OWNER, 1, lockKey, token).catch(() => undefined);
   }
 }

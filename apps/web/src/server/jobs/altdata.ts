@@ -24,10 +24,6 @@ function prefixed(prefix: string, stats: Record<string, number>): JobStats {
   return out;
 }
 
-async function invalidate(ctx: AppContext, prefixes: string[]): Promise<void> {
-  for (const p of prefixes) await ctx.api.invalidatePrefix(p);
-}
-
 function altdataJob(
   name: string,
   budgetMs: number,
@@ -55,24 +51,19 @@ export const altdataJobs: JobDef[] = [
   altdataJob("aircraft-registry", 4 * MINUTE, async (run) => {
     const facilities = await seedFacilities(run.ctx);
     const registry = await seedAircraftRegistry(run.ctx, { deadline: run.deadline - 20_000 });
-    await invalidate(run.ctx, ["travel:", "logistics:", "altdata:"]);
     return { ...prefixed("facilities", facilities), ...prefixed("registry", registry) };
   }),
   altdataJob("aircraft-sample", MINUTE, async (run) => {
-    const stats = await sampleAircraftPositions(run.ctx, { deadline: run.deadline - 5_000 });
-    await invalidate(run.ctx, ["altdata:"]);
-    return stats;
+    return sampleAircraftPositions(run.ctx, { deadline: run.deadline - 5_000 });
   }),
   altdataJob("ais-collect", 2 * MINUTE, async (run) => {
     const apiKey = run.ctx.config.AISSTREAM_API_KEY;
     if (!apiKey) return { skipped: 1 };
-    const stats = await collectVesselPositions(run.ctx, {
+    return collectVesselPositions(run.ctx, {
       apiKey,
       seconds: run.ctx.config.ALTDATA_AIS_BURST_SECONDS,
       deadline: run.deadline - 15_000,
     });
-    await invalidate(run.ctx, ["altdata:"]);
-    return stats;
   }),
   altdataJob("altdata-derive", 4 * MINUTE, async (run) => {
     const now = new Date();
@@ -82,7 +73,6 @@ export const altdataJobs: JobDef[] = [
       now,
     });
     const sea = await deriveVesselActivity(run.ctx, { deadline: run.deadline - 10_000, now });
-    await invalidate(run.ctx, ["travel:", "logistics:", "altdata:"]);
     return { ...prefixed("air", air), ...prefixed("sea", sea) };
   }),
   altdataJob("altdata-signals", 4 * MINUTE, async (run) => {
@@ -100,7 +90,6 @@ export const altdataJobs: JobDef[] = [
       now,
       deadline: run.deadline - 10_000,
     });
-    await invalidate(run.ctx, ["travel:", "logistics:", "altdata:", "signals:"]);
     return {
       ...prefixed("travel", { ...travel }),
       ...prefixed("logistics", { ...logistics }),
@@ -108,9 +97,7 @@ export const altdataJobs: JobDef[] = [
     };
   }),
   altdataJob("fleets", 4 * MINUTE, async (run) => {
-    const stats = await syncFleets(run.ctx, { deadline: run.deadline - 15_000 });
-    await invalidate(run.ctx, ["logistics:"]);
-    return stats;
+    return syncFleets(run.ctx, { deadline: run.deadline - 15_000 });
   }),
   altdataJob("altdata-cleanup", 2 * MINUTE, async (run) =>
     cleanupAltdataPositions(run.ctx, { deadline: run.deadline - 10_000 }),

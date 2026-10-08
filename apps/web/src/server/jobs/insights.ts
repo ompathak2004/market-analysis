@@ -56,10 +56,6 @@ const tally = (stats: JobStats, outcome: InsightOutcome, kind: string) => {
   }
 };
 
-async function invalidate(ctx: AppContext, prefixes: string[]): Promise<void> {
-  for (const p of prefixes) await ctx.api.invalidatePrefix(p);
-}
-
 export const insightJobs: JobDef[] = [
   {
     name: "insights",
@@ -94,7 +90,6 @@ export const insightJobs: JobDef[] = [
           await markFailed(ctx, "insights", id, err);
         }
       }
-      await invalidate(ctx, ["insights:", "feed:"]);
       return stats;
     },
   },
@@ -106,7 +101,6 @@ export const insightJobs: JobDef[] = [
         const outcome = await generateMarketBrief(ctx);
         const stats: JobStats = {};
         tally(stats, outcome, "brief");
-        await invalidate(ctx, ["market-brief:"]);
         return stats;
       } catch (err) {
         if (err instanceof LlmBudgetExceeded) return { budget: 1 };
@@ -127,11 +121,9 @@ export const insightJobs: JobDef[] = [
           companyIds,
           expired: () => run.expired(RESERVE_MS),
         });
-        await invalidate(ctx, ["announcements:", "feed:", "market-brief:"]);
         return { ...stats };
       } catch (err) {
         if (err instanceof LlmBudgetExceeded || err instanceof DeadlineExceededError) {
-          await invalidate(ctx, ["announcements:"]);
           return err instanceof LlmBudgetExceeded ? { budget: 1 } : { deadline: 1 };
         }
         throw err;
@@ -177,7 +169,6 @@ export const insightJobs: JobDef[] = [
           }
         }
       }
-      if (stats.summarized) await invalidate(ctx, ["analysts:", "insights:"]);
       return stats;
     },
   },
