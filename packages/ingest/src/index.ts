@@ -2,6 +2,7 @@ export * from "./context.js";
 export * from "./documents.js";
 export * from "./extract/relationships.js";
 export * from "./firecrawl.js";
+export * from "./firecrawl-budget.js";
 export * from "./http.js";
 export * from "./pipelines/analysts.js";
 export * from "./pipelines/fundamentals.js";

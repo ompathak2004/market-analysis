@@ -7,5 +7,9 @@ export const dynamic = "force-dynamic";
 export const GET = handle(async (req) => {
   const ctx = getContext();
   requireApiKey(ctx, req);
-  return { api: await ctx.api.metrics(), ingest: await ctx.cache.metrics() };
+  return {
+    api: await ctx.api.metrics(),
+    ingest: await ctx.cache.metrics(),
+    firecrawl: await ctx.firecrawlBudget.status(),
+  };
 });

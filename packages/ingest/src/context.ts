@@ -3,6 +3,7 @@ import type { Config, Logger } from "@ma/core";
 import type { Db } from "@ma/db";
 import { DocumentStore } from "./documents.js";
 import { Firecrawl } from "./firecrawl.js";
+import { FirecrawlBudget } from "./firecrawl-budget.js";
 import { HttpClient } from "./http.js";
 import { NseSource } from "./sources/nse.js";
 import { YahooSource } from "./sources/yahoo.js";
@@ -13,6 +14,7 @@ export interface IngestContext {
   cache: Cache;
   http: HttpClient;
   firecrawl: Firecrawl;
+  firecrawlBudget: FirecrawlBudget;
   docs: DocumentStore;
   nse: NseSource;
   yahoo: YahooSource;
@@ -47,9 +49,12 @@ export function createIngestContext(deps: {
   const { db, redis, config, logger } = deps;
   const limiter = new RateLimiter(redis, HOST_LIMITS);
   const http = new HttpClient(limiter, logger.child({ component: "http" }));
+  const firecrawlBudget = new FirecrawlBudget(redis, config.FIRECRAWL_MONTHLY_CREDITS);
   const firecrawl = new Firecrawl(
     config.FIRECRAWL_API_KEY,
     logger.child({ component: "firecrawl" }),
+    undefined,
+    firecrawlBudget,
   );
   return {
     db,
@@ -57,6 +62,7 @@ export function createIngestContext(deps: {
     cache: new Cache(redis, { namespace: "ingest", version: 1, logger }),
     http,
     firecrawl,
+    firecrawlBudget,
     docs: new DocumentStore(db, http, firecrawl, logger.child({ component: "documents" })),
     nse: new NseSource(http, config.NSE_BASE_URL),
     yahoo: new YahooSource(http),

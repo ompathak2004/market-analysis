@@ -15,8 +15,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@ma/cache": "workspace:*",
     "@ma/core": "workspace:*",
     "@ma/db": "workspace:*",
+    "@ma/llm": "workspace:*",
     "zod": "^3.25.76"
   },
   "devDependencies": {
