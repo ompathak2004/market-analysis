@@ -1,6 +1,6 @@
 import { AppError } from "@ma/core";
 import type { PriceWindowResult } from "@ma/ingest";
-import { isRetryable } from "@ma/jobs";
+import { DeferredError, isRetryable } from "@ma/jobs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UnitRun } from "../registry.js";
 
@@ -8,6 +8,7 @@ const m = vi.hoisted(() => ({
   window: vi.fn(),
   rebuild: vi.fn(),
   markSynced: vi.fn(),
+  manifest: vi.fn(),
 }));
 
 vi.mock("@ma/ingest", async (orig) => ({
@@ -16,6 +17,7 @@ vi.mock("@ma/ingest", async (orig) => ({
   dailyWindow: async () => ({ from: "2026-10-01", toExclusive: "2026-10-14" }),
   syncPriceWindow: m.window,
   rebuildSeries: m.rebuild,
+  buildBackfillManifest: m.manifest,
 }));
 
 vi.mock("@ma/jobs", async (orig) => ({
@@ -38,8 +40,10 @@ function result(over: Partial<PriceWindowResult>): PriceWindowResult {
     gaps: 0,
     missingSessions: 0,
     windowMissing: 0,
+    windowExpected: 1,
     latestCovered: true,
     source: "yahoo",
+    sourceStatus: "ok",
     quality: "complete",
     detail: null,
     ...over,
@@ -74,6 +78,35 @@ describe("requireComplete", () => {
       expect((err as AppError).code).toBe("price_incomplete");
       expect(isRetryable(err)).toBe(true);
     }
+  });
+
+  it("retries a source that answered nothing or answered invalid bars, even with rows stored", () => {
+    for (const sourceStatus of ["not_found", "invalid_response"] as const)
+      expect(() => requireComplete(result({ sourceStatus, windowExpected: 5 }))).toThrow(
+        expect.objectContaining({
+          code: "price_incomplete",
+          details: expect.objectContaining({ sourceStatus }),
+        }),
+      );
+    const holiday = result({ sourceStatus: "not_found", windowExpected: 0 });
+    expect(requireComplete(holiday)).toBe(holiday);
+  });
+
+  it("keeps an identity mismatch as a series exception instead of retrying it", () => {
+    const r = result({ sourceStatus: "identity_mismatch", quality: "exception" });
+    expect(requireComplete(r)).toBe(r);
+  });
+
+  it("defers a window the calendar does not span yet, without spending an attempt", () => {
+    const now = Date.parse("2026-10-13T10:00:00Z");
+    let err: unknown;
+    try {
+      requireComplete(result({ status: "calendar_pending", detail: "calendar ends" }), now);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DeferredError);
+    expect((err as DeferredError).resumeAt.getTime()).toBe(now + 3 * 60_000);
   });
 });
 
@@ -132,5 +165,27 @@ describe("price handlers", () => {
         }) as unknown as UnitRun<"prices.rebuild">,
       ),
     ).rejects.toMatchObject({ code: "price_incomplete" });
+  });
+
+  it("queues calendar windows ahead of other indices, and both ahead of equity backfill", async () => {
+    const unit = (seriesId: number) => ({ seriesId, symbol: `S${seriesId}`, from: "2025-01-01" });
+    m.manifest.mockResolvedValueOnce({
+      manifestId: 1,
+      companies: 2,
+      series: 4,
+      exceptions: [],
+      calendarSeriesId: 10,
+      indexSeriesIds: [10, 11],
+      units: [unit(20), unit(11), unit(21), unit(10)],
+    });
+    const out = await priceHandlers["prices.backfill"](
+      run({}) as unknown as UnitRun<"prices.backfill">,
+    );
+    expect(out.children?.map((c) => [c.payload.seriesId, c.priority])).toEqual([
+      [20, -1],
+      [11, 2],
+      [21, -1],
+      [10, 3],
+    ]);
   });
 });

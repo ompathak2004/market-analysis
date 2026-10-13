@@ -1,4 +1,4 @@
-import { AppError, RateLimitedError } from "@ma/core";
+import { AppError, MINUTE, RateLimitedError } from "@ma/core";
 import {
   buildBackfillManifest,
   buildDailyManifest,
@@ -7,9 +7,11 @@ import {
   loadSeries,
   PRICE_PARSER_VERSION,
   type PriceWindowResult,
+  priceSynced,
   rebuildSeries,
-  syncPrices,
+  syncCompanyPrices,
   syncPriceWindow,
+  windowOutcome,
 } from "@ma/ingest";
 import { DeferredError, type JobType, markSynced } from "@ma/jobs";
 import { numericMetrics, trackCompany } from "../batch.js";
@@ -24,7 +26,14 @@ import {
 const PRICES_PER_REPAIR = 500;
 const REPAIR_RESERVE_MS = 30_000;
 
-export const PRICE_PRIORITY = { index: 2, rebuild: 1, daily: 0, backfill: -1 } as const;
+export const PRICE_PRIORITY = {
+  calendar: 3,
+  index: 2,
+  rebuild: 1,
+  daily: 0,
+  backfill: -1,
+} as const;
+export const CALENDAR_WAIT_MS = 3 * MINUTE;
 
 type PriceHandlers = Pick<
   HandlerMap,
@@ -39,7 +48,8 @@ type PriceHandlers = Pick<
 >;
 
 export function windowMetrics(r: PriceWindowResult): Record<string, number> {
-  return { ...numericMetrics(r), [r.status]: 1 };
+  const source = r.sourceStatus === "ok" ? {} : { [`source_${r.sourceStatus}`]: 1 };
+  return { ...numericMetrics(r), [r.status]: 1, ...source };
 }
 
 function children(jobs: ChildJob[], metrics: Record<string, number> = {}): HandlerResult {
@@ -64,14 +74,27 @@ async function deferRateLimits<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 // Rows are already committed when this throws, so the ledger retry with backoff is idempotent and
-// the unit only succeeds once every expected session in its window is covered.
-export function requireComplete(r: PriceWindowResult): PriceWindowResult {
-  if (r.status === "incomplete" || r.status === "rebuild_incomplete")
-    throw new AppError(r.detail ?? `price window ${r.status}`, "price_incomplete", 503, {
-      status: r.status,
-      windowMissing: r.windowMissing,
-      missingSessions: r.missingSessions,
-    });
+// the unit only succeeds once every expected session in its window is covered and the source
+// answered. A calendar that does not span the window yet defers without spending an attempt.
+export function requireComplete(r: PriceWindowResult, now = Date.now()): PriceWindowResult {
+  const outcome = windowOutcome(r);
+  if (outcome === "defer")
+    throw new DeferredError(
+      new Date(now + CALENDAR_WAIT_MS),
+      r.detail ?? "trading calendar not ready for window",
+    );
+  if (outcome === "retry")
+    throw new AppError(
+      r.detail ?? `price window ${r.status}/${r.sourceStatus}`,
+      "price_incomplete",
+      503,
+      {
+        status: r.status,
+        sourceStatus: r.sourceStatus,
+        windowMissing: r.windowMissing,
+        missingSessions: r.missingSessions,
+      },
+    );
   return r;
 }
 
@@ -93,7 +116,7 @@ async function daily({
     ),
   );
   requireComplete(r);
-  if (ref.kind === "equity" && r.status === "written" && r.latestCovered)
+  if (ref.kind === "equity" && priceSynced(r))
     await markSynced(ctx.db, "prices", ref.ownerId, fence);
   return done(windowMetrics(r));
 }
@@ -130,19 +153,29 @@ export const priceHandlers: PriceHandlers = {
   "prices.backfill": async ({ ctx, signal }) => {
     const m = await buildBackfillManifest(ctx, { signal });
     for (const e of m.exceptions) ctx.logger.warn({ ...e }, "price backfill listing exception");
-    return children(m.units.map(child("prices.window", PRICE_PRIORITY.backfill)), {
-      manifestId: m.manifestId,
-      companies: m.companies,
-      series: m.series,
-      exceptions: m.exceptions.length,
-    });
+    const indices = new Set(m.indexSeriesIds);
+    const priority = (seriesId: number) =>
+      seriesId === m.calendarSeriesId
+        ? PRICE_PRIORITY.calendar
+        : indices.has(seriesId)
+          ? PRICE_PRIORITY.index
+          : PRICE_PRIORITY.backfill;
+    return children(
+      m.units.map((u) => child("prices.window", priority(u.seriesId))(u)),
+      {
+        manifestId: m.manifestId,
+        companies: m.companies,
+        series: m.series,
+        exceptions: m.exceptions.length,
+      },
+    );
   },
   "prices.window": async ({ ctx, payload, signal }) => {
     if (payload.parserVersion !== PRICE_PARSER_VERSION) return done({ stale_parser: 1 });
     const mode = payload.mode ?? "backfill";
     const r = await deferRateLimits(() => syncPriceWindow(ctx, payload, mode, signal));
     // Repair windows re-check known gaps; their next_check_at backoff is the retry, not the ledger.
-    if (mode !== "repair") requireComplete(r);
+    if (mode !== "repair" || windowOutcome(r) === "defer") requireComplete(r);
     return done(windowMetrics(r));
   },
   "prices.daily": daily,
@@ -154,9 +187,18 @@ export const priceHandlers: PriceHandlers = {
   },
   "prices.sync": async (run) => {
     const { ctx, payload, signal } = run;
-    const bars = await trackCompany(run, "prices", payload.companyId, () =>
-      syncPrices(ctx, payload.companyId, payload.range ?? "1mo", signal),
+    const r = await trackCompany(
+      run,
+      "prices",
+      payload.companyId,
+      async () =>
+        requireComplete(
+          await deferRateLimits(() =>
+            syncCompanyPrices(ctx, payload.companyId, payload.range ?? "1mo", signal),
+          ),
+        ),
+      priceSynced,
     );
-    return done({ bars });
+    return done({ ...windowMetrics(r), bars: r.inserted + r.updated + r.unchanged });
   },
 };
