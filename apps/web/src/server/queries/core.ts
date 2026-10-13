@@ -8,6 +8,7 @@ import {
   fundamentals,
   inArray,
   or,
+  PRICE_BASIS,
   pricesDaily,
   relationshipEstimates,
   relationships,
@@ -128,11 +129,63 @@ export async function priceHistory(ctx: AppContext, symbol: string, range: Yahoo
           high: pricesDaily.high,
           low: pricesDaily.low,
           close: pricesDaily.close,
+          adjClose: pricesDaily.adjClose,
           volume: pricesDaily.volume,
         })
         .from(pricesDaily)
         .where(sql`${pricesDaily.companyId} = ${company.id} and ${pricesDaily.date} >= ${from}`)
         .orderBy(pricesDaily.date),
+    { ttlMs: 15 * MINUTE, staleMs: 2 * HOUR },
+  );
+}
+
+export interface PriceHistoryMeta {
+  priceBasis: typeof PRICE_BASIS;
+  generation: number | null;
+  quality: string | null;
+  finalThrough: string | null;
+  verifiedThrough: string | null;
+  openGaps: number;
+  missingSessions: number;
+}
+
+export async function priceHistoryMeta(
+  ctx: AppContext,
+  symbol: string,
+): Promise<PriceHistoryMeta | null> {
+  const company = await findCompany(ctx, symbol);
+  return ctx.api.getOrLoad(
+    `prices:${company.id}:meta`,
+    async () => {
+      const rows = await ctx.db.execute<{
+        generation: number;
+        quality: string;
+        verified_through: string | null;
+        final_through: string | null;
+        open_gaps: number;
+        missing_sessions: number;
+      }>(sql`
+        select s.adjustment_generation as generation, s.quality_status as quality,
+               s.verified_through::text,
+               (select max(p.date)::text from prices_daily p
+                 where p.company_id = s.company_id and p.is_final
+                   and p.adjustment_generation = s.adjustment_generation) as final_through,
+               (select count(*)::int from price_gaps g
+                 where g.series_id = s.id and g.status = 'open') as open_gaps,
+               (select coalesce(sum(g.sessions), 0)::int from price_gaps g
+                 where g.series_id = s.id and g.status = 'open') as missing_sessions
+        from price_series_state s where s.company_id = ${company.id}`);
+      const r = rows[0];
+      return {
+        priceBasis: PRICE_BASIS,
+        generation: r ? Number(r.generation) : null,
+        quality: r?.quality ?? null,
+        finalThrough: r?.final_through ?? null,
+        verifiedThrough: r?.verified_through ?? null,
+        openGaps: Number(r?.open_gaps ?? 0),
+        missingSessions: Number(r?.missing_sessions ?? 0),
+      };
+    },
     { ttlMs: 15 * MINUTE, staleMs: 2 * HOUR },
   );
 }
