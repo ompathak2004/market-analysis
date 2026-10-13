@@ -1,53 +1,169 @@
-import { and, asc, type Db, gte, inArray, lte, pricesDaily } from "@ma/db";
+import { type Db, PRICE_BASIS, sql } from "@ma/db";
 
 export type PriceSeries = Map<string, number>;
 
+export type CoverageReason =
+  | "no_series"
+  | "rebuild_required"
+  | "no_final_bars"
+  | "no_calendar"
+  | "stale_start"
+  | "stale_end";
+
+export interface SeriesMeta {
+  generation: number;
+  quality: string;
+  finalThrough: string | null;
+}
+
+export interface PriceCloses {
+  series: Map<number, PriceSeries>;
+  meta: Map<number, SeriesMeta>;
+  sessions: string[];
+  today: string;
+}
+
+export type ReturnResult = { ok: true; value: number } | { ok: false; reason: CoverageReason };
+
+export const RETURN_BASIS = { field: "adj_close", version: PRICE_BASIS.version } as const;
+
+export const ENDPOINT_TOLERANCE_SESSIONS = 1;
+
+const IST_OFFSET_MS = 330 * 60_000;
+
+export function istToday(now = Date.now()): string {
+  return new Date(now + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+// Only finalized bars of the series' current adjustment generation are comparable; mixing
+// generations or falling back to the unadjusted close silently changes the return basis.
 export async function loadCloses(
-  db: Db,
+  db: Pick<Db, "execute">,
   companyIds: number[],
   from: string,
   to: string,
-): Promise<Map<number, PriceSeries>> {
-  const out = new Map<number, PriceSeries>();
+  opts: { today?: string } = {},
+): Promise<PriceCloses> {
+  const today = opts.today ?? istToday();
+  const out: PriceCloses = { series: new Map(), meta: new Map(), sessions: [], today };
   if (!companyIds.length) return out;
-  const rows = await db
-    .select({
-      companyId: pricesDaily.companyId,
-      date: pricesDaily.date,
-      close: pricesDaily.adjClose,
-      raw: pricesDaily.close,
-    })
-    .from(pricesDaily)
-    .where(
-      and(
-        inArray(pricesDaily.companyId, companyIds),
-        gte(pricesDaily.date, from),
-        lte(pricesDaily.date, to),
-      ),
-    )
-    .orderBy(asc(pricesDaily.date));
+  const ids = sql.join(
+    companyIds.map((id) => sql`${id}`),
+    sql`, `,
+  );
+  const [states, rows, sessions] = await Promise.all([
+    db.execute<{ company_id: number; g: number; q: string; final_through: string | null }>(sql`
+      select s.company_id, s.adjustment_generation as g, s.quality_status as q,
+             (select max(p.date)::text from prices_daily p
+               where p.company_id = s.company_id and p.is_final
+                 and p.adjustment_generation = s.adjustment_generation) as final_through
+      from price_series_state s where s.company_id in (${ids})`),
+    db.execute<{ company_id: number; date: string; adj_close: number }>(sql`
+      select p.company_id, p.date::text as date, p.adj_close
+      from prices_daily p
+      join price_series_state s
+        on s.company_id = p.company_id and s.adjustment_generation = p.adjustment_generation
+      where p.company_id in (${ids}) and p.date between ${from} and ${to}
+        and p.is_final and p.adj_close is not null
+      order by p.date`),
+    db.execute<{ date: string }>(sql`
+      select date::text as date from trading_sessions
+      where exchange = 'NSE' and date between ${from} and ${to} and date < ${today}
+      order by date`),
+  ]);
+  for (const s of states)
+    out.meta.set(Number(s.company_id), {
+      generation: Number(s.g),
+      quality: s.q,
+      finalThrough: s.final_through,
+    });
   for (const r of rows) {
-    const series = out.get(r.companyId) ?? new Map<string, number>();
-    series.set(r.date, r.close ?? r.raw);
-    out.set(r.companyId, series);
+    const id = Number(r.company_id);
+    const series = out.series.get(id) ?? new Map<string, number>();
+    series.set(r.date, Number(r.adj_close));
+    out.series.set(id, series);
   }
+  out.sessions = sessions.map((s) => s.date);
   return out;
 }
 
+export function expectedSession(sessions: string[], boundary: string): number {
+  let lo = 0;
+  let hi = sessions.length - 1;
+  let best = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if ((sessions[mid] as string) <= boundary) {
+      best = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return best;
+}
+
 export function closeOnOrBefore(series: PriceSeries, date: string): number | null {
-  let best: number | null = null;
+  return datedCloseOnOrBefore(series, date)?.close ?? null;
+}
+
+export function datedCloseOnOrBefore(
+  series: PriceSeries,
+  date: string,
+): { date: string; close: number } | null {
+  let best: { date: string; close: number } | null = null;
   for (const [d, c] of series) {
-    if (d <= date) best = c;
+    if (d <= date) best = { date: d, close: c };
     else break;
   }
   return best;
 }
 
-export function totalReturn(series: PriceSeries, from: string, to: string): number | null {
-  const p0 = closeOnOrBefore(series, from);
-  const p1 = closeOnOrBefore(series, to);
-  if (p0 == null || p1 == null || p0 <= 0) return null;
-  return p1 / p0 - 1;
+function endpoint(
+  series: PriceSeries,
+  sessions: string[],
+  boundary: string,
+): { close: number } | "no_calendar" | "stale" {
+  const idx = expectedSession(sessions, boundary);
+  if (idx < 0) return "no_calendar";
+  const oldest = sessions[Math.max(0, idx - ENDPOINT_TOLERANCE_SESSIONS)] as string;
+  const bar = datedCloseOnOrBefore(series, boundary);
+  if (!bar || bar.date < oldest || bar.close <= 0) return "stale";
+  return { close: bar.close };
+}
+
+export function seriesReturn(
+  closes: PriceCloses,
+  companyId: number,
+  from: string,
+  to: string,
+): ReturnResult {
+  const meta = closes.meta.get(companyId);
+  if (!meta) return { ok: false, reason: "no_series" };
+  if (meta.quality === "rebuild_required") return { ok: false, reason: "rebuild_required" };
+  const series = closes.series.get(companyId);
+  if (!series?.size) return { ok: false, reason: "no_final_bars" };
+  const start = endpoint(series, closes.sessions, from);
+  if (start === "no_calendar") return { ok: false, reason: "no_calendar" };
+  if (start === "stale") return { ok: false, reason: "stale_start" };
+  const end = endpoint(series, closes.sessions, to);
+  if (end === "no_calendar") return { ok: false, reason: "no_calendar" };
+  if (end === "stale") return { ok: false, reason: "stale_end" };
+  return { ok: true, value: end.close / start.close - 1 };
+}
+
+export function totalReturn(
+  closes: PriceCloses,
+  companyId: number,
+  from: string,
+  to: string,
+): number | null {
+  const r = seriesReturn(closes, companyId, from, to);
+  return r.ok ? r.value : null;
+}
+
+export function coverageCounts(reasons: Iterable<CoverageReason>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of reasons) out[r] = (out[r] ?? 0) + 1;
+  return out;
 }
 
 export function shiftDays(date: string, days: number): string {
