@@ -9,24 +9,17 @@ import {
   sql,
 } from "@ma/db";
 import type { IngestContext } from "../context.js";
+import { MARKET_INDICES, marketIndex } from "../data/market-indices.js";
 import { normalizeCompanyName } from "../extract/relationships.js";
 import { toYahooSymbol } from "../sources/yahoo.js";
-
-const INDEX_NAMES: Record<string, { name: string; yahooSymbol: string | null }> = {
-  NIFTY50: { name: "NIFTY 50", yahooSymbol: "^NSEI" },
-  NIFTYNEXT50: { name: "NIFTY Next 50", yahooSymbol: "^NSMIDCP" },
-  NIFTY100: { name: "NIFTY 100", yahooSymbol: "^CNX100" },
-  NIFTY200: { name: "NIFTY 200", yahooSymbol: "^CNX200" },
-  NIFTY500: { name: "NIFTY 500", yahooSymbol: "^CRSLDX" },
-};
 
 export async function syncUniverse(
   ctx: IngestContext,
   indexCode: string,
   signal?: AbortSignal,
 ): Promise<{ companies: number }> {
-  const meta = INDEX_NAMES[indexCode];
-  if (!meta) throw new Error(`Unknown index ${indexCode}`);
+  const meta = marketIndex(indexCode);
+  if (!meta?.constituentsFile) throw new Error(`Unknown universe index ${indexCode}`);
   const members = await ctx.nse.indexMembers(indexCode);
   throwIfAborted(signal);
 
@@ -85,6 +78,22 @@ export async function syncUniverse(
     },
     signal,
   );
+}
+
+export async function seedMarketIndices(ctx: Pick<IngestContext, "db">): Promise<number> {
+  const rows = MARKET_INDICES.map((i) => ({
+    code: i.code,
+    name: i.name,
+    yahooSymbol: i.yahooSymbol,
+  }));
+  await ctx.db
+    .insert(indices)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: indices.code,
+      set: { name: sql`excluded.name`, yahooSymbol: sql`excluded.yahoo_symbol` },
+    });
+  return rows.length;
 }
 
 export const GROUP_ALIASES: Record<string, string[]> = {

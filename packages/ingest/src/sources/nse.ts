@@ -1,3 +1,4 @@
+import { MARKET_INDICES } from "../data/market-indices.js";
 import type { HttpClient } from "../http.js";
 
 export interface IndexMember {
@@ -18,13 +19,9 @@ export interface NseAnnouncement {
   isin: string | null;
 }
 
-export const NSE_INDEX_FILES: Record<string, string> = {
-  NIFTY50: "ind_nifty50list.csv",
-  NIFTYNEXT50: "ind_niftynext50list.csv",
-  NIFTY100: "ind_nifty100list.csv",
-  NIFTY200: "ind_nifty200list.csv",
-  NIFTY500: "ind_nifty500list.csv",
-};
+export const NSE_INDEX_FILES: Record<string, string> = Object.fromEntries(
+  MARKET_INDICES.flatMap((i) => (i.constituentsFile ? [[i.code, i.constituentsFile]] : [])),
+);
 
 export function parseIndexCsv(csv: string): IndexMember[] {
   const lines = csv.trim().split(/\r?\n/);

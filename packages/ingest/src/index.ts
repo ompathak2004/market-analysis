@@ -4,6 +4,7 @@ export * from "./context.js";
 export * from "./data/corporate-aircraft.js";
 export * from "./data/facilities.js";
 export * from "./data/geofences.js";
+export * from "./data/market-indices.js";
 export * from "./data/mid-flags.js";
 export * from "./data/types.js";
 export * from "./documents.js";
