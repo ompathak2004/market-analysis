@@ -1,6 +1,7 @@
 import { DAY, HOUR } from "@ma/core";
 import { syncAnnouncements, syncFundamentals, syncPrices, syncUniverse } from "@ma/ingest";
-import { numericMetrics, pickBatch, trackCompany } from "../batch.js";
+import { pickBatch } from "@ma/jobs";
+import { numericMetrics, trackCompany } from "../batch.js";
 import { companies, done, fanout, type HandlerMap } from "../registry.js";
 
 const UNIVERSE_INDICES = ["NIFTY50", "NIFTYNEXT50", "NIFTY100", "NIFTY200"];

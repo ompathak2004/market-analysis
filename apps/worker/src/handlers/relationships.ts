@@ -1,7 +1,8 @@
 import { DAY } from "@ma/core";
 import { sql } from "@ma/db";
 import { extractRelationshipsForCompany, loadAliasMatcher, syncFundamentals } from "@ma/ingest";
-import { pickBatch, trackCompany } from "../batch.js";
+import { pickBatch } from "@ma/jobs";
+import { trackCompany } from "../batch.js";
 import { companies, done, type HandlerMap } from "../registry.js";
 
 const RELATIONSHIPS_PER_FANOUT = 6;

@@ -82,11 +82,7 @@ export async function enqueue<T extends JobType>(
     deferrals: request.deferrals ?? 0,
   };
   const options: SendOptions = {
-    ...sendOptions(request.type, key, {
-      ...(request.startAfter ? { startAfter: request.startAfter } : {}),
-      ...(request.priority !== undefined ? { priority: request.priority } : {}),
-      ...(request.attemptBase !== undefined ? { attemptBase: request.attemptBase } : {}),
-    }),
+    ...sendOptions(request.type, key, request),
     ...(tx ? { db: fromDrizzle(tx, sql) } : {}),
   };
   const jobId = await boss.send(lane, { ...envelope }, options);

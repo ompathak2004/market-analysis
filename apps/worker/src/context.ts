@@ -10,18 +10,16 @@ import { type BufferedMetrics, createMetrics } from "./metrics.js";
 export const APP_POOL_MAX = 2;
 export const QUEUE_POOL_MAX = 1;
 
-const flag = z
-  .enum(["true", "false"])
-  .default("false")
-  .transform((v) => v === "true");
+const flag = (def: "true" | "false") =>
+  z
+    .enum(["true", "false"])
+    .default(def)
+    .transform((v) => v === "true");
 
 const workerEnvSchema = z.object({
-  CLOUDWATCH_METRICS: flag,
+  CLOUDWATCH_METRICS: flag("false"),
   AWS_REGION: z.string().default("ap-south-1"),
-  WORKER_SCHEDULES: z
-    .enum(["true", "false"])
-    .default("true")
-    .transform((v) => v === "true"),
+  WORKER_SCHEDULES: flag("true"),
   WORKER_DRAIN_MS: z.coerce.number().int().positive().max(100_000).default(90_000),
   OPS_DIGEST_TO: z
     .string()

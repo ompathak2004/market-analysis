@@ -10,7 +10,6 @@ export const LANE_CONCURRENCY: Record<Lane, number> = {
   cache: 1,
 };
 
-export const RETRY_LIMIT = 4;
 export const BACKOFF_BASE_MS = 30_000;
 export const BACKOFF_MAX_MS = 30 * MINUTE;
 export const RETRY_AFTER_MAX_MS = DAY;

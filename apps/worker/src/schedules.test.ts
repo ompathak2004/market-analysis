@@ -4,21 +4,21 @@ import { describe, expect, it } from "vitest";
 import { FAMILY_ALIASES, resolveJob } from "./cli.js";
 import { HANDLERS } from "./handlers/index.js";
 import {
-  clearSchedules,
   registerSchedules,
   SCHEDULE_TZ,
   SCHEDULES,
   scheduleEnvelope,
+  scheduleId,
 } from "./schedules.js";
 
 describe("schedules", () => {
   it("uses unique ids and valid crons in IST", () => {
-    const ids = SCHEDULES.map((s) => s.id);
+    const ids = SCHEDULES.map(scheduleId);
     expect(new Set(ids).size).toBe(ids.length);
     const boss = new PgBoss({ connectionString: "postgres://localhost/unused" });
     for (const entry of SCHEDULES) {
       const next = boss.previewSchedule(entry.cron, { tz: SCHEDULE_TZ, count: 2 });
-      expect(next, entry.id).toHaveLength(2);
+      expect(next, scheduleId(entry)).toHaveLength(2);
       expect(() => scheduleEnvelope(entry)).not.toThrow();
     }
   });
@@ -29,7 +29,7 @@ describe("schedules", () => {
     const boss = {
       getSchedules: async () => [
         { name: "io", key: "retired-job" },
-        { name: laneOf("prices.fanout"), key: "prices-daily" },
+        { name: laneOf("prices.fanout"), key: "prices.daily" },
       ],
       schedule: async (name: string, _cron: string, _data: unknown, opts: { key?: string }) => {
         calls.push({ name, key: opts.key });
@@ -41,9 +41,9 @@ describe("schedules", () => {
     const result = await registerSchedules(boss as never);
     expect(result).toEqual({ registered: SCHEDULES.length, removed: 1 });
     expect(removed).toEqual(["io/retired-job"]);
-    expect(calls).toContainEqual({ name: laneOf("prices.fanout"), key: "prices-daily" });
+    expect(calls).toContainEqual({ name: laneOf("prices.fanout"), key: "prices.daily" });
     removed.length = 0;
-    expect(await clearSchedules(boss as never)).toBe(2);
+    expect(await registerSchedules(boss as never, [])).toEqual({ registered: 0, removed: 2 });
   });
 });
 

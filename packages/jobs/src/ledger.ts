@@ -16,12 +16,7 @@ export type RunStatus =
 
 export type AttemptOutcome = Exclude<RunStatus, "queued" | "running">;
 
-const TERMINAL: ReadonlySet<RunStatus> = new Set(["succeeded", "dead"]);
 const MAX_ERROR = 1_000;
-
-export function isTerminal(status: RunStatus): boolean {
-  return TERMINAL.has(status);
-}
 
 export function sanitizeError(err: unknown): string {
   const text = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
@@ -140,21 +135,13 @@ export async function finishAttempt(db: Db, input: FinishInput): Promise<boolean
   });
 }
 
-const STAT_COLUMNS: Record<AttemptOutcome, string> = {
-  succeeded: "succeeded",
-  failed: "failed",
-  dead: "dead",
-  deferred: "deferred",
-  abandoned: "abandoned",
-};
-
 export async function bumpDailyStats(
   db: Executor,
   jobType: string,
   outcome: AttemptOutcome,
   durationMs: number,
 ): Promise<void> {
-  const column = sql.raw(STAT_COLUMNS[outcome]);
+  const column = sql.raw(outcome);
   const ms = Math.max(0, Math.round(durationMs));
   await db.execute(sql`
     insert into job_daily_stats (day, job_type, ${column}, duration_ms_total, duration_ms_max)
@@ -238,14 +225,10 @@ export async function abandonOverdueRuns(db: Db, graceMs: number): Promise<numbe
       for update skip locked`);
     const runIds = rows.map((r) => Number(r.id));
     if (!runIds.length) return 0;
-    const ids = sql.join(
-      runIds.map((id) => sql`${id}`),
-      sql`, `,
-    );
     await tx.execute(sql`
       update job_attempts set outcome = 'abandoned', finished_at = now(),
         error = 'deadline passed while running'
-      where run_id in (${ids}) and outcome = 'running'`);
+      where run_id in (${idList(runIds)}) and outcome = 'running'`);
     return markRunsAbandoned(tx, runIds, "deadline passed while running");
   });
 }
@@ -295,15 +278,18 @@ export async function recordRootOutcome(db: Executor, outcome: RootOutcome): Pro
   });
 }
 
-async function markRunsAbandoned(tx: Tx, runIds: number[], reason: string): Promise<number> {
-  if (!runIds.length) return 0;
-  const ids = sql.join(
-    runIds.map((id) => sql`${id}`),
+function idList(ids: number[]) {
+  return sql.join(
+    ids.map((id) => sql`${id}`),
     sql`, `,
   );
+}
+
+async function markRunsAbandoned(tx: Tx, runIds: number[], reason: string): Promise<number> {
+  if (!runIds.length) return 0;
   const rows = await tx.execute<{ job_type: string; campaign_id: number | null }>(sql`
     update job_runs set status = 'abandoned', finished_at = now(), error = ${reason}
-    where id in (${ids}) and status = 'running'
+    where id in (${idList(runIds)}) and status = 'running'
     returning job_type, campaign_id`);
   for (const row of rows) await bumpDailyStats(tx, row.job_type, "abandoned", 0);
   return rows.length;

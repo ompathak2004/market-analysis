@@ -9,9 +9,9 @@ import {
   summarizeBrokerReport,
   triageAnnouncements,
 } from "@ma/intel";
+import { markFailed, pickBriefBatch, universeIds } from "@ma/jobs";
 import { LlmInvalidOutput, LlmPromptTooLarge } from "@ma/llm";
-import { type Metrics, markFailed, trackCompany, universeIds } from "../batch.js";
-import type { WorkerContext } from "../context.js";
+import { type Metrics, trackCompany } from "../batch.js";
 import { companies, done, fanout, type HandlerMap } from "../registry.js";
 
 const BRIEFS_PER_FANOUT = 5;
@@ -19,36 +19,7 @@ const TRIAGE_PER_RUN = 60;
 const THESES_PER_FANOUT = 10;
 const TRIAGE_RESERVE_MS = 30_000;
 
-export async function pickBriefBatch(
-  ctx: WorkerContext,
-  indexCode: string,
-  limit: number,
-): Promise<number[]> {
-  const rows = await ctx.db.execute<{ id: number }>(sql`
-    select c.id, b.generated_at from companies c
-    join index_constituents ic on ic.company_id = c.id
-    join indices i on i.id = ic.index_id and i.code = ${indexCode}
-    left join lateral (
-      select generated_at from insights
-      where company_id = c.id and kind = 'company_brief' and superseded_at is null
-      order by generated_at desc limit 1
-    ) b on true
-    left join company_sync s on s.company_id = c.id and s.job = 'insights'
-    where c.listed
-      and (exists (select 1 from prices_daily p where p.company_id = c.id and p.date > current_date - 10)
-        or exists (select 1 from fundamentals f where f.company_id = c.id))
-      and (s.failures is null or s.failures < 3 or s.attempted_at < now() - interval '6 hours')
-      and (b.generated_at is null
-        or s.synced_at is null
-        or s.synced_at < now() - interval '20 hours'
-        or exists (select 1 from announcements a where a.company_id = c.id
-          and a.materiality = 'high' and a.created_at > s.synced_at))
-    order by (b.generated_at is null) desc, s.synced_at asc nulls first, c.market_cap_cr desc nulls last
-    limit ${limit}`);
-  return rows.map((r) => Number(r.id));
-}
-
-export function tally(metrics: Metrics, outcome: InsightOutcome, kind: string): Metrics {
+function tally(metrics: Metrics, outcome: InsightOutcome, kind: string): Metrics {
   const key = typeof outcome === "string" ? `${kind}_${outcome}` : kind;
   metrics[key] = (metrics[key] ?? 0) + 1;
   if (typeof outcome !== "string") {
@@ -73,7 +44,7 @@ export const insightHandlers: InsightHandlers = {
   "insights.fanout": async ({ ctx }) =>
     companies(
       "insights.company",
-      await pickBriefBatch(ctx, ctx.config.INTEL_UNIVERSE, BRIEFS_PER_FANOUT),
+      await pickBriefBatch(ctx.db, ctx.config.INTEL_UNIVERSE, BRIEFS_PER_FANOUT),
     ),
   "insights.company": async ({ ctx, payload }) => {
     const metrics: Metrics = {};

@@ -9,7 +9,6 @@ import {
   familyOf,
   getJobMode,
   invalidateAfterJob,
-  isJobType,
   type JobMode,
   LANE_CONCURRENCY,
   LANES,
@@ -30,7 +29,7 @@ import { HANDLERS } from "./handlers/index.js";
 import { reconcile } from "./handlers/ops.js";
 import { DEAD_METRIC } from "./metrics.js";
 import { createBoss, createLedgerPort, createRetryPort } from "./queue.js";
-import { clearSchedules, registerSchedules } from "./schedules.js";
+import { registerSchedules } from "./schedules.js";
 
 const MODE_POLL_MS = 30_000;
 const METRICS_FLUSH_MS = MINUTE;
@@ -130,7 +129,7 @@ export class Consumer {
     if (mode === "worker" && this.ctx.env.WORKER_SCHEDULES) {
       this.ctx.logger.info(await registerSchedules(this.boss), "schedules registered");
     } else {
-      const removed = await clearSchedules(this.boss);
+      const { removed } = await registerSchedules(this.boss, []);
       if (removed) this.ctx.logger.info({ removed }, "schedules cleared");
     }
   }
@@ -181,7 +180,6 @@ export class Consumer {
 
   private async onDeadLetter(data: unknown): Promise<void> {
     const env = parseEnvelope(data);
-    if (!isJobType(env.type)) return;
     const error = "queue retries exhausted (worker crash or expiry)";
     const target =
       env.runId !== null

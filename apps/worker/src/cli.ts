@@ -13,7 +13,7 @@ import {
 import { enqueue, ensureQueues } from "@ma/jobs/queue";
 import { closeWorkerContext, createWorkerContext, type WorkerContext } from "./context.js";
 import { createBoss } from "./queue.js";
-import { SCHEDULE_TZ, SCHEDULES } from "./schedules.js";
+import { SCHEDULE_TZ, SCHEDULES, scheduleId } from "./schedules.js";
 
 export const FAMILY_ALIASES: Record<string, { type: JobType; payload?: Record<string, unknown> }> =
   {
@@ -118,7 +118,7 @@ async function main(argv: string[]): Promise<void> {
   }
   if (command === "schedules") {
     for (const s of SCHEDULES)
-      console.log(`${s.id.padEnd(22)} ${s.cron.padEnd(20)} ${SCHEDULE_TZ} ${s.type}`);
+      console.log(`${scheduleId(s).padEnd(22)} ${s.cron.padEnd(20)} ${SCHEDULE_TZ} ${s.type}`);
     return;
   }
   if (command !== "run" && command !== "mode" && command !== "status") {

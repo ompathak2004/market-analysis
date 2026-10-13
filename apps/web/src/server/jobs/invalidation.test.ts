@@ -1,7 +1,7 @@
+import { JOB_INVALIDATIONS } from "@ma/jobs";
 import { describe, expect, it, vi } from "vitest";
 import type { AppContext } from "../context";
 import { getJob, jobNames, runJob } from "./index";
-import { JOB_INVALIDATIONS } from "./invalidation";
 
 const READ_MODEL_PREFIXES = [
   "search:",

@@ -1,6 +1,7 @@
 import { HOUR } from "@ma/core";
 import { fetchBrokerReports, syncMoneycontrol } from "@ma/ingest";
-import { numericMetrics, pickBatch, trackCompany } from "../batch.js";
+import { pickBatch } from "@ma/jobs";
+import { numericMetrics, trackCompany } from "../batch.js";
 import { companies, done, type HandlerMap } from "../registry.js";
 
 const RESEARCH_PER_FANOUT = 10;

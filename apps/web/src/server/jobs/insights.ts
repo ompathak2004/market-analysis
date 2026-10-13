@@ -9,44 +9,14 @@ import {
   summarizeBrokerReport,
   triageAnnouncements,
 } from "@ma/intel";
+import { markFailed, markSynced, pickBriefBatch, universeIds } from "@ma/jobs";
 import { LlmBudgetExceeded, LlmInvalidOutput, LlmPromptTooLarge } from "@ma/llm";
-import type { AppContext } from "../context";
-import { markFailed, markSynced, universeIds } from "./batch";
 import type { JobDef, JobStats } from "./run";
 
 const BRIEFS_PER_RUN = 5;
 const TRIAGE_PER_RUN = 60;
 const THESES_PER_RUN = 10;
 const RESERVE_MS = 75_000;
-
-export async function pickBriefBatch(
-  ctx: AppContext,
-  indexCode: string,
-  limit: number,
-): Promise<number[]> {
-  const rows = await ctx.db.execute<{ id: number }>(sql`
-    select c.id, b.generated_at from companies c
-    join index_constituents ic on ic.company_id = c.id
-    join indices i on i.id = ic.index_id and i.code = ${indexCode}
-    left join lateral (
-      select generated_at from insights
-      where company_id = c.id and kind = 'company_brief' and superseded_at is null
-      order by generated_at desc limit 1
-    ) b on true
-    left join company_sync s on s.company_id = c.id and s.job = 'insights'
-    where c.listed
-      and (exists (select 1 from prices_daily p where p.company_id = c.id and p.date > current_date - 10)
-        or exists (select 1 from fundamentals f where f.company_id = c.id))
-      and (s.failures is null or s.failures < 3 or s.attempted_at < now() - interval '6 hours')
-      and (b.generated_at is null
-        or s.synced_at is null
-        or s.synced_at < now() - interval '20 hours'
-        or exists (select 1 from announcements a where a.company_id = c.id
-          and a.materiality = 'high' and a.created_at > s.synced_at))
-    order by (b.generated_at is null) desc, s.synced_at asc nulls first, c.market_cap_cr desc nulls last
-    limit ${limit}`);
-  return rows.map((r) => r.id);
-}
 
 const tally = (stats: JobStats, outcome: InsightOutcome, kind: string) => {
   const key = typeof outcome === "string" ? `${kind}_${outcome}` : kind;
@@ -63,7 +33,7 @@ export const insightJobs: JobDef[] = [
     budgetMs: 4.5 * MINUTE,
     run: async (run) => {
       const { ctx } = run;
-      const ids = await pickBriefBatch(ctx, ctx.config.INTEL_UNIVERSE, BRIEFS_PER_RUN);
+      const ids = await pickBriefBatch(ctx.db, ctx.config.INTEL_UNIVERSE, BRIEFS_PER_RUN);
       const stats: JobStats = { items: ids.length, failed: 0, skipped: 0 };
       const asOf = isoDate(new Date());
       for (const id of ids) {
@@ -76,7 +46,7 @@ export const insightJobs: JobDef[] = [
           tally(stats, await generateCompanyBrief(ctx, id, { inputs }), "brief");
           if (!run.expired(RESERVE_MS))
             tally(stats, await generateBrokerDigest(ctx, id, { inputs }), "digest");
-          await markSynced(ctx, "insights", id);
+          await markSynced(ctx.db, "insights", id);
         } catch (err) {
           if (err instanceof LlmBudgetExceeded) {
             stats.budget = 1;
@@ -88,7 +58,7 @@ export const insightJobs: JobDef[] = [
           }
           stats.failed = (stats.failed ?? 0) + 1;
           ctx.logger.warn({ job: run.name, companyId: id, err }, "insight generation failed");
-          await markFailed(ctx, "insights", id, err);
+          await markFailed(ctx.db, "insights", id, err);
         }
       }
       return stats;
@@ -115,7 +85,7 @@ export const insightJobs: JobDef[] = [
     budgetMs: 4.5 * MINUTE,
     run: async (run) => {
       const { ctx } = run;
-      const companyIds = await universeIds(ctx, ctx.config.INTEL_UNIVERSE);
+      const companyIds = await universeIds(ctx.db, ctx.config.INTEL_UNIVERSE);
       try {
         const stats = await triageAnnouncements(ctx, {
           limit: TRIAGE_PER_RUN,

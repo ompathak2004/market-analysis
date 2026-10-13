@@ -9,7 +9,8 @@ import {
   syncUniverse,
 } from "@ma/ingest";
 import { refreshEstimates, refreshMomentumSignals, refreshRiskSignals } from "@ma/intel";
-import { forEachCompany, pickBatch, sumStats } from "./batch";
+import { pickBatch } from "@ma/jobs";
+import { forEachCompany, sumStats } from "./batch";
 import type { JobDef } from "./run";
 
 export const coreJobs: JobDef[] = [
@@ -27,7 +28,7 @@ export const coreJobs: JobDef[] = [
     name: "prices",
     budgetMs: 4.5 * MINUTE,
     run: async (run) => {
-      const ids = await pickBatch(run.ctx, "prices", run.ctx.config.DATA_UNIVERSE, 400, {
+      const ids = await pickBatch(run.ctx.db, "prices", run.ctx.config.DATA_UNIVERSE, 400, {
         maxAgeMs: 12 * MINUTE,
       });
       return forEachCompany(run, ids, run.ctx.config.SCRAPE_CONCURRENCY, (id) =>
@@ -39,7 +40,7 @@ export const coreJobs: JobDef[] = [
     name: "fundamentals",
     budgetMs: 4.5 * MINUTE,
     run: async (run) => {
-      const ids = await pickBatch(run.ctx, "fundamentals", run.ctx.config.DATA_UNIVERSE, 30, {
+      const ids = await pickBatch(run.ctx.db, "fundamentals", run.ctx.config.DATA_UNIVERSE, 30, {
         maxAgeMs: 3 * DAY,
       });
       return forEachCompany(run, ids, 2, (id) =>
@@ -53,7 +54,7 @@ export const coreJobs: JobDef[] = [
     name: "announcements",
     budgetMs: 4.5 * MINUTE,
     run: async (run) => {
-      const ids = await pickBatch(run.ctx, "announcements", run.ctx.config.DATA_UNIVERSE, 60, {
+      const ids = await pickBatch(run.ctx.db, "announcements", run.ctx.config.DATA_UNIVERSE, 60, {
         maxAgeMs: 2 * HOUR,
       });
       return forEachCompany(run, ids, 1, (id) => syncAnnouncements(run.ctx, id));
@@ -63,7 +64,7 @@ export const coreJobs: JobDef[] = [
     name: "relationships",
     budgetMs: 4.5 * MINUTE,
     run: async (run) => {
-      const ids = await pickBatch(run.ctx, "relationships", run.ctx.config.DATA_UNIVERSE, 6, {
+      const ids = await pickBatch(run.ctx.db, "relationships", run.ctx.config.DATA_UNIVERSE, 6, {
         maxAgeMs: 14 * DAY,
         where: sql`c.industry !~* 'bank|financ|insurance'`,
       });
