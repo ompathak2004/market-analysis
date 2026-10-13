@@ -47,6 +47,13 @@ aws cloudformation deploy --stack-name market-analysis-worker \
 
 `ssm-parameters.sh` skips `NODE_ENV`, `LOG_LEVEL`, `NEXT_*` (the task definition sets the first two) and the web-only `API_KEY`, `CRON_SECRET`, `ADMIN_API_KEY` and stores an empty value as a single space, because SSM cannot hold an empty string and the task cannot start if a referenced parameter is missing. It is idempotent (`--overwrite`); rerun it after rotating a value, then `aws ecs update-service --cluster market-analysis --service market-analysis-worker --force-new-deployment`, since secrets are read only when a task starts.
 
+## First-deploy gotchas
+
+- An account that has never used ECS lacks the service-linked role; `CreateCluster` fails with "Unable to assume the service linked role". Run `aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com` once, then redeploy.
+- `ArchiveBucket` is retained on stack deletion. If a first create rolls back, delete the empty bucket before retrying, otherwise the next create fails early validation.
+- Never set `DesiredCount=1` before an image that starts cleanly is in ECR: the deployment circuit breaker rolls back to a task definition that cannot start either and the stack update hangs until `aws cloudformation cancel-update-stack`.
+- Optional task secrets are stored as a single space (SSM rejects empty strings); the config drops blank values before validation, so defaults apply.
+
 ## Updating the worker stack
 
 CI registers new task definition revisions outside CloudFormation. Every later stack update must pass the image that is currently deployed, otherwise CloudFormation rolls the service back to the `ImageTag` it last saw:
