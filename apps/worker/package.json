@@ -1,0 +1,30 @@
+{
+  "name": "@ma/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "dev": "tsx --conditions=@ma/source src/main.ts",
+    "cli": "tsx --conditions=@ma/source src/cli.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudwatch": "^3.1150.0",
+    "@ma/cache": "workspace:*",
+    "@ma/core": "workspace:*",
+    "@ma/db": "workspace:*",
+    "@ma/ingest": "workspace:*",
+    "@ma/intel": "workspace:*",
+    "@ma/jobs": "workspace:*",
+    "@ma/llm": "workspace:*",
+    "pg-boss": "12.37.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}

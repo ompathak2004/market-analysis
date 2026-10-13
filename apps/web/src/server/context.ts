@@ -11,7 +11,7 @@ export interface AppContext extends IngestContext {
 
 export function createAppContext(name: string, config: Config = loadConfig()): AppContext {
   const logger = createLogger(name, config.LOG_LEVEL);
-  const db = createDb(config.DATABASE_URL, 3);
+  const db = createDb(config.DATABASE_URL, 2);
   const redis = createRedis(config.REDIS_URL);
   const ingest = createIngestContext({ db, redis, config, logger });
   const llm = createLlmClient({

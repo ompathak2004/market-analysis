@@ -3,7 +3,10 @@ import { z } from "zod";
 const optionalString = z
   .string()
   .optional()
-  .transform((v) => (v && v.length > 0 ? v : undefined));
+  .transform((v) => {
+    const trimmed = v?.trim();
+    return trimmed ? trimmed : undefined;
+  });
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -31,6 +34,9 @@ const schema = z.object({
   DATA_UNIVERSE: z.string().default("NIFTY500"),
   NSE_BASE_URL: z.string().url().default("https://www.nseindia.com"),
   SCRAPE_CONCURRENCY: z.coerce.number().int().positive().default(4),
+  ADMIN_API_KEY: optionalString,
+  RESEND_API_KEY: optionalString,
+  S3_ARCHIVE_BUCKET: optionalString,
 });
 
 export type Config = z.infer<typeof schema>;
