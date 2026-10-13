@@ -1,6 +1,12 @@
 import { and, type Db, desc, eq, fundamentals, inArray, lte, signals } from "@ma/db";
 import { loadActiveLinks } from "./momentum.js";
-import { loadCloses, shiftDays, totalReturn } from "./prices.js";
+import {
+  type CoverageReason,
+  loadCloses,
+  RETURN_BASIS,
+  seriesReturn,
+  shiftDays,
+} from "./prices.js";
 import { dupont } from "./risk.js";
 import { type OlsResult, ols } from "./stats.js";
 
@@ -17,10 +23,23 @@ export interface ExposureObservation {
   distress: number;
 }
 
+export type MissingObservationReason =
+  | CoverageReason
+  | "no_fundamentals"
+  | "incomplete_fundamentals";
+
+export interface MissingObservation {
+  companyId: number;
+  name: string;
+  reason: MissingObservationReason;
+}
+
 export interface EventImpactResult {
   shockCompanyId: number;
   window: { from: string; to: string };
+  priceBasis: typeof RETURN_BASIS;
   observations: ExposureObservation[];
+  missing: MissingObservation[];
   baseline: OlsResult | null;
   withExposure: OlsResult | null;
   exposureCoefficient: number | null;
@@ -79,13 +98,22 @@ export async function eventImpact(
   const distressById = new Map(distress.map((d) => [d.companyId, d.value]));
 
   const observations: ExposureObservation[] = [];
+  const missing: MissingObservation[] = [];
+  const skip = (s: (typeof suppliers)[number], reason: MissingObservationReason) =>
+    missing.push({ companyId: s.counterpartyId, name: s.counterpartyName, reason });
   for (const s of suppliers) {
+    const priced = seriesReturn(closes, s.counterpartyId, from, to);
+    if (!priced.ok) {
+      skip(s, priced.reason);
+      continue;
+    }
     const f = finById.get(s.counterpartyId);
-    const series = closes.get(s.counterpartyId);
-    if (!f || !series) continue;
-    const ret = totalReturn(series, from, to);
-    const revenue = f.revenue == null ? null : Number(f.revenue);
-    if (ret == null || !revenue) continue;
+    const revenue = f?.revenue == null ? null : Number(f.revenue);
+    if (!f || !revenue) {
+      skip(s, "no_fundamentals");
+      continue;
+    }
+    const ret = priced.value;
     const exposurePct = (s.weight / revenue) * 100;
     if (exposurePct < minExposure) continue;
     const r = dupont({
@@ -102,8 +130,10 @@ export async function eventImpact(
       [r.leverage, r.assetTurnover, r.operatingMargin, r.interestBurden, r.taxBurden].some(
         (v) => v == null,
       )
-    )
+    ) {
+      skip(s, "incomplete_fundamentals");
       continue;
+    }
     observations.push({
       companyId: s.counterpartyId,
       name: s.counterpartyName,
@@ -119,7 +149,7 @@ export async function eventImpact(
   }
 
   if (observations.length < minObservations)
-    return { ...empty(shockCompanyId, from, to, minObservations), observations };
+    return { ...empty(shockCompanyId, from, to, minObservations), observations, missing };
   const y = observations.map((o) => o.returnPct);
   const baseX = observations.map((o) => FEATURES.map((f) => o[f] as number));
   const baseline = safeOls(baseX, y);
@@ -130,7 +160,9 @@ export async function eventImpact(
   return {
     shockCompanyId,
     window: { from, to },
+    priceBasis: RETURN_BASIS,
     observations,
+    missing,
     baseline,
     withExposure,
     exposureCoefficient: withExposure?.coefficients.at(-1) ?? null,
@@ -157,7 +189,9 @@ function empty(
   return {
     shockCompanyId,
     window: { from, to },
+    priceBasis: RETURN_BASIS,
     observations: [],
+    missing: [],
     baseline: null,
     withExposure: null,
     exposureCoefficient: null,

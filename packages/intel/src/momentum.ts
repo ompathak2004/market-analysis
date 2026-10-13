@@ -12,10 +12,17 @@ import {
   signals,
   sql,
 } from "@ma/db";
-import { loadCloses, shiftDays, totalReturn } from "./prices.js";
+import {
+  type CoverageReason,
+  coverageCounts,
+  loadCloses,
+  RETURN_BASIS,
+  seriesReturn,
+  shiftDays,
+} from "./prices.js";
 import { hhi } from "./stats.js";
 
-export const MOMENTUM_MODEL_VERSION = 1;
+export const MOMENTUM_MODEL_VERSION = 2;
 
 export const HORIZONS = { "1m": 30, "2m": 61, "3m": 91 } as const;
 export type Horizon = keyof typeof HORIZONS;
@@ -151,14 +158,26 @@ export async function refreshMomentumSignals(db: Db, asOf: string): Promise<numb
       throwIfAborted();
       for (const [horizon, days] of Object.entries(HORIZONS) as Array<[Horizon, number]>) {
         const start = shiftDays(asOf, -days);
+        const missing = new Map<number, CoverageReason>();
         const res = weightedMomentum(links, (id) => {
-          const s = closes.get(id);
-          return s ? totalReturn(s, start, asOf) : null;
+          const r = seriesReturn(closes, id, start, asOf);
+          if (r.ok) return r.value;
+          missing.set(id, r.reason);
+          return null;
         });
         if (res)
           write(companyId, `${prefix}_${horizon}`, res.value * 100, {
-            contributors: res.contributors,
+            contributors: res.contributors.map((c) => ({
+              ...c,
+              generation: closes.meta.get(c.counterpartyId)?.generation ?? null,
+            })),
             from: start,
+            priceBasis: RETURN_BASIS,
+            coverage: {
+              counterparties: links.length,
+              priced: res.contributors.length,
+              missing: coverageCounts(missing.values()),
+            },
           });
       }
       if (prefix === "customer_momentum") {

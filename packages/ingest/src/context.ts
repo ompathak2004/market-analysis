@@ -28,6 +28,7 @@ export const HOST_LIMITS = {
   "nsearchives.nseindia.com": { capacity: 5, perMs: 10_000 },
   "www.bseindia.com": { capacity: 3, perMs: 10_000 },
   "query1.finance.yahoo.com": { capacity: 10, perMs: 10_000 },
+  "yahoo:history": { capacity: 5, perMs: 10_000 },
   "www.moneycontrol.com": { capacity: 5, perMs: 10_000 },
   "api.moneycontrol.com": { capacity: 10, perMs: 10_000 },
   "images.moneycontrol.com": { capacity: 5, perMs: 10_000 },

@@ -56,6 +56,76 @@ The same commands inside the running task (see `infra/aws/README.md`, "Exec into
 
 To stop the container entirely: `aws ecs update-service --cluster market-analysis --service market-analysis-worker --desired-count 0` (alarms `worker-not-running` and `worker-no-heartbeat` will fire; that is expected). Set it back to `1` to resume.
 
+## Price history
+
+Schedules (Asia/Kolkata): `prices.daily` at 18:30 and `prices.catchup` at 08:15 both run `prices.fanout`, which enqueues `index.daily` for the seven indices, `prices.daily` for every equity series (last ten sessions) and `prices.rebuild` for any series marked `rebuild_required`. `prices.repair` at 03:00 reconciles stored rows against the NSE calendar, then enqueues `prices.window` refetches (up to 500) for open gaps that are due, plus any pending rebuilds.
+
+One-off five-year backfill, after `pnpm db:migrate` and a `universe` run (which seeds the seven indices); the backfill creates any missing `price_series_state` rows itself:
+
+```bash
+pnpm --filter @ma/worker cli run prices.backfill --wait     # alias: prices-backfill
+```
+
+The fanout writes one `prices.window` unit per series per annual window: (companies + 7 indices) x 5, so about 2,675 units for the 528-company campaign universe (2,540 against the 501 companies in the local test database). Yahoo history calls share the `yahoo:history` bucket (5 per 10 s), so expect about 1.5 to 3 hours end to end. Queue priority is calendar index (`^NSEI`, which populates `trading_sessions`) 3, other indices 2, rebuild 1, daily 0, equity backfill -1. The priority is carried in the job envelope and re-sent on every app-managed retry and deferral, so a retried calendar window stays ahead of equity windows. Priority only orders the queue, so an equity window also checks the calendar before it fetches: the calendar must reach the window end and have no stretch of more than 7 days without a session across the window, counting to the nearest session on each side. If it does not, the unit is deferred 3 minutes (`calendar_pending`) without spending an attempt, up to 60 deferrals before it fails. Units are keyed by symbol, window, generation and parser version. Rerunning the backfill refetches every window, but unchanged rows are not rewritten (a replay reports `unchanged`). Every company gets a `price_series_state` row. Companies without a Yahoo symbol (`no_yahoo_symbol`), missing from the NSE equity list while not delisted (`not_in_nse_equity_list`) or with a different ISIN there (`isin_mismatch`) get `exception_reason` set and `quality_status = 'exception'`, and are not enqueued (daily, rebuild, repair and `prices.sync` skip them too). `listing_source_unavailable` (NSE list down) is recorded but still fetched. Each backfill run freezes a manifest in one transaction: a `price_manifests` row (`kind = 'backfill'`, desired window, company and unit counts) and one `price_manifest_companies` row per company with its series, symbol, unit count and exception. The campaign metrics carry `manifestId`.
+
+A unit succeeds only when every expected session in its window is stored or explained. Otherwise the rows that did arrive are committed, the result is `incomplete` (the detail is on `price_series_state.detail`) and the unit fails with `price_incomplete`, so the ledger retries it with backoff and finally marks it `dead` (alarm `worker-dead-jobs`). Sessions before Yahoo's first trade date are recorded as `prelisting` gaps and do not fail the unit. The result carries the source's answer separately from coverage, as `sourceStatus` (metric `source_<status>`). `not_found` (Yahoo returned nothing for a window that has expected sessions) and `invalid_response` (the bars failed validation, recorded as an `invalid_bars` gap) also fail the unit with `price_incomplete` and retry, even when earlier runs already stored every row. `identity_mismatch` (the Yahoo symbol is not uniquely owned by this series in `market_symbols`) is not retried: nothing is fetched, the series gets `exception_reason = 'identity_mismatch'` and `quality_status = 'exception'`, and every later unit skips it until the identity is fixed by hand (see `docs/plan.md`). `prices.window` units in `repair` mode are the exception to retrying: a gap that is still missing just moves its `next_check_at` (a calendar deferral still defers). A company is marked price-synced (by `prices.daily`, `prices.sync` or the legacy web `prices` cron) only when its window is complete, the source answered, and coverage reaches the latest finalized session (`desired_to`, the last NSE session before today). A company with no fetchable series is never marked synced.
+
+Rebuilds are automatic: a window that sees a new or corrected split or dividend marks the series `rebuild_required` and the next fanout or repair enqueues `prices.rebuild`. To force one: `pnpm --filter @ma/worker cli run prices.rebuild '{"seriesId":72,"symbol":"RELIANCE.NS","generation":3,"parserVersion":1}'`, where `generation` is the current `price_series_state.adjustment_generation` + 1. A stale generation is refused with `stale_generation`. A rebuild must return every expected session that is not already an open or exempt gap. If it does not, nothing is written or deleted, the old generation stays served, the result is `rebuild_incomplete` with the missing range in `price_series_state.detail`, and the unit retries. An empty or failed source response is refused the same way (`source returned no bars`).
+
+Acceptance checks (read-only transaction):
+
+Start from `companies`, not from `price_series_state`, so a company with no series row or no Yahoo symbol still shows up:
+
+```sql
+-- coverage of every company; NULL quality means no series row (should be zero rows)
+SELECT coalesce(s.quality_status, 'no_series') AS quality, s.exception_reason, count(*)
+FROM companies c LEFT JOIN price_series_state s ON s.company_id = c.id
+GROUP BY 1, 2 ORDER BY 3 DESC;
+
+-- the latest frozen backfill manifest against the current companies table
+WITH m AS (SELECT * FROM price_manifests WHERE kind = 'backfill' ORDER BY id DESC LIMIT 1)
+SELECT m.id, m.desired_from, m.desired_to, m.companies, m.units,
+       (SELECT count(*) FROM companies) AS companies_now,
+       (SELECT count(*) FROM price_manifest_companies mc WHERE mc.manifest_id = m.id
+         AND mc.exception_reason IS NOT NULL) AS exceptions
+FROM m;
+
+-- companies in the latest manifest that are neither complete nor an explained exception
+SELECT c.nse_symbol, mc.units, mc.exception_reason, s.quality_status, s.detail
+FROM price_manifest_companies mc
+JOIN companies c ON c.id = mc.company_id
+LEFT JOIN price_series_state s ON s.company_id = c.id
+WHERE mc.manifest_id = (SELECT max(id) FROM price_manifests WHERE kind = 'backfill')
+  AND mc.exception_reason IS NULL AND s.quality_status IS DISTINCT FROM 'complete'
+ORDER BY 1 LIMIT 50;
+
+SELECT i.code, count(p.date) AS rows, min(p.date), max(p.date)
+FROM indices i LEFT JOIN index_prices_daily p ON p.index_id = i.id GROUP BY i.id ORDER BY i.code;
+
+SELECT c.nse_symbol, count(*) AS unexplained_missing_sessions
+FROM companies c JOIN price_series_state s ON s.company_id = c.id
+JOIN trading_sessions t ON t.exchange = 'NSE'
+ AND t.date BETWEEN greatest(s.desired_from, coalesce(c.listed_from, s.desired_from))
+                AND least(s.desired_to, coalesce(c.delisted_on, s.desired_to))
+LEFT JOIN prices_daily p ON p.company_id = c.id AND p.date = t.date
+WHERE p.date IS NULL AND NOT EXISTS (
+  SELECT 1 FROM price_gaps g WHERE g.series_id = s.id
+   AND t.date BETWEEN g.from_date AND g.to_date AND g.status = 'exempt')
+GROUP BY c.nse_symbol ORDER BY 2 DESC LIMIT 30;
+
+SELECT c.nse_symbol, p.date, p.adjustment_generation, s.adjustment_generation
+FROM prices_daily p JOIN price_series_state s ON s.company_id = p.company_id
+JOIN companies c ON c.id = p.company_id
+WHERE p.is_final AND (p.adjustment_generation <> s.adjustment_generation OR p.adj_close IS NULL)
+LIMIT 30;
+
+SELECT reason, status, count(*), sum(sessions) FROM price_gaps GROUP BY 1, 2 ORDER BY 3 DESC;
+```
+
+The mixed-generation query should return no rows and the gap list should be short and explained. Rows of an older generation can exist briefly during a rebuild, but the API never serves them.
+
+API: `GET /api/v1/companies/{symbol}/prices` returns `{ bars, meta }` (previously a bare `{ bars }`). Each bar carries `adjClose` and `final`; provisional bars (today's, not yet final) are included and flagged with `final: false` (`meta.provisional = "flagged"`). Only bars of the series' current `adjustment_generation` are served. `meta` is read in the same statement and cache entry as the bars: `priceBasis`, `generation`, `quality`, `exceptionReason`, `finalThrough`, `verifiedThrough`, `openGaps`, `missingSessions`, `provisional`.
+
 ## Reading the ledger
 
 `job_runs` has one row per logical unit (`job_type`, `unit_key`, `campaign_id`), `job_attempts` one row per delivery attempt, and `ingest_runs` rows with `kind = 'campaign'` summarise a fan-out (`children_total/done/failed`). Read-only queries:

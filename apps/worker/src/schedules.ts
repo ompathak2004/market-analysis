@@ -13,8 +13,9 @@ export interface ScheduleEntry {
 
 export const SCHEDULES: readonly ScheduleEntry[] = [
   { type: "universe.fanout", cron: "30 6 * * *" },
-  { type: "prices.fanout", cron: "30 18 * * 1-5", id: "prices.daily" },
-  { type: "prices.repair", cron: "0 3 * * 6" },
+  { type: "prices.fanout", cron: "30 18 * * *", id: "prices.daily" },
+  { type: "prices.fanout", cron: "15 8 * * *", id: "prices.catchup" },
+  { type: "prices.repair", cron: "0 3 * * *" },
   { type: "fundamentals.fanout", cron: "10 * * * *" },
   { type: "announcements.fanout", cron: "*/10 * * * *" },
   { type: "relationships.fanout", cron: "20,50 * * * *" },

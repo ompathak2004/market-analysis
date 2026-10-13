@@ -3,7 +3,8 @@ import { createLogger, loadServiceConfig, mapLimit } from "@ma/core";
 import { closeDb, companies, createDb, eq, indexConstituents, indices } from "@ma/db";
 import { createIngestContext } from "./context.js";
 import { syncFundamentals } from "./pipelines/fundamentals.js";
-import { syncAnnouncements, syncPrices } from "./pipelines/market.js";
+import { syncAnnouncements } from "./pipelines/market.js";
+import { syncPrices } from "./pipelines/prices.js";
 import { extractRelationshipsForCompany, loadAliasMatcher } from "./pipelines/relationships.js";
 import { syncUniverse } from "./pipelines/universe.js";
 

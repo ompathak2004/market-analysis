@@ -90,6 +90,7 @@ export async function enqueue<T extends JobType>(
     runId,
     attemptBase: request.attemptBase ?? 0,
     deferrals: request.deferrals ?? 0,
+    ...(request.priority !== undefined ? { priority: request.priority } : {}),
   };
   const options: SendOptions = {
     ...sendOptions(request.type, key, request),
@@ -154,6 +155,7 @@ export async function enqueueMany(
         runId,
         attemptBase: 0,
         deferrals: 0,
+        ...(run.priority !== undefined ? { priority: run.priority } : {}),
       };
       const opts = sendOptions(type, run.unitKey, {
         ...(run.priority !== undefined ? { priority: run.priority } : {}),

@@ -276,6 +276,7 @@ export async function executeJob(deps: ExecutorDeps, job: QueueJob): Promise<Exe
         startAfter: deferred.resumeAt,
         attemptBase: attempt - 1,
         deferrals: env.deferrals + 1,
+        ...(env.priority !== undefined ? { priority: env.priority } : {}),
       });
       deps.logger.info({ ...log, resumeAt: deferred.resumeAt }, "job deferred");
       return { outcome: "deferred", runId, attempt, metrics: {}, error };
@@ -291,6 +292,7 @@ export async function executeJob(deps: ExecutorDeps, job: QueueJob): Promise<Exe
         startAfter: new Date(now() + delay),
         attemptBase: attempt,
         deferrals: env.deferrals,
+        ...(env.priority !== undefined ? { priority: env.priority } : {}),
       });
       deps.logger.warn({ ...log, err, retryInMs: delay }, "job failed; retry scheduled");
       return { outcome: "failed", runId, attempt, metrics: {}, error };

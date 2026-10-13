@@ -5,6 +5,7 @@ import {
   boolean,
   check,
   date,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -53,6 +54,35 @@ export const documentStatus = pgEnum("document_status", ["fetched", "parsed", "f
 export const ingestStatus = pgEnum("ingest_status", ["running", "succeeded", "failed"]);
 export const ingestRunKind = pgEnum("ingest_run_kind", ["legacy", "campaign"]);
 
+export const LISTING_STATUSES = [
+  "active",
+  "suspended",
+  "delisted",
+  "placeholder",
+  "unverified",
+] as const;
+export type ListingStatus = (typeof LISTING_STATUSES)[number];
+
+export type AdjustmentStatus = "verified" | "provider_adjusted" | "missing" | "unverified";
+
+export const PRICE_ADJUSTMENT_VERSION = 1;
+
+export const PRICE_BASIS = {
+  version: PRICE_ADJUSTMENT_VERSION,
+  ohlc: "yahoo_split_adjusted",
+  adjClose: "yahoo_split_and_dividend_adjusted",
+  index: "price_return_level",
+} as const;
+
+const priceProvenance = {
+  source: text("source").notNull().default("legacy_yahoo"),
+  sourceSymbol: text("source_symbol"),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }),
+  parserVersion: smallint("parser_version").notNull().default(0),
+  adjustmentGeneration: integer("adjustment_generation").notNull().default(0),
+  isFinal: boolean("is_final").notNull().default(false),
+};
+
 export const companies = pgTable(
   "companies",
   {
@@ -71,12 +101,19 @@ export const companies = pgTable(
     moneycontrolCode: text("moneycontrol_code"),
     moneycontrolUrl: text("moneycontrol_url"),
     registeredCity: text("registered_city"),
+    listedFrom: date("listed_from"),
+    delistedOn: date("delisted_on"),
+    listingStatus: text("listing_status").$type<ListingStatus>().notNull().default("unverified"),
     ...timestamps,
   },
   (t) => [
     uniqueIndex("companies_nse_symbol_uq").on(t.nseSymbol),
     uniqueIndex("companies_isin_uq").on(t.isin),
     index("companies_normalized_name_idx").on(t.normalizedName),
+    check(
+      "companies_listing_status_chk",
+      sql`${t.listingStatus} in ('active','suspended','delisted','placeholder','unverified')`,
+    ),
   ],
 );
 
@@ -128,10 +165,188 @@ export const pricesDaily = pgTable(
     close: real("close").notNull(),
     adjClose: real("adj_close"),
     volume: bigint("volume", { mode: "number" }),
+    ...priceProvenance,
+    adjustmentStatus: text("adjustment_status")
+      .$type<AdjustmentStatus>()
+      .notNull()
+      .default("unverified"),
   },
   (t) => [
     primaryKey({ columns: [t.companyId, t.date] }),
     index("prices_daily_date_idx").on(t.date),
+  ],
+);
+
+export const marketSymbols = pgTable(
+  "market_symbols",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id").references(() => companies.id, { onDelete: "cascade" }),
+    indexId: integer("index_id").references(() => indices.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    symbol: text("symbol").notNull(),
+    validFrom: date("valid_from").notNull(),
+    validTo: date("valid_to"),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    sourceDocumentRevisionId: bigint("source_document_revision_id", { mode: "number" }),
+    createdAt: timestamps.createdAt,
+  },
+  (t) => [
+    unique("market_symbols_provider_symbol_from").on(t.provider, t.symbol, t.validFrom),
+    index("market_symbols_company_idx").on(t.companyId),
+    index("market_symbols_index_idx").on(t.indexId),
+    check("market_symbols_one_owner", sql`num_nonnulls(${t.companyId}, ${t.indexId}) = 1`),
+    check("market_symbols_range", sql`${t.validTo} is null or ${t.validTo} > ${t.validFrom}`),
+  ],
+);
+
+export const tradingSessions = pgTable(
+  "trading_sessions",
+  {
+    exchange: text("exchange").notNull(),
+    date: date("date").notNull(),
+    opensAt: timestamp("opens_at", { withTimezone: true }),
+    closesAt: timestamp("closes_at", { withTimezone: true }),
+    sessionType: text("session_type").notNull().default("regular"),
+    source: text("source").notNull(),
+    sourceUrl: text("source_url"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.exchange, t.date] })],
+);
+
+export type PriceQualityStatus =
+  | "pending"
+  | "partial"
+  | "complete"
+  | "exception"
+  | "rebuild_required";
+
+export type PriceSeriesException =
+  | "no_yahoo_symbol"
+  | "not_in_nse_equity_list"
+  | "isin_mismatch"
+  | "listing_source_unavailable"
+  | "identity_mismatch";
+
+export const priceSeriesState = pgTable(
+  "price_series_state",
+  {
+    id: serial("id").primaryKey(),
+    companyId: integer("company_id")
+      .unique()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    indexId: integer("index_id")
+      .unique()
+      .references(() => indices.id, { onDelete: "cascade" }),
+    desiredFrom: date("desired_from").notNull(),
+    desiredTo: date("desired_to").notNull(),
+    verifiedThrough: date("verified_through"),
+    adjustmentGeneration: integer("adjustment_generation").notNull().default(0),
+    actionHash: text("action_hash"),
+    qualityStatus: text("quality_status").$type<PriceQualityStatus>().notNull().default("pending"),
+    exceptionReason: text("exception_reason").$type<PriceSeriesException>(),
+    detail: text("detail"),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+    updatedAt: timestamps.updatedAt,
+  },
+  (t) => [
+    check("price_series_state_one_owner", sql`num_nonnulls(${t.companyId}, ${t.indexId}) = 1`),
+    check("price_series_state_range", sql`${t.desiredFrom} <= ${t.desiredTo}`),
+  ],
+);
+
+export const priceManifests = pgTable("price_manifests", {
+  id: serial("id").primaryKey(),
+  kind: text("kind").notNull(),
+  desiredFrom: date("desired_from").notNull(),
+  desiredTo: date("desired_to").notNull(),
+  companies: integer("companies").notNull(),
+  units: integer("units").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const priceManifestCompanies = pgTable(
+  "price_manifest_companies",
+  {
+    manifestId: integer("manifest_id")
+      .notNull()
+      .references(() => priceManifests.id, { onDelete: "cascade" }),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    seriesId: integer("series_id").references(() => priceSeriesState.id, { onDelete: "set null" }),
+    symbol: text("symbol"),
+    units: integer("units").notNull().default(0),
+    exceptionReason: text("exception_reason").$type<PriceSeriesException>(),
+  },
+  (t) => [primaryKey({ columns: [t.manifestId, t.companyId] })],
+);
+
+export type PriceGapReason =
+  | "missing_source_data"
+  | "prelisting"
+  | "suspension"
+  | "delisted"
+  | "placeholder"
+  | "unresolved_identity"
+  | "invalid_bars";
+
+export type PriceGapStatus = "open" | "exempt" | "resolved";
+
+export const priceGaps = pgTable(
+  "price_gaps",
+  {
+    seriesId: integer("series_id")
+      .notNull()
+      .references(() => priceSeriesState.id, { onDelete: "cascade" }),
+    fromDate: date("from_date").notNull(),
+    toDate: date("to_date").notNull(),
+    reason: text("reason").$type<PriceGapReason>().notNull(),
+    status: text("status").$type<PriceGapStatus>().notNull().default("open"),
+    sessions: integer("sessions").notNull().default(0),
+    checks: integer("checks").notNull().default(0),
+    nextCheckAt: timestamp("next_check_at", { withTimezone: true }),
+    evidenceRevisionId: bigint("evidence_revision_id", { mode: "number" }),
+    detail: text("detail"),
+    ...timestamps,
+  },
+  (t) => [
+    primaryKey({ columns: [t.seriesId, t.fromDate, t.toDate] }),
+    index("price_gaps_due_idx").on(t.status, t.nextCheckAt),
+    check("price_gaps_range", sql`${t.fromDate} <= ${t.toDate}`),
+  ],
+);
+
+export type CorporateActionType = "split" | "bonus" | "dividend";
+
+export const corporateActions = pgTable(
+  "corporate_actions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    actionType: text("action_type").$type<CorporateActionType>().notNull(),
+    exDate: date("ex_date").notNull(),
+    eventKey: text("event_key").notNull(),
+    splitNumerator: doublePrecision("split_numerator"),
+    splitDenominator: doublePrecision("split_denominator"),
+    cashAmount: doublePrecision("cash_amount"),
+    currency: text("currency"),
+    source: text("source").notNull(),
+    sourceRevisionId: bigint("source_revision_id", { mode: "number" }),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+    correctedAt: timestamp("corrected_at", { withTimezone: true }),
+  },
+  (t) => [
+    unique("corporate_actions_company_event").on(t.companyId, t.eventKey),
+    index("corporate_actions_ex_date_idx").on(t.exDate),
+    check(
+      "corporate_actions_split_ratio",
+      sql`${t.actionType} = 'dividend' or (${t.splitNumerator} > 0 and ${t.splitDenominator} > 0)`,
+    ),
+    check("corporate_actions_cash", sql`${t.cashAmount} is null or ${t.cashAmount} >= 0`),
   ],
 );
 
@@ -386,6 +601,7 @@ export const indexPricesDaily = pgTable(
     low: real("low"),
     close: real("close").notNull(),
     volume: bigint("volume", { mode: "number" }),
+    ...priceProvenance,
   },
   (t) => [primaryKey({ columns: [t.indexId, t.date] })],
 );

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta content="noindex, nofollow" name="robots"/>
+    <meta charset="UTF-8">
+    <title>NSE India</title>
+                                </head>
+<body>
+    <div class="header">
+        <div class="logo">
+            <!-- Inline NSE Logo SVG -->
+        </div>
+    </div>
+    <div class="container">
+        <div class="illustration">
+        </div>
+        <h1>Service Temporarily Unavailable</h1>
+        <p>This site is not accessible in your region at the moment.</p>
+        <p>We appreciate your patience and will be back soon.</p>
+        <p>If you face this issue for more than 24 hrs, kindly write to us at:</p>
+        <p class="email">nsewebmaster@nse.co.in</p>
+    </div>
+</body>
+</html>
