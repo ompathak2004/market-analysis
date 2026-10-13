@@ -36,6 +36,24 @@ function job<S extends z.ZodTypeAny>(
 
 const byCompany = (p: { companyId: number }) => String(p.companyId);
 
+const priceSymbol = z.string().min(1).max(40);
+const priceWindow = z
+  .object({
+    seriesId: z.number().int().positive(),
+    symbol: priceSymbol,
+    from: isoDay,
+    toExclusive: isoDay,
+    generation: z.number().int().nonnegative(),
+    parserVersion: z.number().int().positive(),
+    mode: z.enum(["backfill", "repair"]).optional(),
+  })
+  .strict()
+  .refine((p) => p.from < p.toExclusive, "empty window");
+const dailyPrice = z
+  .object({ seriesId: z.number().int().positive(), symbol: priceSymbol, date: isoDay })
+  .strict();
+const byDay = (p: { symbol: string; date: string }) => `${p.symbol}:${p.date}`;
+
 export const JOB_CONTRACTS = {
   "universe.fanout": job("universe", "control", "fanout", empty, MINUTE),
   "universe.sync": job(
@@ -46,8 +64,35 @@ export const JOB_CONTRACTS = {
     4 * MINUTE,
     (p) => p.index,
   ),
-  "prices.fanout": job("prices", "control", "fanout", empty, MINUTE),
-  "prices.repair": job("prices", "control", "fanout", empty, MINUTE),
+  "prices.fanout": job("prices", "control", "fanout", empty, 2 * MINUTE),
+  "prices.repair": job("prices", "control", "fanout", empty, 5 * MINUTE),
+  "prices.backfill": job("prices", "control", "fanout", empty, 3 * MINUTE),
+  "prices.window": job(
+    "prices",
+    "io",
+    "unit",
+    priceWindow,
+    3 * MINUTE,
+    (p) =>
+      `${p.mode === "repair" ? "repair:" : ""}${p.symbol}:${p.from}:${p.toExclusive}:g${p.generation}:p${p.parserVersion}`,
+  ),
+  "prices.daily": job("prices", "io", "unit", dailyPrice, 2 * MINUTE, byDay),
+  "index.daily": job("prices", "io", "unit", dailyPrice, 2 * MINUTE, byDay),
+  "prices.rebuild": job(
+    "prices",
+    "io",
+    "unit",
+    z
+      .object({
+        seriesId: z.number().int().positive(),
+        symbol: priceSymbol,
+        generation: z.number().int().positive(),
+        parserVersion: z.number().int().positive(),
+      })
+      .strict(),
+    5 * MINUTE,
+    (p) => `${p.symbol}:g${p.generation}:p${p.parserVersion}`,
+  ),
   "prices.sync": job(
     "prices",
     "io",

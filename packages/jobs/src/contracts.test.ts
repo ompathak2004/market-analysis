@@ -18,6 +18,31 @@ describe("job contracts", () => {
     expect(unitKey("aircraft.sample", {})).toBe("aircraft.sample");
   });
 
+  it("keys price units by symbol, window, generation and parser version", () => {
+    const unit = {
+      seriesId: 4,
+      symbol: "RELIANCE.NS",
+      from: "2021-10-12",
+      toExclusive: "2022-10-12",
+      generation: 1,
+      parserVersion: 1,
+    };
+    expect(unitKey("prices.window", unit)).toBe(
+      "prices.window:RELIANCE.NS:2021-10-12:2022-10-12:g1:p1",
+    );
+    expect(unitKey("prices.window", { ...unit, mode: "repair" })).toBe(
+      "prices.window:repair:RELIANCE.NS:2021-10-12:2022-10-12:g1:p1",
+    );
+    expect(unitKey("index.daily", { seriesId: 9, symbol: "^NSEI", date: "2026-10-13" })).toBe(
+      "index.daily:^NSEI:2026-10-13",
+    );
+    expect(
+      unitKey("prices.rebuild", { seriesId: 4, symbol: "TCS.NS", generation: 2, parserVersion: 1 }),
+    ).toBe("prices.rebuild:TCS.NS:g2:p1");
+    expect(() => parsePayload("prices.window", { ...unit, toExclusive: unit.from })).toThrow();
+    expect(() => parsePayload("prices.window", { ...unit, from: "2021/10/12" })).toThrow();
+  });
+
   it("rejects unknown payload fields", () => {
     expect(() => parsePayload("prices.sync", { companyId: 1, extra: true })).toThrow();
     expect(() => parsePayload("prices.sync", { companyId: -1 })).toThrow();
