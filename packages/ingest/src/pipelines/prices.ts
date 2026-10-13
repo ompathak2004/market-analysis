@@ -22,6 +22,7 @@ import {
   type DailyBar,
   type HistoryWindow,
   istToday,
+  PriceValidationError,
   type RejectedBar,
   type YahooEvent,
   type YahooRange,
@@ -85,6 +86,7 @@ export type PriceWindowStatus =
   | "missing_series"
   | "identity_mismatch"
   | "not_found"
+  | "invalid_response"
   | "rebuild_required";
 
 export interface PriceWindowResult {
@@ -467,7 +469,14 @@ async function fetchHistory(
       : null;
   }
   if (!ref.nseName) return base;
-  const nse = await fetchNseIndex(ctx, ref.nseName, window, signal);
+  let nse: DailyBar[];
+  try {
+    nse = await fetchNseIndex(ctx, ref.nseName, window, signal);
+  } catch (err) {
+    if (yahooBars.length && err instanceof RateLimitedError)
+      return base && { ...base, detail: "nse fallback cooling down" };
+    throw err;
+  }
   const merged = mergeFallback(yahooBars, nse, "nse");
   if (!merged.added && !base) return null;
   return {
@@ -506,7 +515,23 @@ export async function syncPriceWindow(
     return { ...r, status: "identity_mismatch" };
   }
   throwIfAborted(signal);
-  const fetched = await fetchHistory(ctx, ref, unit.symbol, window, mode, signal);
+  let fetched: FetchedHistory | null;
+  try {
+    fetched = await fetchHistory(ctx, ref, unit.symbol, window, mode, signal);
+  } catch (err) {
+    if (!(err instanceof PriceValidationError)) throw err;
+    const r = await writeWindow(ctx, ref, {
+      window,
+      generation: unit.generation ?? ref.generation,
+      fetched: null,
+      hint: "invalid_bars",
+      detail: err.message,
+      mode,
+      symbol: unit.symbol,
+      signal,
+    });
+    return r.status === "written" ? { ...r, status: "invalid_response" } : r;
+  }
   const r = await writeWindow(ctx, ref, {
     window,
     generation: unit.generation ?? ref.generation,
@@ -552,6 +577,7 @@ interface WriteInput {
   generation: number;
   fetched: FetchedHistory | null;
   hint: PriceGapReason;
+  detail?: string;
   mode: PriceSyncMode;
   symbol: string;
   signal: AbortSignal | undefined;
@@ -753,7 +779,7 @@ async function writeWindow(
         window: input.window,
         rejected: fetched?.rejected ?? [],
         hint: fetched ? "missing_source_data" : input.hint,
-        detail: fetched?.detail ?? (fetched ? null : "no history returned for window"),
+        detail: fetched ? fetched.detail : (input.detail ?? "no history returned for window"),
         now,
       });
       const quality: PriceQualityStatus =
