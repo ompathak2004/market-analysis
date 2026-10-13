@@ -43,7 +43,7 @@ Load env with `set -a && . ./.env && set +a`. Every package exports `"@ma/source
 
 `job_control.mode` (singleton row, default `legacy`) decides who runs jobs:
 
-- `legacy`: Vercel cron calls `GET /api/cron/<job>` (`Authorization: Bearer $CRON_SECRET`); `runJob` in `apps/web/src/server/jobs` takes a Redis lock, records `ingest_runs`, enforces a time budget and invalidates cache prefixes. The worker holds its lease but consumes nothing and clears its schedules.
+- `legacy`: an external scheduler (formerly Vercel cron; `vercel.json` no longer defines crons) calls `GET /api/cron/<job>` (`Authorization: Bearer $CRON_SECRET`); `runJob` in `apps/web/src/server/jobs` takes a Redis lock, records `ingest_runs`, enforces a time budget and invalidates cache prefixes. The worker holds its lease but consumes nothing and clears its schedules.
 - `paused`: nothing runs; web cron routes return `skipped/disabled`.
 - `worker`: `apps/worker` consumes the pg-boss queues (schema `pgboss`) and registers the cron schedules in `src/schedules.ts` (`Asia/Kolkata`, `missed: "once"`); web cron routes are no-ops.
 

@@ -21,7 +21,7 @@ A Bloomberg-like terminal for Indian equities with a genuine intelligence layer:
 | Gloomberg-style terminal UI (home, DES/GP/FA/ANR/SPLC/NEWS/JET/SHIP/INTL, SIG, MOV, custom scrollbars) | done | `apps/web/src/{app,components,styles}` |
 | Vercel deployment with crons against Aiven Postgres + managed Redis | in progress | project `market-analysis` |
 | Widen data: NIFTY500 prices/fundamentals/relationships | partial | run jobs repeatedly |
-| Job platform: `@ma/jobs` contracts/ledger/lease, migration `0003_jobs_platform`, pg-boss worker with per-unit handlers, schedules, CloudWatch metrics, CLI; web cron gated by `job_control` | done (not yet cut over; mode `legacy`) | `packages/jobs`, `apps/worker` |
+| Job platform: `@ma/jobs` contracts/ledger/lease, migration `0003_jobs_platform`, pg-boss worker with per-unit handlers, schedules, CloudWatch metrics, CLI; web cron gated by `job_control` | done (cut over 2026-10-13; mode `worker`, Vercel crons removed) | `packages/jobs`, `apps/worker` |
 | AWS deploy: ECS Fargate Spot worker, SSM secrets, alarms | in progress | `Dockerfile`, `infra/aws`, `docs/ops.md` |
 | Five-year price history: series state, generations, gaps, corporate actions, NSE calendar, seven indices, worker backfill/daily/repair/rebuild jobs, finalized adjusted-close returns (momentum v2) | done (backfill not yet run in production) | `packages/ingest/src/pipelines/prices.ts`, `apps/worker/src/handlers/prices.ts`, `packages/intel/src/prices.ts` |
 
@@ -53,11 +53,11 @@ pnpm job altdata-cleanup    # retention
 
 Worker equivalents (after `pnpm build:worker`): `pnpm worker:cli run prices --wait`, `pnpm worker:cli mode worker`, `pnpm worker:cli status`. Cutover: deploy the worker, `mode paused`, let in-flight web runs finish, `mode worker`; roll back with `mode legacy`.
 
-`pnpm job <name> [budgetMs]` runs one job once with the same lock, run record and cache invalidation as the cron route. On Vercel each job is triggered by `vercel.json` through `GET /api/cron/<job>` with `Authorization: Bearer $CRON_SECRET`.
+`pnpm job <name> [budgetMs]` runs one job once with the same lock, run record and cache invalidation as the cron route. `GET /api/cron/<job>` (`Authorization: Bearer $CRON_SECRET`) still exists for manual legacy runs; `vercel.json` no longer schedules it.
 
 ## Next
 
-0. **Worker cutover**: deploy the ECS worker, run `pnpm worker:cli mode worker`, watch `pnpm worker:cli status`, `ops_alerts` and the CloudWatch alarms for 48 h, then remove the `vercel.json` crons.
+0. **Worker cutover** (done 2026-10-13): the ECS worker runs every schedule; `vercel.json` has no crons. Gate still open: 24 h with no `running` row older than 15 min and the heartbeat alarm green, then point the Vercel `DATABASE_URL` at `ma_web`. Roll back with `pnpm worker:cli mode legacy` plus a redeploy of the crons.
 1. **Backfill**: run `pnpm --filter @ma/worker cli run prices.backfill --wait` once (see `docs/ops.md`, "Price history"), then `prices.repair` until the acceptance queries are clean; run `fundamentals`, `relationships` and `moneycontrol` repeatedly until `company_sync` is fresh for `DATA_UNIVERSE`; then `intel` and `insights`. `index_prices_daily` must be populated for the market brief breadth and sector sections.
 1a. **Price history follow-ups**:
    - Import NSE holiday notices into `trading_sessions` so the calendar does not depend on ^NSEI having a bar for every session.
