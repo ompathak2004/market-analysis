@@ -222,6 +222,12 @@ export type PriceQualityStatus =
   | "exception"
   | "rebuild_required";
 
+export type PriceSeriesException =
+  | "no_yahoo_symbol"
+  | "not_in_nse_equity_list"
+  | "isin_mismatch"
+  | "listing_source_unavailable";
+
 export const priceSeriesState = pgTable(
   "price_series_state",
   {
@@ -238,6 +244,8 @@ export const priceSeriesState = pgTable(
     adjustmentGeneration: integer("adjustment_generation").notNull().default(0),
     actionHash: text("action_hash"),
     qualityStatus: text("quality_status").$type<PriceQualityStatus>().notNull().default("pending"),
+    exceptionReason: text("exception_reason").$type<PriceSeriesException>(),
+    detail: text("detail"),
     checkedAt: timestamp("checked_at", { withTimezone: true }),
     updatedAt: timestamps.updatedAt,
   },
@@ -245,6 +253,33 @@ export const priceSeriesState = pgTable(
     check("price_series_state_one_owner", sql`num_nonnulls(${t.companyId}, ${t.indexId}) = 1`),
     check("price_series_state_range", sql`${t.desiredFrom} <= ${t.desiredTo}`),
   ],
+);
+
+export const priceManifests = pgTable("price_manifests", {
+  id: serial("id").primaryKey(),
+  kind: text("kind").notNull(),
+  desiredFrom: date("desired_from").notNull(),
+  desiredTo: date("desired_to").notNull(),
+  companies: integer("companies").notNull(),
+  units: integer("units").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const priceManifestCompanies = pgTable(
+  "price_manifest_companies",
+  {
+    manifestId: integer("manifest_id")
+      .notNull()
+      .references(() => priceManifests.id, { onDelete: "cascade" }),
+    companyId: integer("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    seriesId: integer("series_id").references(() => priceSeriesState.id, { onDelete: "set null" }),
+    symbol: text("symbol"),
+    units: integer("units").notNull().default(0),
+    exceptionReason: text("exception_reason").$type<PriceSeriesException>(),
+  },
+  (t) => [primaryKey({ columns: [t.manifestId, t.companyId] })],
 );
 
 export type PriceGapReason =

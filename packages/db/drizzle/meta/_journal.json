@@ -43,6 +43,13 @@
       "when": 1791908995130,
       "tag": "0005_price_history",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791912082714,
+      "tag": "0006_price_coverage_manifest",
+      "breakpoints": true
     }
   ]
 }
