@@ -150,6 +150,26 @@ describe("executeJob", () => {
     expect(h.invalidated).toEqual([]);
   });
 
+  it("keeps the unit's queue priority on retries and deferrals", async () => {
+    const failing = harness(async () => {
+      throw new Error("socket hang up");
+    });
+    await executeJob(failing.deps, pricesJob(0, { priority: 3 }));
+    expect(failing.retries[0]).toMatchObject({ attemptBase: 1, priority: 3 });
+
+    const deferring = harness(async () => {
+      throw new DeferredError(new Date(NOW + 60_000), "calendar");
+    });
+    await executeJob(deferring.deps, pricesJob(0, { priority: -1 }));
+    expect(deferring.retries[0]).toMatchObject({ attemptBase: 0, deferrals: 1, priority: -1 });
+
+    const plain = harness(async () => {
+      throw new Error("socket hang up");
+    });
+    await executeJob(plain.deps, pricesJob());
+    expect(plain.retries[0]).not.toHaveProperty("priority");
+  });
+
   it("goes dead once the retry limit is spent", async () => {
     const h = harness(async () => {
       throw new Error("still broken");

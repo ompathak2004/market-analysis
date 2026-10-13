@@ -14,12 +14,12 @@ export function sumStats(results: ItemStats[]): JobStats {
   return out;
 }
 
-export async function forEachCompany(
+export async function forEachCompany<T extends ItemStats>(
   run: JobRun,
   ids: number[],
   concurrency: number,
-  fn: (id: number) => Promise<ItemStats>,
-  opts: { reserveMs?: number } = {},
+  fn: (id: number) => Promise<T>,
+  opts: { reserveMs?: number; isSynced?: (result: T) => boolean } = {},
 ): Promise<JobStats> {
   const { ctx, name } = run;
   const reserve = opts.reserveMs ?? 20_000;
@@ -32,7 +32,7 @@ export async function forEachCompany(
     }
     try {
       const r = await fn(id);
-      await markSynced(ctx.db, name, id);
+      if (opts.isSynced?.(r) ?? true) await markSynced(ctx.db, name, id);
       return r;
     } catch (err) {
       if (err instanceof DeadlineExceededError) {

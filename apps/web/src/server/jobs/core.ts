@@ -1,12 +1,14 @@
-import { DAY, HOUR, isoDate, MINUTE } from "@ma/core";
+import { AppError, DAY, HOUR, isoDate, MINUTE } from "@ma/core";
 import { companies, sql } from "@ma/db";
 import {
   extractRelationshipsForCompany,
   loadAliasMatcher,
+  priceSynced,
   syncAnnouncements,
+  syncCompanyPrices,
   syncFundamentals,
-  syncPrices,
   syncUniverse,
+  windowOutcome,
 } from "@ma/ingest";
 import { refreshEstimates, refreshMomentumSignals, refreshRiskSignals } from "@ma/intel";
 import { pickBatch } from "@ma/jobs";
@@ -31,8 +33,18 @@ export const coreJobs: JobDef[] = [
       const ids = await pickBatch(run.ctx.db, "prices", run.ctx.config.DATA_UNIVERSE, 400, {
         maxAgeMs: 12 * MINUTE,
       });
-      return forEachCompany(run, ids, run.ctx.config.SCRAPE_CONCURRENCY, (id) =>
-        syncPrices(run.ctx, id, "1mo"),
+      return forEachCompany(
+        run,
+        ids,
+        run.ctx.config.SCRAPE_CONCURRENCY,
+        async (id) => {
+          const r = await syncCompanyPrices(run.ctx, id, "1mo");
+          const outcome = windowOutcome(r);
+          if (outcome === "retry" || outcome === "defer")
+            throw new AppError(r.detail ?? `prices ${r.status}`, "price_incomplete", 503);
+          return { bars: r.inserted + r.updated + r.unchanged, synced: priceSynced(r) ? 1 : 0 };
+        },
+        { isSynced: (s) => s.synced === 1 },
       );
     },
   },

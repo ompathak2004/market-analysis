@@ -19,12 +19,13 @@ export async function trackCompany<T>(
   job: string,
   companyId: number,
   fn: () => Promise<T>,
+  isSynced: (result: T) => boolean = () => true,
 ): Promise<T> {
   const { ctx, signal, fence } = run;
   try {
     const result = await fn();
     throwIfAborted(signal);
-    await markSynced(ctx.db, job, companyId, fence);
+    if (isSynced(result)) await markSynced(ctx.db, job, companyId, fence);
     return result;
   } catch (err) {
     if (!signal.aborted) await markFailed(ctx.db, job, companyId, err).catch(() => undefined);

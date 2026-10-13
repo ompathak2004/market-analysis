@@ -20,6 +20,7 @@ export const FAMILY_ALIASES: Record<string, { type: JobType; payload?: Record<st
     universe: { type: "universe.fanout" },
     prices: { type: "prices.fanout" },
     "prices-repair": { type: "prices.repair" },
+    "prices-backfill": { type: "prices.backfill" },
     fundamentals: { type: "fundamentals.fanout" },
     announcements: { type: "announcements.fanout" },
     relationships: { type: "relationships.fanout" },

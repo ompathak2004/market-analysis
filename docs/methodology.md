@@ -35,6 +35,8 @@ w_c = estimated value_cr (fallback: supplier_revenue_pct, then 1)
 
 `supplier_momentum_h` is the mirror image for customers. `customer_hhi` = Σ share² over customer weights measures concentration (1.0 = single customer). Signals store their contributors in `inputs` so the UI can show *why*.
 
+`r_h(c)` is the adjusted-close return from the price basis below (model version 2). A counterparty without a usable return is left out of both sums, never counted as zero; `inputs.coverage` records how many counterparties were priced and the reasons the rest were missing, and each contributor records the price `generation` it was computed on.
+
 ## 4. Distress score (`packages/intel/src/risk.ts`)
 
 DuPont decomposition on the latest annual statement: `roe = taxBurden × interestBurden × operatingMargin × assetTurnover × leverage`, plus `interestCoverage` and `debtToEquity`. Features are z-scored across the non-financial universe (banks/NBFCs/insurers are excluded — their leverage is structural) and combined:
@@ -49,12 +51,25 @@ A score needs ≥3 available features. This is an *ordering* signal, not a calib
 
 Replicates the Dieselgate analysis: for a shock company and window, take its suppliers, compute `exposure_pct = estimated value / supplier revenue`, and regress supplier returns on DuPont features + distress with and without exposure. The `exposureCoefficient` and ΔR² tell whether supply-chain exposure explained the drawdown. Exposed via `GET /v1/events/impact?symbol=&from=&to=`.
 
+Returns use the same price basis as momentum. Every supplier that drops out is listed in `missing` with its reason (a price coverage reason, `no_fundamentals` or `incomplete_fundamentals`), and the result carries `priceBasis`.
+
 ## 6. Analyst calls (`packages/ingest/src/pipelines/analysts.ts`)
 
 Broker reports are aggregated from the broker research cards on each company's Moneycontrol stock page; a card with no date takes the date embedded in its report PDF URL, and cards with neither are dropped. Each call is deduped on (symbol, broker, date, rating, target) and classified against the same broker's prior call: `initiate | upgrade | downgrade | raise_target | lower_target | maintain`. The UI links to the original report so users read the source, not a summary.
+
+## 7. Price basis (`packages/ingest/src/pipelines/prices.ts`, `packages/intel/src/prices.ts`)
+
+Each company and each of the seven tracked indices has five years of daily bars from Yahoo's chart API, fetched in annual windows and validated before any write. A response whose symbol, currency, exchange or instrument type does not match, or that has duplicate or future bars, is rejected whole and recorded as an `invalid_bars` gap. Individual bars with non-positive or non-finite prices, impossible OHLC, negative volume or a day move above 40% that no split explains are dropped and their sessions become gaps. NSE's own history endpoints fill sessions that Yahoo lacks, but only when at least one overlapping close (from this fetch or stored Yahoo rows within two weeks of the window) agrees within 0.05% and none disagrees. An NSE history with no overlap is uncorroborated and adds nothing; the gap stays open.
+
+- Equity `open/high/low/close` are split-adjusted; `adj_close` is split- and dividend-adjusted (a total-return proxy). Index rows are price-return levels. The basis is versioned as `PRICE_BASIS` in `@ma/db`.
+- The expected-session calendar is `trading_sessions` (NSE). A missing session is stored as a `price_gaps` range with a reason and rechecked with exponential backoff (1 day doubling to 30 days). A series is `complete` only when every expected session in its window is present or exempt. The window ends at the last NSE session before today, the latest session that can be final. A fetch that leaves an expected session in its window unexplained is `incomplete` and is retried, as is a fetch where Yahoo returned nothing or invalid bars for a window with expected sessions; sessions before Yahoo's first trade date are `prelisting` gaps. An equity window is not fetched until the calendar spans it (`calendar_pending`), so it cannot be judged against a calendar that is still being backfilled.
+- A bar becomes final once its IST day has passed. A new or corrected split or dividend sets the series to `rebuild_required`; the whole window is refetched and moved to the next `adjustment_generation` in one transaction, so readers never mix bases. The rebuild is refused, and the old generation kept, unless the refetch covers every expected session that was not already a known gap. The prices API serves only the current generation and flags non-final bars.
+- Returns (`seriesReturn`) are `close(to) / close(from) − 1` on `adj_close` over final rows of the current generation. Each endpoint uses the last close on or before the boundary, and that close must be no more than one expected session older than the boundary's session. Otherwise the return is missing with a reason: `no_series`, `rebuild_required`, `no_final_bars`, `no_calendar`, `stale_start` or `stale_end`.
 
 ## Known limitations
 
 - Moneycontrol research cards carry no headline or abstract and the reco price is sometimes missing (`-`, stored as null). Free-tier hits and misses expose the reported actual and a beat/inline/miss outcome but not the consensus estimate, so `earnings_surprises.estimate` and `surprise_pct` are usually null.
 - Relationship extraction is regex/cue based; recall on concalls is modest. A sentence-classifier is the natural upgrade.
 - Fundamentals come from Screener's consolidated tables; quarterly balance sheets are not available there.
+- The NSE calendar is derived from ^NSEI trading dates, not imported from NSE holiday notices, so a session on which Yahoo has no index bar is invisible to gap detection.
+- Yahoo's `adj_close` follows Yahoo's dividend data; rights issues, demergers and other non-split/dividend actions are not modelled and show up as return discontinuities.
