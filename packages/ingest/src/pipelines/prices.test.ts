@@ -19,6 +19,8 @@ import {
   syncPriceWindow,
 } from "./prices.js";
 
+const PRICE_TEST_LOCK = 74_201;
+
 const DAY_MS = 86_400_000;
 
 function bar(date: string, close: number): DailyBar {
@@ -173,6 +175,8 @@ describe.skipIf(!url)("price series writes (DATABASE_URL_TEST)", () => {
     "1990-01-05",
     "1990-01-08",
   ];
+  // Sessions just outside the series so the calendar around the window has no multi-day hole.
+  const fences = ["1989-12-29", "1990-01-09"];
   const window = { from: "1990-01-01", toExclusive: "1990-01-09" };
   let history: YahooHistory;
 
@@ -226,7 +230,7 @@ describe.skipIf(!url)("price series writes (DATABASE_URL_TEST)", () => {
     await db.execute(sql`
       insert into market_symbols (company_id, provider, symbol, valid_from)
       values (${companyId}, 'yahoo', ${symbol}, '1990-01-01')`);
-    for (const d of sessions)
+    for (const d of [...sessions, ...fences])
       await db.execute(sql`
         insert into trading_sessions (exchange, date, source) values ('NSE', ${d}, ${tag})
         on conflict do nothing`);
@@ -371,9 +375,13 @@ describe.skipIf(!url)("price coverage manifest (DATABASE_URL_TEST)", () => {
   const tag = `M${randomUUID().slice(0, 8).toUpperCase()}`;
   const ids: Record<"listed" | "unlisted", number> = { listed: 0, unlisted: 0 };
   let manifestId = 0;
+  let lock: Awaited<ReturnType<Db["$client"]["reserve"]>>;
 
   beforeAll(async () => {
     db = createDb(url ?? "", 2);
+    lock = await db.$client.reserve();
+    // The manifest rewrites every series in the database; the worker price handler test waits.
+    await lock`select pg_advisory_lock(${PRICE_TEST_LOCK})`;
     for (const [k, yahoo] of [
       ["listed", `${tag}.NS`],
       ["unlisted", null],
@@ -393,6 +401,8 @@ describe.skipIf(!url)("price coverage manifest (DATABASE_URL_TEST)", () => {
       await db.execute(sql`delete from market_symbols where company_id = ${id}`);
       await db.execute(sql`delete from companies where id = ${id}`);
     }
+    await lock`select pg_advisory_unlock(${PRICE_TEST_LOCK})`;
+    lock.release();
     await closeDb(db);
   });
 

@@ -80,9 +80,11 @@ export type PriceWindowStatus =
   | "stale_generation"
   | "missing_series"
   | "identity_mismatch"
-  | "not_found"
-  | "invalid_response"
+  | "calendar_pending"
   | "rebuild_required";
+
+// What the provider returned, independent of whether stored coverage is complete.
+export type PriceSourceStatus = "ok" | "not_found" | "invalid_response" | "identity_mismatch";
 
 export interface PriceWindowResult {
   status: PriceWindowStatus;
@@ -95,8 +97,10 @@ export interface PriceWindowResult {
   gaps: number;
   missingSessions: number;
   windowMissing: number;
+  windowExpected: number;
   latestCovered: boolean;
   source: string | null;
+  sourceStatus: PriceSourceStatus;
   quality: PriceQualityStatus | null;
   detail: string | null;
 }
@@ -112,11 +116,33 @@ const emptyResult = (status: PriceWindowStatus): PriceWindowResult => ({
   gaps: 0,
   missingSessions: 0,
   windowMissing: 0,
+  windowExpected: 0,
   latestCovered: false,
   source: null,
+  sourceStatus: "ok",
   quality: null,
   detail: null,
 });
+
+export type PriceWindowOutcome = "complete" | "retry" | "defer" | "exception" | "skipped";
+
+// How a job should settle a window result. Source failures and missing sessions are retried;
+// a calendar that does not yet span the window waits without spending an attempt; a symbol the
+// series cannot prove it owns is a durable series exception, not a retry loop.
+export function windowOutcome(r: PriceWindowResult): PriceWindowOutcome {
+  if (r.status === "calendar_pending") return "defer";
+  if (r.sourceStatus === "identity_mismatch") return "exception";
+  if (r.status === "incomplete" || r.status === "rebuild_incomplete") return "retry";
+  if (r.status !== "written") return "skipped";
+  if (r.sourceStatus === "invalid_response") return "retry";
+  if (r.sourceStatus === "not_found" && r.windowExpected > 0) return "retry";
+  return "complete";
+}
+
+// company_sync.synced_at means the company's prices reach the latest settled session.
+export function priceSynced(r: PriceWindowResult): boolean {
+  return windowOutcome(r) === "complete" && r.latestCovered;
+}
 
 let activeSlots = 0;
 const slotWaiters: Array<() => void> = [];
@@ -207,6 +233,7 @@ const BLOCKING_EXCEPTIONS: ReadonlySet<PriceSeriesException> = new Set([
   "no_yahoo_symbol",
   "not_in_nse_equity_list",
   "isin_mismatch",
+  "identity_mismatch",
 ]);
 
 // Series whose identity is missing or contradicted are never fetched; they stay visible in the
@@ -573,29 +600,85 @@ export async function syncPriceWindow(
   const generation = unit.generation ?? ref.generation;
   if (staleGeneration(ref.generation, generation, mode)) return emptyResult("stale_generation");
   const window = { from: unit.from, toExclusive: unit.toExclusive };
+  // A unit carrying a symbol the series no longer has was superseded; it must not touch the series.
+  if (ref.yahooSymbol !== unit.symbol) return emptyResult("identity_mismatch");
+  if (!isCalendarSeries(ref)) {
+    const pending = await calendarGap(ctx.db, ref, window);
+    if (pending) return { ...emptyResult("calendar_pending"), detail: pending };
+  }
   const write = { window, generation, mode, symbol: unit.symbol, signal };
   let fetched: FetchedHistory | null = null;
   let hint: PriceGapReason = "missing_source_data";
   let detail: string | null = null;
-  let status: PriceWindowStatus = "written";
+  let sourceStatus: PriceSourceStatus = "ok";
   if (!(await symbolOwned(ctx.db, ref, unit.symbol))) {
     hint = "unresolved_identity";
-    status = "identity_mismatch";
+    detail = `yahoo symbol ${unit.symbol} is not uniquely owned by this series in market_symbols`;
+    sourceStatus = "identity_mismatch";
   } else {
     throwIfAborted(signal);
     try {
       fetched = await fetchHistory(ctx, ref, unit.symbol, window, mode, signal);
-      if (!fetched) status = "not_found";
+      if (!fetched?.bars.length) sourceStatus = "not_found";
     } catch (err) {
       if (!(err instanceof PriceValidationError)) throw err;
       hint = "invalid_bars";
       detail = err.message;
-      status = "invalid_response";
+      sourceStatus = "invalid_response";
     }
   }
-  const r = await writeWindow(ctx, ref, { ...write, fetched, hint, detail });
-  const wrote = r.status === "written" || r.status === "incomplete";
-  return wrote && status !== "written" ? { ...r, status, detail: detail ?? r.detail } : r;
+  const r = await writeWindow(ctx, ref, {
+    ...write,
+    fetched,
+    hint,
+    detail,
+    exception: sourceStatus === "identity_mismatch" ? "identity_mismatch" : null,
+  });
+  if (sourceStatus === "ok") return r;
+  return { ...r, sourceStatus, detail: r.detail ?? detail ?? `source ${sourceStatus}` };
+}
+
+function isCalendarSeries(ref: PriceSeriesRef): boolean {
+  return ref.kind === "index" && ref.code === CALENDAR_INDEX;
+}
+
+// NSE has never been shut for more than a week, so a longer stretch without sessions (including
+// the stretch to the nearest session outside the window) means calendar windows not yet fetched.
+const CALENDAR_MAX_HOLE_DAYS = 7;
+
+// The calendar spans an interval when it reaches the interval's last day and has no hole longer
+// than any real NSE closure inside it; max(date) alone says nothing about older windows.
+export async function calendarGap(
+  db: Queryable,
+  ref: PriceSeriesRef,
+  window: HistoryWindow,
+): Promise<string | null> {
+  const { start, end } = seriesBounds(ref);
+  const from = window.from > start ? window.from : start;
+  const lastDay = addDays(window.toExclusive, -1);
+  const to = lastDay < end ? lastDay : end;
+  if (from > to) return null;
+  const rows = await db.execute<{ through: string | null; hole: number | null }>(sql`
+    with s as (
+      select coalesce(
+        (select max(date) from trading_sessions where exchange = ${NSE_EXCHANGE} and date < ${from}),
+        ${from}::date) as d
+      union select date from trading_sessions
+        where exchange = ${NSE_EXCHANGE} and date between ${from} and ${to}
+      union select coalesce(
+        (select min(date) from trading_sessions where exchange = ${NSE_EXCHANGE} and date > ${to}),
+        ${to}::date)
+    )
+    select
+      (select max(date)::text from trading_sessions where exchange = ${NSE_EXCHANGE}) as through,
+      (select max(gap) from (select d - lag(d) over (order by d) as gap from s) x) as hole`);
+  const through = rows[0]?.through ?? null;
+  const hole = Number(rows[0]?.hole ?? 0);
+  if (!through || through < to)
+    return `trading calendar ends ${through ?? "nowhere"}, before ${to}`;
+  if (hole > CALENDAR_MAX_HOLE_DAYS)
+    return `trading calendar has a ${hole}-day hole between ${from} and ${to}`;
+  return null;
 }
 
 export async function rebuildSeries(
@@ -634,6 +717,7 @@ interface WriteInput {
   mode: PriceSyncMode;
   symbol: string;
   signal: AbortSignal | undefined;
+  exception?: PriceSeriesException | null;
 }
 
 interface ActionDiff {
@@ -748,7 +832,6 @@ async function writeWindow(
       const wasRebuildRequired = locked.qualityStatus === "rebuild_required";
 
       const fetched = input.fetched;
-      if (input.mode === "rebuild" && !fetched?.bars.length) return emptyResult("not_found");
       const result = emptyResult("written");
       result.source = fetched?.source ?? null;
       result.events = fetched?.events.length ?? 0;
@@ -783,8 +866,10 @@ async function writeWindow(
           bars.map((b) => b.date),
           fetched?.firstTradeDate ?? null,
         );
-        if (shortfall.length) {
-          const detail = `rebuild to g${input.generation} refused: source lacks ${shortfall.length} expected sessions (${shortfall[0]}..${shortfall.at(-1)})`;
+        if (shortfall.length || !bars.length) {
+          const detail = shortfall.length
+            ? `rebuild to g${input.generation} refused: source lacks ${shortfall.length} expected sessions (${shortfall[0]}..${shortfall.at(-1)})`
+            : `rebuild to g${input.generation} refused: source returned no bars`;
           const coverage = await recomputeGaps(tx, locked, {
             generation: locked.generation,
             window: input.window,
@@ -797,6 +882,7 @@ async function writeWindow(
           await tx.execute(sql`
             update price_series_state
             set quality_status = 'rebuild_required', detail = ${detail},
+                exception_reason = coalesce(${input.exception ?? null}, exception_reason),
                 checked_at = now(), updated_at = now()
             where id = ${ref.seriesId}`);
           return {
@@ -861,13 +947,10 @@ async function writeWindow(
       });
       const quality: PriceQualityStatus =
         wasRebuildRequired && input.mode !== "rebuild" ? "rebuild_required" : coverage.quality;
-      const { end } = seriesBounds(locked);
-      const lastDay = addDays(input.window.toExclusive, -1);
-      const cal = await calendarThrough(tx);
-      const calendarReady = cal !== null && cal >= (lastDay < end ? lastDay : end);
-      const incomplete = !calendarReady || coverage.windowMissing > 0;
-      const detail = !calendarReady
-        ? `trading calendar ends ${cal ?? "nowhere"}; window not verifiable yet`
+      const calendar = await calendarGap(tx, locked, input.window);
+      const incomplete = calendar !== null || coverage.windowMissing > 0;
+      const detail = calendar
+        ? `${calendar}; window not verifiable yet`
         : coverage.windowMissing > 0
           ? `${coverage.windowMissing} expected sessions missing in window${gapDetail ? `: ${gapDetail}` : ""}`
           : null;
@@ -876,7 +959,8 @@ async function writeWindow(
         set adjustment_generation = ${input.generation},
             action_hash = coalesce(${actionHash}, action_hash),
             verified_through = ${coverage.verifiedThrough},
-            quality_status = ${quality},
+            quality_status = ${input.exception ? "exception" : quality},
+            exception_reason = coalesce(${input.exception ?? null}, exception_reason),
             detail = ${detail},
             checked_at = now(), updated_at = now()
         where id = ${ref.seriesId}`);
@@ -886,8 +970,9 @@ async function writeWindow(
         gaps: coverage.gaps,
         missingSessions: coverage.missing,
         windowMissing: coverage.windowMissing,
+        windowExpected: coverage.windowExpected,
         latestCovered: coverage.latestCovered,
-        quality,
+        quality: input.exception ? "exception" : quality,
         detail,
       };
     },
@@ -1004,6 +1089,7 @@ export interface CoverageSummary {
   expected: number;
   missing: number;
   windowMissing: number;
+  windowExpected: number;
   gaps: number;
   finalThrough: string | null;
   verifiedThrough: string | null;
@@ -1163,6 +1249,7 @@ export async function recomputeGaps(
     expected: sessions.length,
     missing,
     windowMissing,
+    windowExpected: sessions.filter((x) => inWindow(x.date)).length,
     gaps: ranges.length,
     finalThrough,
     verifiedThrough,
@@ -1213,6 +1300,8 @@ export interface BackfillUnit {
 
 export interface BackfillManifest {
   manifestId: number;
+  calendarSeriesId: number | null;
+  indexSeriesIds: number[];
   units: BackfillUnit[];
   series: number;
   companies: number;
@@ -1254,6 +1343,8 @@ export async function buildBackfillManifest(
   });
   return {
     manifestId,
+    calendarSeriesId: series.find(isCalendarSeries)?.seriesId ?? null,
+    indexSeriesIds: series.filter((s) => s.kind === "index").map((s) => s.seriesId),
     units,
     series: series.length,
     companies: series.filter((s) => s.kind === "equity").length,
@@ -1464,14 +1555,30 @@ export async function syncPrices(
   range: YahooRange = "1y",
   signal?: AbortSignal,
 ): Promise<number> {
+  const r = await syncCompanyPrices(ctx, companyId, range, signal);
+  return r.inserted + r.updated + r.unchanged;
+}
+
+export async function syncCompanyPrices(
+  ctx: IngestContext,
+  companyId: number,
+  range: YahooRange = "1y",
+  signal?: AbortSignal,
+): Promise<PriceWindowResult> {
   let ref = await loadSeries(ctx.db, { companyId });
   if (!ref) {
     await ensureSeriesStates(ctx, await desiredWindow(ctx.db), signal);
     ref = await loadSeries(ctx.db, { companyId });
   }
-  if (!ref?.yahooSymbol) return 0;
+  if (!ref) return emptyResult("missing_series");
+  if (!fetchable(ref))
+    return {
+      ...emptyResult("missing_series"),
+      quality: "exception",
+      detail: `price series exception: ${ref.exceptionReason ?? "no_yahoo_symbol"}`,
+    };
   const today = istToday();
-  const r = await syncPriceWindow(
+  return syncPriceWindow(
     ctx,
     {
       seriesId: ref.seriesId,
@@ -1483,5 +1590,4 @@ export async function syncPrices(
     RANGE_DAYS[range] > 366 ? "backfill" : "daily",
     signal,
   );
-  return r.inserted + r.updated + r.unchanged;
 }

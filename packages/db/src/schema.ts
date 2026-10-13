@@ -226,7 +226,8 @@ export type PriceSeriesException =
   | "no_yahoo_symbol"
   | "not_in_nse_equity_list"
   | "isin_mismatch"
-  | "listing_source_unavailable";
+  | "listing_source_unavailable"
+  | "identity_mismatch";
 
 export const priceSeriesState = pgTable(
   "price_series_state",
