@@ -1,6 +1,11 @@
 import { LEASE_RENEW_MS } from "@ma/jobs";
+import { ABORT_SETTLE_MS } from "./execute.js";
 
-export const ABORT_BEFORE_DRAIN_END_MS = 10_000;
+/**
+ * In-flight work is aborted early enough that a handler can settle within ABORT_SETTLE_MS and
+ * still have 5 s to record its attempt before pg-boss's stop timeout fires.
+ */
+export const ABORT_BEFORE_DRAIN_END_MS = ABORT_SETTLE_MS + 5_000;
 
 export interface DrainSteps {
   stopClaims(): Promise<void>;

@@ -1,5 +1,13 @@
 import { throwIfAborted } from "@ma/core";
-import { companies, companyAliases, eq, indexConstituents, indices, sql } from "@ma/db";
+import {
+  companies,
+  companyAliases,
+  eq,
+  fencedTransaction,
+  indexConstituents,
+  indices,
+  sql,
+} from "@ma/db";
 import type { IngestContext } from "../context.js";
 import { normalizeCompanyName } from "../extract/relationships.js";
 import { toYahooSymbol } from "../sources/yahoo.js";
@@ -22,55 +30,61 @@ export async function syncUniverse(
   const members = await ctx.nse.indexMembers(indexCode);
   throwIfAborted(signal);
 
-  const [index] = await ctx.db
-    .insert(indices)
-    .values({ code: indexCode, name: meta.name, yahooSymbol: meta.yahooSymbol })
-    .onConflictDoUpdate({
-      target: indices.code,
-      set: { name: meta.name, yahooSymbol: meta.yahooSymbol },
-    })
-    .returning();
-  if (!index) throw new Error("index upsert failed");
+  return fencedTransaction(
+    ctx.db,
+    async (tx) => {
+      const [index] = await tx
+        .insert(indices)
+        .values({ code: indexCode, name: meta.name, yahooSymbol: meta.yahooSymbol })
+        .onConflictDoUpdate({
+          target: indices.code,
+          set: { name: meta.name, yahooSymbol: meta.yahooSymbol },
+        })
+        .returning();
+      if (!index) throw new Error("index upsert failed");
 
-  const rows = members.map((m) => ({
-    nseSymbol: m.symbol,
-    isin: m.isin || null,
-    name: m.name,
-    normalizedName: normalizeCompanyName(m.name),
-    industry: m.industry || null,
-    yahooSymbol: toYahooSymbol(m.symbol),
-    screenerSlug: m.symbol,
-    updatedAt: new Date(),
-  }));
+      const rows = members.map((m) => ({
+        nseSymbol: m.symbol,
+        isin: m.isin || null,
+        name: m.name,
+        normalizedName: normalizeCompanyName(m.name),
+        industry: m.industry || null,
+        yahooSymbol: toYahooSymbol(m.symbol),
+        screenerSlug: m.symbol,
+        updatedAt: new Date(),
+      }));
 
-  const upserted = await ctx.db
-    .insert(companies)
-    .values(rows)
-    .onConflictDoUpdate({
-      target: companies.nseSymbol,
-      set: {
-        isin: sql`excluded.isin`,
-        name: sql`excluded.name`,
-        normalizedName: sql`excluded.normalized_name`,
-        industry: sql`excluded.industry`,
-        yahooSymbol: sql`excluded.yahoo_symbol`,
-        updatedAt: sql`excluded.updated_at`,
-      },
-    })
-    .returning({ id: companies.id, name: companies.name, nseSymbol: companies.nseSymbol });
+      const upserted = await tx
+        .insert(companies)
+        .values(rows)
+        .onConflictDoUpdate({
+          target: companies.nseSymbol,
+          set: {
+            isin: sql`excluded.isin`,
+            name: sql`excluded.name`,
+            normalizedName: sql`excluded.normalized_name`,
+            industry: sql`excluded.industry`,
+            yahooSymbol: sql`excluded.yahoo_symbol`,
+            updatedAt: sql`excluded.updated_at`,
+          },
+        })
+        .returning({ id: companies.id, name: companies.name, nseSymbol: companies.nseSymbol });
 
-  await ctx.db.delete(indexConstituents).where(eq(indexConstituents.indexId, index.id));
-  await ctx.db
-    .insert(indexConstituents)
-    .values(upserted.map((c) => ({ indexId: index.id, companyId: c.id })));
+      await tx.delete(indexConstituents).where(eq(indexConstituents.indexId, index.id));
+      await tx
+        .insert(indexConstituents)
+        .values(upserted.map((c) => ({ indexId: index.id, companyId: c.id })));
 
-  const aliasRows = upserted.flatMap((c) =>
-    aliasesFor(c.name, c.nseSymbol).map((alias) => ({ companyId: c.id, alias })),
+      const aliasRows = upserted.flatMap((c) =>
+        aliasesFor(c.name, c.nseSymbol).map((alias) => ({ companyId: c.id, alias })),
+      );
+      if (aliasRows.length) await tx.insert(companyAliases).values(aliasRows).onConflictDoNothing();
+
+      ctx.logger.info({ indexCode, companies: upserted.length }, "universe synced");
+      return { companies: upserted.length };
+    },
+    signal,
   );
-  if (aliasRows.length) await ctx.db.insert(companyAliases).values(aliasRows).onConflictDoNothing();
-
-  ctx.logger.info({ indexCode, companies: upserted.length }, "universe synced");
-  return { companies: upserted.length };
 }
 
 export const GROUP_ALIASES: Record<string, string[]> = {

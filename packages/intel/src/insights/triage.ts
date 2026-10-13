@@ -1,5 +1,15 @@
 import { chunk, sha256, throwIfAborted } from "@ma/core";
-import { and, announcements, companies, desc, eq, inArray, insights, isNull } from "@ma/db";
+import {
+  and,
+  announcements,
+  companies,
+  desc,
+  eq,
+  fencedTransaction,
+  inArray,
+  insights,
+  isNull,
+} from "@ma/db";
 import type { IntelContext } from "./context.js";
 import { inputMessage, TRIAGE_SYSTEM } from "./prompts.js";
 import { INSIGHT_MODEL_VERSION, type TriageItem, triageBatchSchema } from "./schemas.js";
@@ -94,16 +104,17 @@ export async function loadTriageCandidates(
 
 async function markRoutine(ctx: IntelContext, ids: number[]): Promise<void> {
   if (!ids.length) return;
-  throwIfAborted();
-  await ctx.db
-    .update(announcements)
-    .set({
-      materiality: "low",
-      triageCategory: "routine",
-      soWhat: ROUTINE_SO_WHAT,
-      triageModelVersion: TRIAGE_MODEL_VERSION,
-    })
-    .where(inArray(announcements.id, ids));
+  await fencedTransaction(ctx.db, (tx) =>
+    tx
+      .update(announcements)
+      .set({
+        materiality: "low",
+        triageCategory: "routine",
+        soWhat: ROUTINE_SO_WHAT,
+        triageModelVersion: TRIAGE_MODEL_VERSION,
+      })
+      .where(inArray(announcements.id, ids)),
+  );
 }
 
 export async function triageAnnouncements(
@@ -125,6 +136,7 @@ export async function triageAnnouncements(
     calls: 0,
   };
   for (const batch of chunk(rest, TRIAGE_BATCH)) {
+    throwIfAborted();
     if (opts.expired?.()) break;
     const res = await ctx.llm.complete({
       name: "announcement_triage",
@@ -139,36 +151,38 @@ export async function triageAnnouncements(
     stats.missing += batch.length - matched.length;
     const perItemPrompt = Math.round(res.promptTokens / batch.length);
     const perItemCompletion = Math.round(res.completionTokens / batch.length);
-    for (const { candidate, item } of matched) {
-      const input = triageItemInput(candidate);
-      throwIfAborted();
-      await ctx.db
-        .update(announcements)
-        .set({
-          materiality: item.materiality,
-          triageCategory: item.category,
-          soWhat: item.soWhat,
-          triageModelVersion: TRIAGE_MODEL_VERSION,
-        })
-        .where(eq(announcements.id, candidate.id));
-      await ctx.db
-        .insert(insights)
-        .values({
-          companyId: candidate.companyId,
-          kind: "announcement_triage",
-          subjectId: candidate.id,
-          modelVersion: TRIAGE_MODEL_VERSION,
-          model: res.model,
-          inputHash: sha256(JSON.stringify(input)),
-          inputs: input,
-          output: item,
-          confidence: null,
-          promptTokens: perItemPrompt,
-          completionTokens: perItemCompletion,
-        })
-        .onConflictDoNothing();
-      stats.triaged++;
-    }
+    await fencedTransaction(ctx.db, async (tx) => {
+      for (const { candidate, item } of matched) {
+        throwIfAborted();
+        const input = triageItemInput(candidate);
+        await tx
+          .update(announcements)
+          .set({
+            materiality: item.materiality,
+            triageCategory: item.category,
+            soWhat: item.soWhat,
+            triageModelVersion: TRIAGE_MODEL_VERSION,
+          })
+          .where(eq(announcements.id, candidate.id));
+        await tx
+          .insert(insights)
+          .values({
+            companyId: candidate.companyId,
+            kind: "announcement_triage",
+            subjectId: candidate.id,
+            modelVersion: TRIAGE_MODEL_VERSION,
+            model: res.model,
+            inputHash: sha256(JSON.stringify(input)),
+            inputs: input,
+            output: item,
+            confidence: null,
+            promptTokens: perItemPrompt,
+            completionTokens: perItemCompletion,
+          })
+          .onConflictDoNothing();
+        stats.triaged++;
+      }
+    });
   }
   return stats;
 }

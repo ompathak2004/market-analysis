@@ -7,9 +7,17 @@ export class DeadlineExceededError extends AppError {
   }
 }
 
+export type CommitGuard = (tx: unknown) => Promise<void>;
+
+export interface DeadlineOptions {
+  signal?: AbortSignal;
+  commitGuard?: CommitGuard;
+}
+
 interface DeadlineScope {
   deadline: number;
   signal: AbortSignal;
+  commitGuard?: CommitGuard;
 }
 
 const scope = new AsyncLocalStorage<DeadlineScope>();
@@ -17,14 +25,17 @@ const scope = new AsyncLocalStorage<DeadlineScope>();
 export function withDeadline<T>(
   deadline: number,
   fn: (signal: AbortSignal) => Promise<T>,
-  abort?: AbortSignal,
+  opts: DeadlineOptions = {},
 ): Promise<T> {
   const outer = scope.getStore();
   const effective = outer ? Math.min(outer.deadline, deadline) : deadline;
   const own = AbortSignal.timeout(Math.max(0, effective - Date.now()));
-  const parts = [own, ...(outer ? [outer.signal] : []), ...(abort ? [abort] : [])];
+  const parts = [own, ...(outer ? [outer.signal] : []), ...(opts.signal ? [opts.signal] : [])];
   const signal = parts.length === 1 ? own : AbortSignal.any(parts);
-  return scope.run({ deadline: effective, signal }, () => fn(signal));
+  const commitGuard = opts.commitGuard ?? outer?.commitGuard;
+  return scope.run({ deadline: effective, signal, ...(commitGuard ? { commitGuard } : {}) }, () =>
+    fn(signal),
+  );
 }
 
 export function currentSignal(): AbortSignal | null {
@@ -34,6 +45,11 @@ export function currentSignal(): AbortSignal | null {
 export function throwIfAborted(signal?: AbortSignal | null): void {
   signal?.throwIfAborted();
   currentSignal()?.throwIfAborted();
+}
+
+export async function guardCommit(tx: unknown, signal?: AbortSignal | null): Promise<void> {
+  throwIfAborted(signal);
+  await scope.getStore()?.commitGuard?.(tx);
 }
 
 export function currentDeadline(): number | null {

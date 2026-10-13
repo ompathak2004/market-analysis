@@ -14,9 +14,19 @@ const RELATIONSHIPS_PER_FANOUT = 6;
 const ANNUAL_REPORTS = 2;
 const CONCALLS = 4;
 
-const DOCUMENTS_PENDING = sql`exists (
-  select 1 from documents d
-  where d.company_id = c.id and d.source in ('annual_report', 'concall')
+// Only the documents extract actually reads (the newest ANNUAL_REPORTS and CONCALLS per company)
+// can make a company due; older ones stay below the extractor version forever and would otherwise
+// reselect the company on every fan-out.
+export const DOCUMENTS_PENDING = sql`exists (
+  select 1 from (
+    select d.fetched_at, d.parser_version,
+      row_number() over (partition by d.source order by d.fetched_at desc, d.id desc) as rn,
+      d.source
+    from documents d
+    where d.company_id = c.id and d.source in ('annual_report', 'concall')
+  ) d
+  where ((d.source = 'annual_report' and d.rn <= ${ANNUAL_REPORTS})
+      or (d.source = 'concall' and d.rn <= ${CONCALLS}))
     and (s.synced_at is null or d.fetched_at > s.synced_at
       or (coalesce(d.parser_version, 0) < ${RELATIONSHIP_EXTRACTOR_VERSION}
         and s.synced_at < now() - interval '1 day')))`;

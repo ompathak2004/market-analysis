@@ -827,6 +827,7 @@ export async function refreshLogisticsSignals(
   const chokepointZones = opts.chokepointSlugs.map((s) => `chokepoint:${s}`);
   const events: AltdataEventInput[] = [];
   for (const companyId of ids) {
+    throwIfAborted();
     if (opts.deadline && Date.now() > opts.deadline - 5_000) {
       result.skipped += ids.length - result.companies;
       break;

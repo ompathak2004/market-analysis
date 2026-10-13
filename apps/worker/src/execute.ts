@@ -2,7 +2,9 @@ import { AppError, DeadlineExceededError, type Logger, withDeadline } from "@ma/
 import {
   type AttemptOutcome,
   asDeferred,
+  assertFence,
   contractOf,
+  type Executor,
   type Fence,
   type FinishInput,
   familyOf,
@@ -121,7 +123,10 @@ function invokeHandler(
         fence,
         expired: (reserveMs = 0) => now() + reserveMs >= deadline,
       }),
-    AbortSignal.any([abort.signal, deps.stop]),
+    {
+      signal: AbortSignal.any([abort.signal, deps.stop]),
+      commitGuard: (tx) => assertFence(tx as Executor, fence),
+    },
   ).then(
     (value) => ({ ok: true, value }),
     (error: unknown) => ({ ok: false, error, settled: true }),
@@ -132,6 +137,8 @@ function invokeHandler(
   const interrupted = new Promise<Error>((resolve) => {
     onStop = () => resolve(new WorkerStoppingError());
     deps.stop.addEventListener("abort", onStop, { once: true });
+    // The handler starts synchronously above and may already have seen the stop fire.
+    if (deps.stop.aborted) onStop();
     timers.push(
       setTimeout(
         () => resolve(new DeadlineExceededError(0, deadline - now())),
@@ -245,6 +252,12 @@ export async function executeJob(deps: ExecutorDeps, job: QueueJob): Promise<Exe
     const error = sanitizeError(err);
     if (deps.stop.aborted) {
       await finish("abandoned", {}, error).catch(() => undefined);
+      // A handler still running past the abort grace may keep writing; a pg-boss retry would
+      // race it on the next worker, so the job completes and the run stays abandoned.
+      if (!invocation.settled) {
+        deps.logger.error({ ...log, err }, "handler ignored stop; abandoned without retry");
+        return { outcome: "abandoned", runId, attempt, metrics: {}, error };
+      }
       throw err instanceof WorkerStoppingError ? err : new WorkerStoppingError();
     }
     if (!invocation.settled) {

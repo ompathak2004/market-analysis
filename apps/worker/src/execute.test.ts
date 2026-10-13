@@ -243,6 +243,24 @@ describe("executeJob", () => {
       expect(h.retries).toHaveLength(1);
     });
 
+    it("completes the queue job instead of throwing when a stopped handler never settles", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const controller = new AbortController();
+      const h = harness(
+        () =>
+          new Promise(() => {
+            controller.abort();
+          }),
+        { stop: controller.signal },
+      );
+      const pending = executeJob(h.deps, pricesJob());
+      await vi.advanceTimersByTimeAsync(ABORT_SETTLE_MS);
+      const report = await pending;
+      expect(report.outcome).toBe("abandoned");
+      expect(h.finished[0]?.outcome).toBe("abandoned");
+      expect(h.retries).toHaveLength(0);
+    });
+
     it("abandons without retry when the handler ignores the abort", async () => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       const h = harness(() => new Promise(() => undefined));

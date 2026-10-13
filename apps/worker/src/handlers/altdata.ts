@@ -66,7 +66,7 @@ export async function altdataPrices(ctx: WorkerContext): Promise<Prices | null> 
 
 export const altdataHandlers: Pick<HandlerMap, AltdataType> = {
   "aircraft.registry": gated(async ({ ctx, deadline, signal }) => {
-    const facilities = await seedFacilities(ctx);
+    const facilities = await seedFacilities(ctx, signal);
     const registry = await seedAircraftRegistry(ctx, { deadline: deadline - 20_000, signal });
     return { ...prefixed("facilities", facilities), ...prefixed("registry", registry) };
   }),

@@ -1,14 +1,17 @@
 import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 import { closeDb, createDb, type Db, sql } from "@ma/db";
 import {
   acquireLease,
   ensureRun,
+  LEASE_RENEW_MS,
   type Lease,
   LeaseLostError,
   releaseLease,
+  renewLease,
   startAttempt,
 } from "@ma/jobs";
-import { ensureQueues } from "@ma/jobs/queue";
+import { ENQUEUE_BATCH, ensureQueues } from "@ma/jobs/queue";
 import type { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FanoutCompletion } from "./execute.js";
@@ -45,12 +48,16 @@ describe.skipIf(!url)("completeFanout (DATABASE_URL_TEST)", () => {
     await db.execute(sql`delete from job_runs where campaign_id in ${campaigns}`);
     await db.execute(sql`delete from job_runs where unit_key = ${tag}`);
     await db.execute(sql`delete from ingest_runs where source = ${tag}`);
-    await db.execute(sql`delete from worker_leases where name = ${`${tag}-lease`}`);
+    await db.execute(sql`delete from worker_leases where name like ${`${tag}-%`}`);
     await boss.stop({ graceful: false, close: true });
     await closeDb(db);
   });
 
-  async function attempt(n: number, owner = lease): Promise<FanoutCompletion> {
+  async function attempt(
+    n: number,
+    owner = lease,
+    kids: FanoutCompletion["children"] = children,
+  ): Promise<FanoutCompletion> {
     const runId = await ensureRun(db, {
       type: "prices.fanout",
       unitKey: tag,
@@ -63,7 +70,7 @@ describe.skipIf(!url)("completeFanout (DATABASE_URL_TEST)", () => {
       attempt: n,
       deadlineAt: new Date(Date.now() + 60_000),
       queueJobId: null,
-      lease,
+      lease: owner,
     });
     return {
       runId,
@@ -72,11 +79,11 @@ describe.skipIf(!url)("completeFanout (DATABASE_URL_TEST)", () => {
       campaignId: null,
       outcome: "succeeded",
       error: null,
-      metrics: { children: children.length },
+      metrics: { children: kids.length },
       durationMs: 5,
       lease: owner,
       source: tag,
-      children,
+      children: kids,
       queueJobId: "",
     };
   }
@@ -108,6 +115,50 @@ describe.skipIf(!url)("completeFanout (DATABASE_URL_TEST)", () => {
       ),
     ).toBe(1);
   });
+
+  it(
+    "batches a large fan-out and never blocks lease renewal, even past LEASE_RENEW_MS",
+    async () => {
+      const own = (await acquireLease(db, `${tag}-renew`, randomUUID(), 60_000)) as Lease;
+      const renewDb = createDb(url ?? "", 1);
+      await renewDb.execute(sql`set lock_timeout = '2s'`);
+      let inserts = 0;
+      const slowBoss = {
+        insert: async (...args: Parameters<PgBoss["insert"]>) => {
+          inserts++;
+          if (inserts === 1) await sleep(LEASE_RENEW_MS + 500);
+          return boss.insert(...args);
+        },
+      } as unknown as PgBoss;
+      const many = Array.from({ length: ENQUEUE_BATCH * 2 + 50 }, (_, i) => ({
+        type: "prices.sync" as const,
+        payload: { companyId: base + 10 + i },
+      }));
+      try {
+        const input = await attempt(4, own, many);
+        let done = false;
+        const fanout = createLedgerPort(db, slowBoss)
+          .completeFanout({ ...input, queueJobId: randomUUID() })
+          .finally(() => {
+            done = true;
+          });
+        const renewals: Array<{ ok: boolean; ms: number }> = [];
+        while (!done) {
+          const t0 = Date.now();
+          renewals.push({ ok: await renewLease(renewDb, own, 60_000), ms: Date.now() - t0 });
+          await sleep(1_000);
+        }
+        const result = await fanout;
+        expect(result.enqueued).toBe(many.length);
+        expect(inserts).toBe(3);
+        expect(renewals.length).toBeGreaterThanOrEqual(10);
+        expect(renewals.every((r) => r.ok && r.ms < 2_000)).toBe(true);
+      } finally {
+        await closeDb(renewDb);
+      }
+    },
+    LEASE_RENEW_MS * 3,
+  );
 
   it("rolls the whole fan-out back when the lease is gone", async () => {
     const port = createLedgerPort(db, boss);

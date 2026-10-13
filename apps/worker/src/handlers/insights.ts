@@ -1,5 +1,5 @@
 import { isoDate } from "@ma/core";
-import { analystCalls, and, desc, eq, isNull, sql } from "@ma/db";
+import { analystCalls, and, desc, eq, fencedTransaction, isNull, sql } from "@ma/db";
 import {
   assembleCompanyInputs,
   generateBrokerDigest,
@@ -98,10 +98,12 @@ export const insightHandlers: InsightHandlers = {
       return done(r === "skipped" ? { skipped: 1 } : { summarized: 1 });
     } catch (err) {
       if (err instanceof LlmInvalidOutput || err instanceof LlmPromptTooLarge) {
-        await ctx.db
-          .update(analystCalls)
-          .set({ summarizedAt: new Date() })
-          .where(eq(analystCalls.id, payload.callId));
+        await fencedTransaction(ctx.db, (tx) =>
+          tx
+            .update(analystCalls)
+            .set({ summarizedAt: new Date() })
+            .where(eq(analystCalls.id, payload.callId)),
+        );
       }
       throw err;
     }

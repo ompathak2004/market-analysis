@@ -1,8 +1,8 @@
-import { type Db, ingestRuns, jobRuns, sql } from "@ma/db";
+import { type Db, ingestRuns, jobRuns, sql, type Tx } from "@ma/db";
 import type { Lane } from "./contracts.js";
 import type { Lease } from "./lease.js";
 
-export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+export type { Tx };
 export type Executor = Db | Tx;
 
 export type RunStatus =
@@ -44,15 +44,30 @@ export interface RunInput {
 }
 
 export async function ensureRun(db: Executor, input: RunInput): Promise<number> {
+  const ids = await ensureRuns(db, [input]);
+  const id = ids.get(runKey(input.type, input.unitKey));
+  if (id === undefined) throw new Error(`job_runs upsert returned no id for ${input.unitKey}`);
+  return id;
+}
+
+export function runKey(type: string, unitKey: string): string {
+  return `${type}\u0000${unitKey}`;
+}
+
+/** Upserts many runs of one campaign in one statement; keys are `runKey(type, unitKey)`. */
+export async function ensureRuns(db: Executor, inputs: RunInput[]): Promise<Map<string, number>> {
+  if (!inputs.length) return new Map();
   const rows = await db
     .insert(jobRuns)
-    .values({
-      jobType: input.type,
-      unitKey: input.unitKey,
-      campaignId: input.campaignId,
-      lane: input.lane,
-      payload: sanitizePayload(input.payload),
-    })
+    .values(
+      inputs.map((input) => ({
+        jobType: input.type,
+        unitKey: input.unitKey,
+        campaignId: input.campaignId,
+        lane: input.lane,
+        payload: sanitizePayload(input.payload),
+      })),
+    )
     .onConflictDoUpdate({
       target: [jobRuns.jobType, jobRuns.unitKey, jobRuns.campaignId],
       set: {
@@ -61,14 +76,17 @@ export async function ensureRun(db: Executor, input: RunInput): Promise<number> 
         finishedAt: sql`case when ${jobRuns.status} in ('succeeded', 'dead') then null else ${jobRuns.finishedAt} end`,
       },
     })
-    .returning({ id: jobRuns.id });
-  const id = rows[0]?.id;
-  if (id === undefined) throw new Error(`job_runs upsert returned no id for ${input.unitKey}`);
-  return id;
+    .returning({ id: jobRuns.id, type: jobRuns.jobType, unitKey: jobRuns.unitKey });
+  return new Map(rows.map((r) => [runKey(r.type, r.unitKey), r.id]));
 }
 
 export async function deleteRun(db: Executor, runId: number): Promise<void> {
-  await db.execute(sql`delete from job_runs where id = ${runId} and status = 'queued'`);
+  await deleteRuns(db, [runId]);
+}
+
+export async function deleteRuns(db: Executor, runIds: number[]): Promise<void> {
+  if (!runIds.length) return;
+  await db.execute(sql`delete from job_runs where id in (${idList(runIds)}) and status = 'queued'`);
 }
 
 function fence(lease: Lease) {

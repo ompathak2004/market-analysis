@@ -24,18 +24,17 @@ export class LeaseLostError extends AppError {
 
 type Executor = Pick<Db, "execute">;
 
+// No row locks: a FOR SHARE lock on worker_leases would block lease renewal for the rest of the
+// transaction. Callers run this as the last statement before commit, and ledger writes carry
+// the same generation predicate in their own UPDATE.
 export async function assertFence(tx: Executor, fence: Fence): Promise<void> {
   const { lease, attemptId } = fence;
   const rows = await tx.execute(sql`
-    select 1 from worker_leases
-    where name = ${lease.name} and owner_id = ${lease.ownerId}
-      and generation = ${lease.generation} and leased_until > now()
-    for share`);
+    select 1 from worker_leases l
+    where l.name = ${lease.name} and l.owner_id = ${lease.ownerId}
+      and l.generation = ${lease.generation} and l.leased_until > now()
+      ${attemptId === undefined ? sql`` : sql`and exists (select 1 from job_attempts a where a.id = ${attemptId} and a.finished_at is null)`}`);
   if (rows.length === 0) throw new LeaseLostError();
-  if (attemptId === undefined) return;
-  const open = await tx.execute(sql`
-    select 1 from job_attempts where id = ${attemptId} and finished_at is null for share`);
-  if (open.length === 0) throw new LeaseLostError();
 }
 
 export async function acquireLease(

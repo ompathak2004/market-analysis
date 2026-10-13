@@ -1,6 +1,5 @@
 import { sha256 } from "@ma/core";
-import { analystCalls, and, desc, eq, lt, sql } from "@ma/db";
-import type { IngestContext } from "../context.js";
+import { analystCalls, and, type Db, desc, eq, lt, sql, type Tx } from "@ma/db";
 
 type Action = (typeof analystCalls.$inferInsert)["action"];
 
@@ -30,8 +29,9 @@ const RANK: Record<string, number> = {
   "strong buy": 4,
 };
 
+/** Callers run this inside their own fenced transaction. */
 export async function upsertBrokerCalls(
-  ctx: IngestContext,
+  db: Db | Tx,
   calls: BrokerCall[],
   source: string,
 ): Promise<{ inserted: number; ids: number[] }> {
@@ -42,7 +42,7 @@ export async function upsertBrokerCalls(
     const dedupeKey = sha256(
       `${call.nseSymbol}|${call.broker}|${call.publishedAt}|${call.rating}|${call.targetPrice ?? ""}`,
     );
-    const prior = await ctx.db.query.analystCalls.findFirst({
+    const prior = await db.query.analystCalls.findFirst({
       where: and(
         eq(analystCalls.companyId, call.companyId),
         eq(analystCalls.broker, call.broker),
@@ -50,7 +50,7 @@ export async function upsertBrokerCalls(
       ),
       orderBy: desc(analystCalls.publishedAt),
     });
-    const res = await ctx.db
+    const res = await db
       .insert(analystCalls)
       .values({
         companyId: call.companyId,

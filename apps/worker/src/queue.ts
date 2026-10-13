@@ -11,7 +11,7 @@ import {
   startAttempt,
   type Tx,
 } from "@ma/jobs";
-import { enqueue, PG_BOSS_SCHEMA } from "@ma/jobs/queue";
+import { enqueue, enqueueMany, type ManyChild, PG_BOSS_SCHEMA } from "@ma/jobs/queue";
 import { PgBoss } from "pg-boss";
 import { QUEUE_POOL_MAX, queueConnection } from "./context.js";
 import type { LedgerPort, RetryPort, SpawnResult } from "./execute.js";
@@ -48,20 +48,7 @@ async function spawn(
   parentJobId: string,
 ): Promise<SpawnResult> {
   const campaignId = await createCampaign(tx, source, parentJobId);
-  let enqueued = 0;
-  for (const child of children) {
-    const r = await enqueue(
-      boss,
-      {
-        type: child.type,
-        payload: child.payload as never,
-        campaignId,
-        ...(child.priority !== undefined ? { priority: child.priority } : {}),
-      },
-      tx,
-    );
-    if (r.jobId) enqueued++;
-  }
+  const enqueued = await enqueueMany(boss, campaignId, children as ManyChild[], tx);
   await setCampaignTotal(tx, campaignId, enqueued, {
     children: children.length,
     deduplicated: children.length - enqueued,
@@ -77,7 +64,6 @@ export function createLedgerPort(db: Db, boss: PgBoss): LedgerPort {
     recordRoot: (outcome) => recordRootOutcome(db, outcome),
     completeFanout: ({ source, children, queueJobId, ...finish }) =>
       db.transaction(async (tx) => {
-        await assertFence(tx, { lease: finish.lease, attemptId: finish.attemptId });
         const existing = await findCampaign(tx, queueJobId);
         const spawned = existing
           ? { ...existing, replayed: true }
@@ -87,6 +73,7 @@ export function createLedgerPort(db: Db, boss: PgBoss): LedgerPort {
           enqueued: spawned.enqueued,
           campaignId: spawned.campaignId,
         };
+        await assertFence(tx, { lease: finish.lease, attemptId: finish.attemptId });
         if (!(await finishAttempt(tx, { ...finish, metrics }))) throw new LeaseLostError();
         return spawned;
       }),

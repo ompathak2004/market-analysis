@@ -1,5 +1,14 @@
 import { addYears, assertTimeLeft, DeadlineExceededError, isoDate, throwIfAborted } from "@ma/core";
-import { companies, companyAliases, eq, relationships, signals, sql } from "@ma/db";
+import {
+  companies,
+  companyAliases,
+  eq,
+  fencedTransaction,
+  relationships,
+  signals,
+  sql,
+  type Tx,
+} from "@ma/db";
 import type { IngestContext } from "../context.js";
 import {
   type AliasEntry,
@@ -82,68 +91,83 @@ export async function extractRelationshipsForCompany(
     documentsProcessed++;
     throwIfAborted(signal);
 
-    if (src.kind === "annual_report") {
-      const c = extractConcentration(doc.content);
-      if (c?.revenueFromThem != null) {
-        const revenueCr = toCrore(c.revenueFromThem, c.unit);
-        const fy = await ctx.db.query.fundamentals.findFirst({
-          where: (f, { and, eq }) =>
-            and(eq(f.companyId, companyId), eq(f.periodEnd, fyEnd), eq(f.periodType, "annual")),
-        });
-        const total = fy?.revenue ? Number(fy.revenue) : null;
-        if (total && total > 0) {
-          concentration = Math.min(100, (revenueCr / total) * 100);
-          await upsertSignal(ctx, companyId, fyEnd, "customer_concentration_pct", concentration, {
-            customersOver10Pct: c.customersOver10Pct,
-            revenueFromThemCr: revenueCr,
-            totalRevenueCr: total,
+    // One document's signals, relationships and parsed mark commit together, fenced.
+    relCount += await fencedTransaction(
+      ctx.db,
+      async (tx) => {
+        let docRels = 0;
+        if (src.kind === "annual_report") {
+          const c = extractConcentration(doc.content);
+          if (c?.revenueFromThem != null) {
+            const revenueCr = toCrore(c.revenueFromThem, c.unit);
+            const fy = await tx.query.fundamentals.findFirst({
+              where: (f, { and, eq }) =>
+                and(eq(f.companyId, companyId), eq(f.periodEnd, fyEnd), eq(f.periodType, "annual")),
+            });
+            const total = fy?.revenue ? Number(fy.revenue) : null;
+            if (total && total > 0) {
+              concentration = Math.min(100, (revenueCr / total) * 100);
+              await upsertSignal(
+                tx,
+                companyId,
+                fyEnd,
+                "customer_concentration_pct",
+                concentration,
+                {
+                  customersOver10Pct: c.customersOver10Pct,
+                  revenueFromThemCr: revenueCr,
+                  totalRevenueCr: total,
+                  documentId: doc.id,
+                },
+              );
+            }
+          }
+        }
+
+        for (const share of extractTopCustomerShares(doc.content).slice(0, 3)) {
+          await upsertSignal(tx, companyId, fyEnd, `top${share.topN}_customers_pct`, share.pct, {
+            sentence: share.sentence,
             documentId: doc.id,
           });
         }
-      }
-    }
 
-    for (const share of extractTopCustomerShares(doc.content).slice(0, 3)) {
-      await upsertSignal(ctx, companyId, fyEnd, `top${share.topN}_customers_pct`, share.pct, {
-        sentence: share.sentence,
-        documentId: doc.id,
-      });
-    }
-
-    const mentions = extractNamedMentions(doc.content, matcher, companyId);
-    for (const m of mentions) {
-      if (m.role === "unknown") continue;
-      throwIfAborted(signal);
-      const other = await ctx.db.query.companies.findFirst({
-        where: eq(companies.id, m.companyId),
-      });
-      if (!other) continue;
-      const isCustomer = m.role === "customer";
-      const res = await ctx.db
-        .insert(relationships)
-        .values({
-          supplierCompanyId: isCustomer ? companyId : other.id,
-          supplierName: isCustomer ? company.name : other.name,
-          customerCompanyId: isCustomer ? other.id : companyId,
-          customerName: isCustomer ? other.name : company.name,
-          costBucket: "COGS",
-          disclosedBy: isCustomer ? "supplier" : "customer",
-          disclosureKind:
-            m.pct != null ? "major_customer" : src.kind === "concall" ? "press" : "segment",
-          disclosedPct: m.pct,
-          fiscalYear,
-          validFrom: fyEnd,
-          validTo: isoDate(addYears(new Date(fyEnd), 4)),
-          confidence: confidenceFor(m.pct, src.kind),
-          evidence: m.sentence,
-          sourceDocumentId: doc.id,
-        })
-        .onConflictDoNothing()
-        .returning({ id: relationships.id });
-      relCount += res.length;
-    }
-    throwIfAborted(signal);
-    await ctx.docs.markParsed(doc.id, RELATIONSHIP_EXTRACTOR_VERSION);
+        const mentions = extractNamedMentions(doc.content, matcher, companyId);
+        for (const m of mentions) {
+          if (m.role === "unknown") continue;
+          throwIfAborted(signal);
+          const other = await tx.query.companies.findFirst({
+            where: eq(companies.id, m.companyId),
+          });
+          if (!other) continue;
+          const isCustomer = m.role === "customer";
+          const res = await tx
+            .insert(relationships)
+            .values({
+              supplierCompanyId: isCustomer ? companyId : other.id,
+              supplierName: isCustomer ? company.name : other.name,
+              customerCompanyId: isCustomer ? other.id : companyId,
+              customerName: isCustomer ? other.name : company.name,
+              costBucket: "COGS",
+              disclosedBy: isCustomer ? "supplier" : "customer",
+              disclosureKind:
+                m.pct != null ? "major_customer" : src.kind === "concall" ? "press" : "segment",
+              disclosedPct: m.pct,
+              fiscalYear,
+              validFrom: fyEnd,
+              validTo: isoDate(addYears(new Date(fyEnd), 4)),
+              confidence: confidenceFor(m.pct, src.kind),
+              evidence: m.sentence,
+              sourceDocumentId: doc.id,
+            })
+            .onConflictDoNothing()
+            .returning({ id: relationships.id });
+          docRels += res.length;
+        }
+        await ctx.docs.markParsed(doc.id, RELATIONSHIP_EXTRACTOR_VERSION, "parsed", tx);
+        return docRels;
+      },
+      signal,
+    );
   }
 
   ctx.logger.info(
@@ -154,14 +178,14 @@ export async function extractRelationshipsForCompany(
 }
 
 async function upsertSignal(
-  ctx: IngestContext,
+  db: Tx,
   companyId: number,
   asOf: string,
   kind: string,
   value: number,
   inputs: Record<string, unknown>,
 ): Promise<void> {
-  await ctx.db
+  await db
     .insert(signals)
     .values({ companyId, asOf, kind, value, inputs, modelVersion: RELATIONSHIP_EXTRACTOR_VERSION })
     .onConflictDoUpdate({

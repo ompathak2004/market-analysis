@@ -1,5 +1,5 @@
 import { chunk, sha256, throwIfAborted } from "@ma/core";
-import { announcements, companies, eq, pricesDaily, sql } from "@ma/db";
+import { announcements, companies, eq, fencedTransaction, pricesDaily, sql } from "@ma/db";
 import type { IngestContext } from "../context.js";
 import type { YahooRange } from "../sources/yahoo.js";
 
@@ -15,20 +15,25 @@ export async function syncPrices(
   if (!bars.length) return 0;
   for (const batch of chunk(bars, 500)) {
     throwIfAborted(signal);
-    await ctx.db
-      .insert(pricesDaily)
-      .values(batch.map((b) => ({ companyId, ...b })))
-      .onConflictDoUpdate({
-        target: [pricesDaily.companyId, pricesDaily.date],
-        set: {
-          open: sql`excluded.open`,
-          high: sql`excluded.high`,
-          low: sql`excluded.low`,
-          close: sql`excluded.close`,
-          adjClose: sql`excluded.adj_close`,
-          volume: sql`excluded.volume`,
-        },
-      });
+    await fencedTransaction(
+      ctx.db,
+      (tx) =>
+        tx
+          .insert(pricesDaily)
+          .values(batch.map((b) => ({ companyId, ...b })))
+          .onConflictDoUpdate({
+            target: [pricesDaily.companyId, pricesDaily.date],
+            set: {
+              open: sql`excluded.open`,
+              high: sql`excluded.high`,
+              low: sql`excluded.low`,
+              close: sql`excluded.close`,
+              adjClose: sql`excluded.adj_close`,
+              volume: sql`excluded.volume`,
+            },
+          }),
+      signal,
+    );
   }
   return bars.length;
 }
@@ -56,11 +61,16 @@ export async function syncAnnouncements(
   let inserted = 0;
   for (const batch of chunk(rows, 500)) {
     throwIfAborted(signal);
-    const res = await ctx.db
-      .insert(announcements)
-      .values(batch)
-      .onConflictDoNothing()
-      .returning({ id: announcements.id });
+    const res = await fencedTransaction(
+      ctx.db,
+      (tx) =>
+        tx
+          .insert(announcements)
+          .values(batch)
+          .onConflictDoNothing()
+          .returning({ id: announcements.id }),
+      signal,
+    );
     inserted += res.length;
   }
   return inserted;

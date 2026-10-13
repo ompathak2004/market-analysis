@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ABORT_BEFORE_DRAIN_END_MS, type DrainSteps, drainInOrder } from "./drain.js";
+import { ABORT_SETTLE_MS } from "./execute.js";
 
 const DRAIN_MS = 90_000;
 const RENEW_MS = 10_000;
@@ -64,8 +65,9 @@ describe("drainInOrder", () => {
     await vi.advanceTimersByTimeAsync(DRAIN_MS);
     await done;
     const abortAt = DRAIN_MS - ABORT_BEFORE_DRAIN_END_MS;
+    expect(abortAt).toBe(DRAIN_MS - ABORT_SETTLE_MS - 5_000);
     expect(events.find(([n]) => n === "abort")?.[1]).toBe(abortAt);
-    expect(events.filter(([n]) => n === "renew")).toHaveLength(abortAt / RENEW_MS);
+    expect(events.filter(([n]) => n === "renew")).toHaveLength(Math.floor(abortAt / RENEW_MS));
     expect(events.at(-1)).toEqual(["release", abortAt]);
   });
 });

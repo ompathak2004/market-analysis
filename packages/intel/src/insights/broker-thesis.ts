@@ -1,5 +1,4 @@
-import { throwIfAborted } from "@ma/core";
-import { analystCalls, companies, documents, eq, sql } from "@ma/db";
+import { analystCalls, companies, documents, eq, fencedTransaction, sql } from "@ma/db";
 import { LlmInvalidOutput } from "@ma/llm";
 import type { IntelContext } from "./context.js";
 import { BROKER_THESIS_SYSTEM, groundingFeedback, inputMessage } from "./prompts.js";
@@ -66,10 +65,12 @@ export async function summarizeBrokerReport(
   if (!row) return "skipped";
   const text = row.content ? reportExcerpt(row.content) : "";
   if (text.length < 200) {
-    await ctx.db
-      .update(analystCalls)
-      .set({ summaryModelVersion: BROKER_THESIS_MODEL_VERSION, summarizedAt: new Date() })
-      .where(eq(analystCalls.id, analystCallId));
+    await fencedTransaction(ctx.db, (tx) =>
+      tx
+        .update(analystCalls)
+        .set({ summaryModelVersion: BROKER_THESIS_MODEL_VERSION, summarizedAt: new Date() })
+        .where(eq(analystCalls.id, analystCallId)),
+    );
     return "skipped";
   }
   const c = row.call;
@@ -104,15 +105,16 @@ export async function summarizeBrokerReport(
     result = await ask(groundingFeedback(describeViolations(result.violations)));
   const thesis = groundThesis(result.thesis, result.violations, input);
   if (!thesis) throw new LlmInvalidOutput("broker_thesis", "no grounded key points");
-  throwIfAborted();
-  await ctx.db
-    .update(analystCalls)
-    .set({
-      thesis: thesis as unknown as Record<string, unknown>,
-      summary: sql`coalesce(${analystCalls.summary}, ${thesisSummary(thesis)})`,
-      summaryModelVersion: BROKER_THESIS_MODEL_VERSION,
-      summarizedAt: new Date(),
-    })
-    .where(eq(analystCalls.id, analystCallId));
+  await fencedTransaction(ctx.db, (tx) =>
+    tx
+      .update(analystCalls)
+      .set({
+        thesis: thesis as unknown as Record<string, unknown>,
+        summary: sql`coalesce(${analystCalls.summary}, ${thesisSummary(thesis)})`,
+        summaryModelVersion: BROKER_THESIS_MODEL_VERSION,
+        summarizedAt: new Date(),
+      })
+      .where(eq(analystCalls.id, analystCallId)),
+  );
   return thesis;
 }

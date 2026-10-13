@@ -1,6 +1,6 @@
 import type { RedisClient } from "@ma/cache";
 import { type Logger, type ServiceConfig, throwIfAborted } from "@ma/core";
-import { and, type Db, eq, insights, isNull, sql } from "@ma/db";
+import { and, type Db, eq, fencedTransaction, insights, isNull, sql } from "@ma/db";
 import type { LlmClient } from "@ma/llm";
 
 export interface IntelContext {
@@ -32,7 +32,7 @@ export interface NewInsight {
 
 export async function writeCurrentInsight(db: Db, row: NewInsight): Promise<InsightRow> {
   throwIfAborted();
-  return db.transaction(async (tx) => {
+  return fencedTransaction(db, async (tx) => {
     await tx
       .update(insights)
       .set({ supersededAt: sql`now()` })

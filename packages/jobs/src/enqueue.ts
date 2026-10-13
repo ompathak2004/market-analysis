@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { chunk } from "@ma/core";
 import { sql } from "@ma/db";
-import { fromDrizzle, type PgBoss, type SendOptions } from "pg-boss";
+import { fromDrizzle, type JobInsert, type PgBoss, type SendOptions } from "pg-boss";
 import {
   contractOf,
   type JobEnvelope,
@@ -10,7 +12,15 @@ import {
   parsePayload,
   unitKey,
 } from "./contracts.js";
-import { deleteRun, ensureRun, type Tx } from "./ledger.js";
+import {
+  deleteRun,
+  deleteRuns,
+  ensureRun,
+  ensureRuns,
+  type RunInput,
+  runKey,
+  type Tx,
+} from "./ledger.js";
 import { BACKOFF_BASE_MS, BACKOFF_MAX_MS } from "./policies.js";
 
 export const DEAD_QUEUE = "dead";
@@ -91,6 +101,91 @@ export async function enqueue<T extends JobType>(
     return { jobId, runId: null, unitKey: key };
   }
   return { jobId, runId, unitKey: key };
+}
+
+export const ENQUEUE_BATCH = 200;
+
+export interface ManyChild<T extends JobType = JobType> {
+  type: T;
+  payload: JobPayload<T>;
+  priority?: number;
+}
+
+/**
+ * Enqueues the children of one campaign inside `tx` with one job_runs upsert and one pg-boss
+ * insert per batch, so a large fan-out holds its transaction for a handful of statements.
+ * Children whose singletonKey is already queued are dropped together with their new run row.
+ */
+export async function enqueueMany(
+  boss: Pick<PgBoss, "insert">,
+  campaignId: number,
+  children: ManyChild[],
+  tx: Tx,
+): Promise<number> {
+  const db = fromDrizzle(tx, sql);
+  const seen = new Set<string>();
+  const unique: Array<RunInput & { priority?: number }> = [];
+  for (const child of children) {
+    const payload = parsePayload(child.type, child.payload) as Record<string, unknown>;
+    const key = unitKey(child.type, child.payload);
+    if (seen.has(runKey(child.type, key))) continue;
+    seen.add(runKey(child.type, key));
+    unique.push({
+      type: child.type,
+      unitKey: key,
+      campaignId,
+      lane: laneOf(child.type),
+      payload,
+      ...(child.priority !== undefined ? { priority: child.priority } : {}),
+    });
+  }
+  let enqueued = 0;
+  for (const batch of chunk(unique, ENQUEUE_BATCH)) {
+    const runIds = await ensureRuns(tx, batch);
+    const byLane = new Map<string, Array<{ job: JobInsert; runId: number }>>();
+    for (const run of batch) {
+      const type = run.type as JobType;
+      const runId = runIds.get(runKey(type, run.unitKey));
+      if (runId === undefined) throw new Error(`job_runs upsert lost ${run.unitKey}`);
+      const envelope: JobEnvelope = {
+        type,
+        payload: run.payload,
+        campaignId,
+        runId,
+        attemptBase: 0,
+        deferrals: 0,
+      };
+      const opts = sendOptions(type, run.unitKey, {
+        ...(run.priority !== undefined ? { priority: run.priority } : {}),
+      });
+      const job: JobInsert = {
+        id: randomUUID(),
+        data: envelope,
+        singletonKey: run.unitKey,
+        ...(opts.retryLimit !== undefined ? { retryLimit: opts.retryLimit } : {}),
+        ...(opts.expireInSeconds !== undefined ? { expireInSeconds: opts.expireInSeconds } : {}),
+        ...(opts.priority !== undefined ? { priority: opts.priority } : {}),
+      };
+      const list = byLane.get(run.lane) ?? [];
+      list.push({ job, runId });
+      byLane.set(run.lane, list);
+    }
+    for (const [lane, items] of byLane) {
+      const ids = new Set(
+        (await boss.insert(
+          lane,
+          items.map((i) => i.job),
+          { db, returnId: true },
+        )) ?? [],
+      );
+      enqueued += ids.size;
+      await deleteRuns(
+        tx,
+        items.filter((i) => !ids.has(i.job.id as string)).map((i) => i.runId),
+      );
+    }
+  }
+  return enqueued;
 }
 
 export const LANE_QUEUE_OPTIONS = {

@@ -21,20 +21,23 @@ Aiven's free plan allows 15 connections (12 usable) and has no pooler, so the bu
 | --- | --- | --- | --- | --- |
 | `ma_worker` | ECS worker and its CLI (`DATABASE_URL` in SSM) | 3 (pg-boss pool 1 + app pool 2) | 30 s / 2 s / 15 s | DML on `public`, owner of schema `pgboss` |
 | `ma_web` | Vercel (`DATABASE_URL` in the Vercel project) | 5 | 5 s / 1 s / 10 s | `SELECT` on `public`, read-only transactions, no access to `pgboss` |
-| admin (`avnadmin`) | `pnpm db:migrate` in CI (`MIGRATION_DATABASE_URL`), the bootstrap script | Aiven default | none | DDL |
+| `ma_migrator` | `pnpm db:migrate` in CI (`MIGRATION_DATABASE_URL` in SSM) | 1 | none / 10 s / none | Owner of the application tables in `public` and of schema `drizzle`; `CREATE` on `public` and the database |
+| admin (`avnadmin`) | The bootstrap script only | Aiven default | none | Creates roles, transfers ownership |
 
 A fourth worker connection fails with `too many connections for role "ma_worker"` instead of starving the web app. Every Vercel instance counts against the same 5, so keep the web pool at `max=2`.
 
 Create or update the roles (idempotent; rerun after changing `packages/db/roles/bootstrap.sql`):
 
 ```bash
-psql "$ADMIN_URL" -v worker_password="$WORKER_PW" -v web_password="$WEB_PW" \
-  -f packages/db/roles/bootstrap.sql
+psql "$ADMIN_URL" -v migrator_password="$MIGRATOR_PW" -v worker_password="$WORKER_PW" \
+  -v web_password="$WEB_PW" [-v owner_role=avnadmin] -f packages/db/roles/bootstrap.sql
 ```
 
-The script also creates schema `pgboss` owned by `ma_worker` and transfers any existing pg-boss tables to it, so pg-boss can run its own migrations at start without `CREATE` on the database. The worker only asks pg-boss to create the schema when it is missing and the role is allowed to, so run the script before the first worker start. Default privileges cover tables created later by the admin or by `ma_migrator`.
+Pass `-v owner_role=avnadmin` on the first run against a database whose migrations were applied as the admin. It transfers the tables, sequences, types and functions in `public` and `drizzle` owned by that role to `ma_migrator`, so later migrations run as `ma_migrator` can alter them. Ownership transfer briefly takes an exclusive lock on each table, so run it while the worker is scaled to 0. Later reruns don't need the variable. Each rerun also revokes anything beyond `SELECT` that `ma_web` holds, so a manual grant can't leave the web role writable.
 
-Cutover order: run `pnpm db:migrate` (migrations through `0004_campaign_parent_job`), run the bootstrap script, set the SSM `DATABASE_URL` to the `ma_worker` URL (then force a new deployment), and set the Vercel `DATABASE_URL` to the `ma_web` URL. The worker reads only the shared variables; `API_KEY`, `CRON_SECRET` and `ADMIN_API_KEY` belong to the web app and are not stored for the worker.
+The script also creates schema `pgboss` owned by `ma_worker` and transfers any existing pg-boss tables to it, so pg-boss can run its own migrations at start without `CREATE` on the database. The worker only asks pg-boss to create the schema when it is missing and the role is allowed to, so run the script before the first worker start. Default privileges cover tables created later by the admin or by `ma_migrator`, so new tables get the worker and web grants without rerunning the script.
+
+Cutover order: run `pnpm db:migrate` as the admin one last time (migrations through `0004_campaign_parent_job`), run the bootstrap script with `-v owner_role=avnadmin`, set the SSM `MIGRATION_DATABASE_URL` to the `ma_migrator` URL, set the SSM `DATABASE_URL` to the `ma_worker` URL (then force a new deployment), and set the Vercel `DATABASE_URL` to the `ma_web` URL. The worker reads only the shared variables; `API_KEY`, `CRON_SECRET` and `ADMIN_API_KEY` belong to the web app and are not stored for the worker.
 
 ## Pause, resume, enqueue
 

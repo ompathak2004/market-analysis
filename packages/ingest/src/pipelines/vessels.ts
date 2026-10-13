@@ -7,10 +7,12 @@ import {
   eq,
   facilities,
   facilityCompanies,
+  fencedTransaction,
   gte,
   isNull,
   or,
   sql,
+  type Tx,
   vesselCalls,
   vesselFleet,
   vesselPositions,
@@ -51,81 +53,91 @@ function expired(opts: Deadline, reserveMs = 0): boolean {
   return opts.deadline !== undefined && Date.now() > opts.deadline - reserveMs;
 }
 
-export async function seedFacilities(ctx: IngestContext): Promise<Record<string, number>> {
+export async function seedFacilities(
+  ctx: IngestContext,
+  signal?: AbortSignal,
+): Promise<Record<string, number>> {
   const symbolRows = await ctx.db
     .select({ id: companies.id, symbol: companies.nseSymbol })
     .from(companies)
     .where(sql`${companies.nseSymbol} is not null`);
   const ids = new Map(symbolRows.map((r) => [r.symbol as string, r.id]));
-  let links = 0;
-  let skipped = 0;
-  for (const f of FACILITY_SEEDS) {
-    const [row] = await ctx.db
-      .insert(facilities)
-      .values({
-        slug: f.slug,
-        name: f.name,
-        kind: f.kind,
-        lat: f.lat,
-        lon: f.lon,
-        radiusKm: f.radiusKm,
-        locode: f.locode,
-        aliases: f.aliases,
-        exclusive: f.exclusive,
-        active: f.active,
-      })
-      .onConflictDoUpdate({
-        target: facilities.slug,
-        set: {
-          name: f.name,
-          kind: f.kind,
-          lat: f.lat,
-          lon: f.lon,
-          radiusKm: f.radiusKm,
-          locode: f.locode,
-          aliases: f.aliases,
-          exclusive: f.exclusive,
-          active: f.active,
-          updatedAt: new Date(),
-        },
-      })
-      .returning({ id: facilities.id });
-    if (!row) continue;
-    for (const c of f.companies) {
-      const companyId = ids.get(c.symbol);
-      if (companyId === undefined) {
-        skipped++;
-        continue;
+  return fencedTransaction(
+    ctx.db,
+    async (tx) => {
+      let links = 0;
+      let skipped = 0;
+      for (const f of FACILITY_SEEDS) {
+        throwIfAborted(signal);
+        const [row] = await tx
+          .insert(facilities)
+          .values({
+            slug: f.slug,
+            name: f.name,
+            kind: f.kind,
+            lat: f.lat,
+            lon: f.lon,
+            radiusKm: f.radiusKm,
+            locode: f.locode,
+            aliases: f.aliases,
+            exclusive: f.exclusive,
+            active: f.active,
+          })
+          .onConflictDoUpdate({
+            target: facilities.slug,
+            set: {
+              name: f.name,
+              kind: f.kind,
+              lat: f.lat,
+              lon: f.lon,
+              radiusKm: f.radiusKm,
+              locode: f.locode,
+              aliases: f.aliases,
+              exclusive: f.exclusive,
+              active: f.active,
+              updatedAt: new Date(),
+            },
+          })
+          .returning({ id: facilities.id });
+        if (!row) continue;
+        for (const c of f.companies) {
+          const companyId = ids.get(c.symbol);
+          if (companyId === undefined) {
+            skipped++;
+            continue;
+          }
+          const values = {
+            facilityId: row.id,
+            companyId,
+            role: c.role,
+            commodityIn: c.commodityIn,
+            commodityOut: c.commodityOut,
+            note: c.note ?? null,
+          };
+          await tx
+            .insert(facilityCompanies)
+            .values(values)
+            .onConflictDoUpdate({
+              target: [facilityCompanies.facilityId, facilityCompanies.companyId],
+              set: {
+                role: values.role,
+                commodityIn: values.commodityIn,
+                commodityOut: values.commodityOut,
+                note: values.note,
+              },
+            });
+          links++;
+        }
       }
-      const values = {
-        facilityId: row.id,
-        companyId,
-        role: c.role,
-        commodityIn: c.commodityIn,
-        commodityOut: c.commodityOut,
-        note: c.note ?? null,
-      };
-      await ctx.db
-        .insert(facilityCompanies)
-        .values(values)
-        .onConflictDoUpdate({
-          target: [facilityCompanies.facilityId, facilityCompanies.companyId],
-          set: {
-            role: values.role,
-            commodityIn: values.commodityIn,
-            commodityOut: values.commodityOut,
-            note: values.note,
-          },
-        });
-      links++;
-    }
-  }
-  const hq = await seedHeadquarters(ctx);
-  return { facilities: FACILITY_SEEDS.length, links, skippedSymbols: skipped, hq };
+      const hq = await seedHeadquarters(tx, signal);
+      return { facilities: FACILITY_SEEDS.length, links, skippedSymbols: skipped, hq };
+    },
+    signal,
+  );
 }
 
-async function seedHeadquarters(ctx: IngestContext): Promise<number> {
-  const rows = await ctx.db.execute<{ id: number; symbol: string; name: string; city: string }>(sql`
+async function seedHeadquarters(tx: Tx, signal?: AbortSignal): Promise<number> {
+  const rows = await tx.execute<{ id: number; symbol: string; name: string; city: string }>(sql`
     select c.id, c.nse_symbol as symbol, c.name, c.registered_city as city
     from companies c
     join index_constituents ic on ic.company_id = c.id
@@ -133,13 +145,14 @@ async function seedHeadquarters(ctx: IngestContext): Promise<number> {
     where c.registered_city is not null and c.nse_symbol is not null`);
   let created = 0;
   for (const r of rows) {
+    throwIfAborted(signal);
     const city = r.city.toLowerCase();
     const airport =
       AIRPORTS.find((a) => a.country === "IN" && a.size !== "S" && a.city.toLowerCase() === city) ??
       AIRPORTS.find((a) => a.country === "IN" && a.city.toLowerCase().includes(city));
     if (!airport) continue;
     const slug = `hq-${r.symbol.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-    const [f] = await ctx.db
+    const [f] = await tx
       .insert(facilities)
       .values({
         slug,
@@ -159,7 +172,7 @@ async function seedHeadquarters(ctx: IngestContext): Promise<number> {
       })
       .returning({ id: facilities.id });
     if (!f) continue;
-    await ctx.db
+    await tx
       .insert(facilityCompanies)
       .values({
         facilityId: f.id,
@@ -263,37 +276,53 @@ export async function collectVesselPositions(
     firstSeenAt: ts,
     lastSeenAt: ts,
   }));
-  for (const batch of chunk(vesselRows, 500)) {
-    await ctx.db
-      .insert(vessels)
-      .values(batch)
-      .onConflictDoUpdate({
-        target: vessels.mmsi,
-        set: {
-          lastSeenAt: sql`greatest(${vessels.lastSeenAt}, excluded.last_seen_at)`,
-          name: sql`coalesce(${vessels.name}, excluded.name)`,
-          flag: sql`coalesce(${vessels.flag}, excluded.flag)`,
-        },
-      });
-  }
-  const staticCount = await upsertStatics(ctx, [...result.statics.values()], watched);
-  let inserted = 0;
-  for (const batch of chunk(positions, 500)) {
-    const res = await ctx.db
-      .insert(vesselPositions)
-      .values(batch)
-      .onConflictDoNothing()
-      .returning({ mmsi: vesselPositions.mmsi });
-    inserted += res.length;
-  }
-  let windowsWithData = 0;
-  for (const z of zones) {
-    const inside = positions.filter((p) => pointInBox(p.lat, p.lon, z.box));
-    const unique = new Set(inside.map((p) => p.mmsi)).size;
-    if (inside.length) windowsWithData++;
-    await recordCoverage(ctx, "sea", z.zone, inside.length, unique);
-  }
-  await linkFleetVessels(ctx);
+  // The whole window commits together, fenced, so a lost lease leaves no half-written window.
+  const { staticCount, inserted, windowsWithData } = await fencedTransaction(
+    ctx.db,
+    async (tx) => {
+      for (const batch of chunk(vesselRows, 500)) {
+        throwIfAborted(opts.signal);
+        await tx
+          .insert(vessels)
+          .values(batch)
+          .onConflictDoUpdate({
+            target: vessels.mmsi,
+            set: {
+              lastSeenAt: sql`greatest(${vessels.lastSeenAt}, excluded.last_seen_at)`,
+              name: sql`coalesce(${vessels.name}, excluded.name)`,
+              flag: sql`coalesce(${vessels.flag}, excluded.flag)`,
+            },
+          });
+      }
+      const staticCount = await upsertStatics(
+        tx,
+        [...result.statics.values()],
+        watched,
+        opts.signal,
+      );
+      let inserted = 0;
+      for (const batch of chunk(positions, 500)) {
+        throwIfAborted(opts.signal);
+        const res = await tx
+          .insert(vesselPositions)
+          .values(batch)
+          .onConflictDoNothing()
+          .returning({ mmsi: vesselPositions.mmsi });
+        inserted += res.length;
+      }
+      let windowsWithData = 0;
+      for (const z of zones) {
+        throwIfAborted(opts.signal);
+        const inside = positions.filter((p) => pointInBox(p.lat, p.lon, z.box));
+        const unique = new Set(inside.map((p) => p.mmsi)).size;
+        if (inside.length) windowsWithData++;
+        await recordCoverage(tx, "sea", z.zone, inside.length, unique);
+      }
+      await linkFleetVessels(tx);
+      return { staticCount, inserted, windowsWithData };
+    },
+    opts.signal,
+  );
   return {
     messages: result.stats.messages,
     positions: inserted,
@@ -309,12 +338,14 @@ export async function collectVesselPositions(
 }
 
 async function upsertStatics(
-  ctx: IngestContext,
+  tx: Tx,
   statics: AisStatic[],
   watched: readonly FacilityRow[],
+  signal?: AbortSignal,
 ): Promise<number> {
   const kindById = new Map(watched.map((f) => [f.id, f.kind]));
   for (const s of statics) {
+    throwIfAborted(signal);
     const destinationFacilityId = matchDestination(s.destination, watched);
     const cls = vesselClass(
       s.shipType,
@@ -323,7 +354,7 @@ async function upsertStatics(
       destinationFacilityId !== null ? (kindById.get(destinationFacilityId) ?? null) : null,
     );
     const size = sizeClassFor(cls, s.lengthM);
-    await ctx.db
+    await tx
       .update(vessels)
       .set({
         imo: s.imo,
@@ -346,8 +377,8 @@ async function upsertStatics(
   return statics.length;
 }
 
-async function linkFleetVessels(ctx: IngestContext): Promise<number> {
-  const rows = await ctx.db.execute<{ mmsi: number }>(sql`
+async function linkFleetVessels(tx: Tx): Promise<number> {
+  const rows = await tx.execute<{ mmsi: number }>(sql`
     update vessels v set owner_company_id = f.company_id, owner_source_url = f.source_url,
       dwt = coalesce(v.dwt, f.dwt)
     from vessel_fleet f
@@ -483,169 +514,178 @@ export async function deriveVesselActivity(
       .where(and(eq(vesselPositions.mmsi, mmsi), gte(vesselPositions.ts, from)))
       .orderBy(vesselPositions.ts);
 
-    const callKey = (facilityId: number, at: Date) => `${facilityId}:${at.getTime()}`;
-    const priorCalls = new Map(existingCalls.map((c) => [callKey(c.facilityId, c.enteredAt), c]));
-    const events: Array<typeof altdataEvents.$inferInsert> = [];
-    for (const call of deriveCalls(points, callZones, { now })) {
-      const prior = priorCalls.get(callKey(call.facilityId, call.enteredAt));
-      const draughtIn = prior?.draughtIn ?? meta.draughtM;
-      const draughtOut = call.leftAt ? (prior?.draughtOut ?? meta.draughtM) : null;
-      const dwellMin = Math.round(
-        ((call.leftAt ?? call.lastInsideAt).getTime() - call.enteredAt.getTime()) / MINUTE,
-      );
-      const values = {
-        mmsi,
-        facilityId: call.facilityId,
-        enteredAt: call.enteredAt,
-        leftAt: call.leftAt,
-        dwellMin,
-        draughtIn,
-        draughtOut,
-        cargoDirection: call.leftAt ? cargoDirection(draughtIn, draughtOut) : null,
-        navStatusMode: call.navStatusMode,
-        positions: call.positions,
-        endedBy: call.endedBy,
-      };
-      await ctx.db
-        .insert(vesselCalls)
-        .values(values)
-        .onConflictDoUpdate({
-          target: [vesselCalls.mmsi, vesselCalls.facilityId, vesselCalls.enteredAt],
-          set: {
-            leftAt: values.leftAt,
-            dwellMin: values.dwellMin,
-            draughtOut: values.draughtOut,
-            cargoDirection: values.cargoDirection,
-            navStatusMode: values.navStatusMode,
-            positions: values.positions,
-            endedBy: values.endedBy,
-          },
-        });
-      stats.calls++;
-      if (!call.leftAt) stats.openCalls++;
-      const fac = byId.get(call.facilityId);
-      if (!fac) continue;
-      const label = vesselLabel(meta);
-      const severity = meta.class === "tanker" && fac.exclusive ? 2 : 1;
-      const base = {
-        layer: "sea",
-        companyId: ownerOf.get(fac.id) ?? null,
-        facilityId: fac.id,
-        severity,
-        detail: {
-          mmsi,
-          name: meta.name,
-          class: meta.class,
-          sizeClass: meta.sizeClass,
-          facilitySlug: fac.slug,
-          dwellMin,
-          cargoDirection: values.cargoDirection,
-          note: "cargo and purpose inferred from AIS; unverified",
-        },
-      };
-      events.push({
-        ...base,
-        kind: "sea.arrival",
-        occurredAt: call.enteredAt,
-        headline: `${label} arrived at ${fac.name}`,
-        dedupeKey: `call:${mmsi}:${fac.id}:${call.enteredAt.getTime()}:arrival`,
-      });
-      if (call.leftAt) {
-        events.push({
-          ...base,
-          kind: "sea.departure",
-          occurredAt: call.leftAt,
-          headline: `${label} left ${fac.name} after ${formatDuration(dwellMin)}`,
-          dedupeKey: `call:${mmsi}:${fac.id}:${call.enteredAt.getTime()}:departure`,
-        });
-      }
-    }
+    throwIfAborted(opts.signal);
+    await fencedTransaction(
+      ctx.db,
+      async (tx) => {
+        const callKey = (facilityId: number, at: Date) => `${facilityId}:${at.getTime()}`;
+        const priorCalls = new Map(
+          existingCalls.map((c) => [callKey(c.facilityId, c.enteredAt), c]),
+        );
+        const events: Array<typeof altdataEvents.$inferInsert> = [];
+        for (const call of deriveCalls(points, callZones, { now })) {
+          const prior = priorCalls.get(callKey(call.facilityId, call.enteredAt));
+          const draughtIn = prior?.draughtIn ?? meta.draughtM;
+          const draughtOut = call.leftAt ? (prior?.draughtOut ?? meta.draughtM) : null;
+          const dwellMin = Math.round(
+            ((call.leftAt ?? call.lastInsideAt).getTime() - call.enteredAt.getTime()) / MINUTE,
+          );
+          const values = {
+            mmsi,
+            facilityId: call.facilityId,
+            enteredAt: call.enteredAt,
+            leftAt: call.leftAt,
+            dwellMin,
+            draughtIn,
+            draughtOut,
+            cargoDirection: call.leftAt ? cargoDirection(draughtIn, draughtOut) : null,
+            navStatusMode: call.navStatusMode,
+            positions: call.positions,
+            endedBy: call.endedBy,
+          };
+          await tx
+            .insert(vesselCalls)
+            .values(values)
+            .onConflictDoUpdate({
+              target: [vesselCalls.mmsi, vesselCalls.facilityId, vesselCalls.enteredAt],
+              set: {
+                leftAt: values.leftAt,
+                dwellMin: values.dwellMin,
+                draughtOut: values.draughtOut,
+                cargoDirection: values.cargoDirection,
+                navStatusMode: values.navStatusMode,
+                positions: values.positions,
+                endedBy: values.endedBy,
+              },
+            });
+          stats.calls++;
+          if (!call.leftAt) stats.openCalls++;
+          const fac = byId.get(call.facilityId);
+          if (!fac) continue;
+          const label = vesselLabel(meta);
+          const severity = meta.class === "tanker" && fac.exclusive ? 2 : 1;
+          const base = {
+            layer: "sea",
+            companyId: ownerOf.get(fac.id) ?? null,
+            facilityId: fac.id,
+            severity,
+            detail: {
+              mmsi,
+              name: meta.name,
+              class: meta.class,
+              sizeClass: meta.sizeClass,
+              facilitySlug: fac.slug,
+              dwellMin,
+              cargoDirection: values.cargoDirection,
+              note: "cargo and purpose inferred from AIS; unverified",
+            },
+          };
+          events.push({
+            ...base,
+            kind: "sea.arrival",
+            occurredAt: call.enteredAt,
+            headline: `${label} arrived at ${fac.name}`,
+            dedupeKey: `call:${mmsi}:${fac.id}:${call.enteredAt.getTime()}:arrival`,
+          });
+          if (call.leftAt) {
+            events.push({
+              ...base,
+              kind: "sea.departure",
+              occurredAt: call.leftAt,
+              headline: `${label} left ${fac.name} after ${formatDuration(dwellMin)}`,
+              dedupeKey: `call:${mmsi}:${fac.id}:${call.enteredAt.getTime()}:departure`,
+            });
+          }
+        }
 
-    for (const t of deriveTransits(points, transitZones, { now })) {
-      const values = {
-        mmsi,
-        chokepoint: t.chokepoint,
-        enteredAt: t.enteredAt,
-        leftAt: t.leftAt,
-        loiterMin: t.loiterMin,
-        minSogKt: t.minSogKt,
-        destinationAtEntry: meta.destinationRaw,
-        destinationFacilityId: meta.destinationFacilityId,
-        direction: t.direction,
-      };
-      await ctx.db
-        .insert(chokepointTransits)
-        .values(values)
-        .onConflictDoUpdate({
-          target: [
-            chokepointTransits.mmsi,
-            chokepointTransits.chokepoint,
-            chokepointTransits.enteredAt,
-          ],
-          set: {
-            leftAt: values.leftAt,
-            loiterMin: values.loiterMin,
-            minSogKt: values.minSogKt,
-            direction: values.direction,
-            destinationAtEntry: sql`coalesce(${chokepointTransits.destinationAtEntry}, excluded.destination_at_entry)`,
-            destinationFacilityId: sql`coalesce(${chokepointTransits.destinationFacilityId}, excluded.destination_facility_id)`,
-          },
-        });
-      stats.transits++;
-      const dest =
-        meta.destinationFacilityId !== null ? byId.get(meta.destinationFacilityId) : undefined;
-      if (!dest) continue;
-      const cp = CHOKEPOINTS.find((c) => c.slug === t.chokepoint);
-      const label = vesselLabel(meta);
-      const detail = {
-        mmsi,
-        name: meta.name,
-        class: meta.class,
-        sizeClass: meta.sizeClass,
-        chokepoint: t.chokepoint,
-        loiterMin: t.loiterMin,
-        destination: meta.destinationRaw,
-        destinationFacilitySlug: dest.slug,
-        note: "destination taken from AIS free text; cargo inferred, unverified",
-      };
-      if (t.loiterMin >= 360) {
-        stats.loitering++;
-        const critical =
-          meta.class === "tanker" && (dest.kind === "refinery" || dest.kind === "spm");
-        events.push({
-          layer: "sea",
-          kind: "sea.loitering",
-          companyId: ownerOf.get(dest.id) ?? null,
-          facilityId: dest.id,
-          occurredAt: t.lastInsideAt,
-          headline: `${label} bound for ${dest.name} idle ~${Math.round(t.loiterMin / 60)} h at ${cp?.name ?? t.chokepoint}`,
-          detail,
-          severity: critical ? 3 : 2,
-          dedupeKey: `transit:${mmsi}:${t.chokepoint}:${t.enteredAt.getTime()}:loiter`,
-        });
-      }
-      if (t.leftAt) {
-        events.push({
-          layer: "sea",
-          kind: "sea.transit",
-          companyId: ownerOf.get(dest.id) ?? null,
-          facilityId: dest.id,
-          occurredAt: t.leftAt,
-          headline: `${label} bound for ${dest.name} transited ${cp?.name ?? t.chokepoint}`,
-          detail,
-          severity: 1,
-          dedupeKey: `transit:${mmsi}:${t.chokepoint}:${t.enteredAt.getTime()}:transit`,
-        });
-      }
-    }
-    if (events.length) {
-      const res = await ctx.db
-        .insert(altdataEvents)
-        .values(events)
-        .onConflictDoNothing()
-        .returning({ id: altdataEvents.id });
-      stats.events += res.length;
-    }
+        for (const t of deriveTransits(points, transitZones, { now })) {
+          const values = {
+            mmsi,
+            chokepoint: t.chokepoint,
+            enteredAt: t.enteredAt,
+            leftAt: t.leftAt,
+            loiterMin: t.loiterMin,
+            minSogKt: t.minSogKt,
+            destinationAtEntry: meta.destinationRaw,
+            destinationFacilityId: meta.destinationFacilityId,
+            direction: t.direction,
+          };
+          await tx
+            .insert(chokepointTransits)
+            .values(values)
+            .onConflictDoUpdate({
+              target: [
+                chokepointTransits.mmsi,
+                chokepointTransits.chokepoint,
+                chokepointTransits.enteredAt,
+              ],
+              set: {
+                leftAt: values.leftAt,
+                loiterMin: values.loiterMin,
+                minSogKt: values.minSogKt,
+                direction: values.direction,
+                destinationAtEntry: sql`coalesce(${chokepointTransits.destinationAtEntry}, excluded.destination_at_entry)`,
+                destinationFacilityId: sql`coalesce(${chokepointTransits.destinationFacilityId}, excluded.destination_facility_id)`,
+              },
+            });
+          stats.transits++;
+          const dest =
+            meta.destinationFacilityId !== null ? byId.get(meta.destinationFacilityId) : undefined;
+          if (!dest) continue;
+          const cp = CHOKEPOINTS.find((c) => c.slug === t.chokepoint);
+          const label = vesselLabel(meta);
+          const detail = {
+            mmsi,
+            name: meta.name,
+            class: meta.class,
+            sizeClass: meta.sizeClass,
+            chokepoint: t.chokepoint,
+            loiterMin: t.loiterMin,
+            destination: meta.destinationRaw,
+            destinationFacilitySlug: dest.slug,
+            note: "destination taken from AIS free text; cargo inferred, unverified",
+          };
+          if (t.loiterMin >= 360) {
+            stats.loitering++;
+            const critical =
+              meta.class === "tanker" && (dest.kind === "refinery" || dest.kind === "spm");
+            events.push({
+              layer: "sea",
+              kind: "sea.loitering",
+              companyId: ownerOf.get(dest.id) ?? null,
+              facilityId: dest.id,
+              occurredAt: t.lastInsideAt,
+              headline: `${label} bound for ${dest.name} idle ~${Math.round(t.loiterMin / 60)} h at ${cp?.name ?? t.chokepoint}`,
+              detail,
+              severity: critical ? 3 : 2,
+              dedupeKey: `transit:${mmsi}:${t.chokepoint}:${t.enteredAt.getTime()}:loiter`,
+            });
+          }
+          if (t.leftAt) {
+            events.push({
+              layer: "sea",
+              kind: "sea.transit",
+              companyId: ownerOf.get(dest.id) ?? null,
+              facilityId: dest.id,
+              occurredAt: t.leftAt,
+              headline: `${label} bound for ${dest.name} transited ${cp?.name ?? t.chokepoint}`,
+              detail,
+              severity: 1,
+              dedupeKey: `transit:${mmsi}:${t.chokepoint}:${t.enteredAt.getTime()}:transit`,
+            });
+          }
+        }
+        if (events.length) {
+          const res = await tx
+            .insert(altdataEvents)
+            .values(events)
+            .onConflictDoNothing()
+            .returning({ id: altdataEvents.id });
+          stats.events += res.length;
+        }
+      },
+      opts.signal,
+    );
   }
   await endPass(ctx.redis, pass, { complete, lastId: lastMmsi });
   return stats;
@@ -776,46 +816,63 @@ export async function syncFleets(
     });
     if (!company) continue;
     stats.sources++;
+    let doc: Awaited<ReturnType<typeof ctx.docs.fetch>>["doc"];
     try {
-      const { doc } = await ctx.docs.fetch(src.url, {
+      ({ doc } = await ctx.docs.fetch(src.url, {
         source: "fleet",
         companyId: company.id,
         maxAgeMs: 6 * DAY,
         via: src.via,
-      });
-      if (src.via === "firecrawl") stats.scrapes++;
-      const rows = parseFleetPage(doc.content, src.type);
-      for (const batch of chunk(rows, 200)) {
-        await ctx.db
-          .insert(vesselFleet)
-          .values(
-            batch.map((r) => ({
-              ...r,
-              companyId: company.id,
-              sourceUrl: src.url,
-              fetchedAt: new Date(),
-            })),
-          )
-          .onConflictDoUpdate({
-            target: vesselFleet.imo,
-            set: {
-              name: sql`excluded.name`,
-              dwt: sql`excluded.dwt`,
-              type: sql`excluded.type`,
-              companyId: company.id,
-              sourceUrl: src.url,
-              fetchedAt: new Date(),
-            },
-          });
-      }
-      await ctx.docs.markParsed(doc.id, FLEET_PARSER_VERSION, rows.length ? "parsed" : "failed");
-      stats.vessels += rows.length;
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      }));
     } catch (err) {
+      throwIfAborted(opts.signal);
       stats.failed++;
       ctx.logger.warn({ err, url: src.url }, "fleet page fetch failed");
+      continue;
     }
+    if (src.via === "firecrawl") stats.scrapes++;
+    const rows = parseFleetPage(doc.content, src.type);
+    const docId = doc.id;
+    await fencedTransaction(
+      ctx.db,
+      async (tx) => {
+        for (const batch of chunk(rows, 200)) {
+          throwIfAborted(opts.signal);
+          await tx
+            .insert(vesselFleet)
+            .values(
+              batch.map((r) => ({
+                ...r,
+                companyId: company.id,
+                sourceUrl: src.url,
+                fetchedAt: new Date(),
+              })),
+            )
+            .onConflictDoUpdate({
+              target: vesselFleet.imo,
+              set: {
+                name: sql`excluded.name`,
+                dwt: sql`excluded.dwt`,
+                type: sql`excluded.type`,
+                companyId: company.id,
+                sourceUrl: src.url,
+                fetchedAt: new Date(),
+              },
+            });
+        }
+        await ctx.docs.markParsed(
+          docId,
+          FLEET_PARSER_VERSION,
+          rows.length ? "parsed" : "failed",
+          tx,
+        );
+      },
+      opts.signal,
+    );
+    stats.vessels += rows.length;
   }
-  stats.linked = await linkFleetVessels(ctx);
+  stats.linked = await fencedTransaction(ctx.db, linkFleetVessels, opts.signal);
   return stats;
 }
 
@@ -832,10 +889,15 @@ export async function cleanupAltdataPositions(
   for (const t of targets) {
     for (;;) {
       if (expired(opts, 10_000)) return stats;
-      const res = await ctx.db.execute(sql`
-        delete from ${sql.identifier(t.table)} where ctid in (
-          select ctid from ${sql.identifier(t.table)}
-          where ts < now() - (${t.days} * interval '1 day') limit ${batch})`);
+      const res = await fencedTransaction(
+        ctx.db,
+        (tx) =>
+          tx.execute(sql`
+            delete from ${sql.identifier(t.table)} where ctid in (
+              select ctid from ${sql.identifier(t.table)}
+              where ts < now() - (${t.days} * interval '1 day') limit ${batch})`),
+        opts.signal,
+      );
       const n = (res as unknown as { count?: number }).count ?? 0;
       stats[t.key] += n;
       if (n < batch) break;

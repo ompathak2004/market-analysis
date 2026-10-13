@@ -32,7 +32,9 @@ aws cloudformation deploy --stack-name market-analysis-worker \
 # Confirm the SNS subscription email, otherwise alarms are silently dropped.
 
 # 3. Secrets. The file holds every variable in .env.example plus RESEND_API_KEY,
-#    with DATABASE_URL set to the ma_worker role (see docs/ops.md, Database roles). MIGRATION_DATABASE_URL (ma_migrator role) goes in a second file.
+#    with DATABASE_URL set to the ma_worker role (see docs/ops.md, Database roles).
+#    MIGRATION_DATABASE_URL goes in a second file and is the ma_migrator role, never the admin:
+#    run packages/db/roles/bootstrap.sql first so ma_migrator can log in and owns the schema.
 infra/aws/ssm-parameters.sh ./.env.aws
 infra/aws/ssm-parameters.sh ./.env.migrator
 

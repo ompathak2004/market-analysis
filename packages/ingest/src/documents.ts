@@ -1,5 +1,5 @@
 import { type Logger, sha256, throwIfAborted, UpstreamError } from "@ma/core";
-import { type Db, documents, eq } from "@ma/db";
+import { type Db, documents, eq, type Tx } from "@ma/db";
 import { extractText, getDocumentProxy } from "unpdf";
 import type { Firecrawl } from "./firecrawl.js";
 import type { HttpClient } from "./http.js";
@@ -98,8 +98,9 @@ export class DocumentStore {
     id: number,
     parserVersion: number,
     status: "parsed" | "failed" = "parsed",
+    db: Db | Tx = this.db,
   ): Promise<void> {
-    await this.db
+    await db
       .update(documents)
       .set({ status, parserVersion, parsedAt: new Date() })
       .where(eq(documents.id, id));

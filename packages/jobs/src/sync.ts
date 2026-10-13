@@ -1,4 +1,4 @@
-import { companySync, type Db, sql } from "@ma/db";
+import { companySync, type Db, fencedTransaction, sql } from "@ma/db";
 import { assertFence, type Fence } from "./lease.js";
 
 type SQL = ReturnType<typeof sql>;
@@ -69,8 +69,7 @@ export async function markSynced(
   fence?: Fence,
 ): Promise<void> {
   const now = new Date();
-  await db.transaction(async (tx) => {
-    if (fence) await assertFence(tx, fence);
+  await fencedTransaction(db, async (tx) => {
     await tx
       .insert(companySync)
       .values({ companyId, job, syncedAt: now, attemptedAt: now, failures: 0, error: null })
@@ -78,6 +77,7 @@ export async function markSynced(
         target: [companySync.companyId, companySync.job],
         set: { syncedAt: now, attemptedAt: now, failures: 0, error: null },
       });
+    if (fence) await assertFence(tx, fence);
   });
 }
 
@@ -88,11 +88,13 @@ export async function markFailed(
   err: unknown,
 ): Promise<void> {
   const error = (err instanceof Error ? err.message : String(err)).slice(0, 500);
-  await db
-    .insert(companySync)
-    .values({ companyId, job, attemptedAt: new Date(), failures: 1, error })
-    .onConflictDoUpdate({
-      target: [companySync.companyId, companySync.job],
-      set: { attemptedAt: new Date(), failures: sql`${companySync.failures} + 1`, error },
-    });
+  await fencedTransaction(db, (tx) =>
+    tx
+      .insert(companySync)
+      .values({ companyId, job, attemptedAt: new Date(), failures: 1, error })
+      .onConflictDoUpdate({
+        target: [companySync.companyId, companySync.job],
+        set: { attemptedAt: new Date(), failures: sql`${companySync.failures} + 1`, error },
+      }),
+  );
 }
