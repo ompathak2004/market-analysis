@@ -65,7 +65,8 @@ Worker equivalents (after `pnpm build:worker`): `pnpm worker:cli run prices --wa
    - Stage rebuilds in a side table and swap generations, instead of one transaction over ~1,250 rows per series.
    - Monthly rotating full-source reconciliation of finalized history (today the daily repair reconciles stored rows against the calendar and refetches only open gaps; the daily job rereads the last ten sessions).
    - Archive raw provider payloads; none are kept today.
-   - Apply the completeness rule to the on-demand `prices.sync` path and to a rebuild whose refetch returns no bars at all (today `not_found`, not retried until the next fanout).
+   - A CLI or admin path to clear an `identity_mismatch` series exception once `market_symbols` is fixed; today it is a manual `update price_series_state set exception_reason = null, quality_status = 'pending'`.
+   - Record which calendar windows were fetched instead of inferring calendar coverage from session spacing (a hole of 7 days or less in an unfetched stretch is not detected).
    - Prune old `price_manifests` once the cutover acceptance is signed off.
    - Model rights issues, demergers and other non-split/dividend actions as documented exceptions.
 2. **Alt-data coverage**: Indian port geofences see almost no AISStream traffic; measure `altdata_coverage` over 24–72 h and either widen the watched zones or gate the SHIP pane on a coverage threshold. Jets depend on `aircraft-registry` links, which are provisional until confirmed from filings.
