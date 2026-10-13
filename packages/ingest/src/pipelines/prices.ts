@@ -5,17 +5,15 @@ import {
   type Db,
   eq,
   fencedTransaction,
-  indexPricesDaily,
   type ListingStatus,
   type PriceGapReason,
   type PriceQualityStatus,
-  pricesDaily,
   sql,
   type Tx,
 } from "@ma/db";
 import type { IngestContext } from "../context.js";
 import { CALENDAR_INDEX, MARKET_INDICES } from "../data/market-indices.js";
-import { NSE_HISTORY_SOURCES, NseBlockedError } from "../sources/nse.js";
+import { NseBlockedError } from "../sources/nse.js";
 import {
   addDays,
   addYears,
@@ -171,35 +169,32 @@ function toRef(r: SeriesRow): PriceSeriesRef {
   };
 }
 
-export async function loadSeries(db: Queryable, seriesId: number): Promise<PriceSeriesRef | null> {
-  const rows = await db.execute<SeriesRow>(sql`${SERIES_SELECT} where s.id = ${seriesId}`);
+async function querySeries(
+  db: Queryable,
+  tail: ReturnType<typeof sql>,
+): Promise<PriceSeriesRef | null> {
+  const rows = await db.execute<SeriesRow>(sql`${SERIES_SELECT} where ${tail}`);
   return rows[0] ? toRef(rows[0]) : null;
 }
+
+export function loadSeries(
+  db: Queryable,
+  key: number | { companyId: number },
+): Promise<PriceSeriesRef | null> {
+  return querySeries(
+    db,
+    typeof key === "number" ? sql`s.id = ${key}` : sql`s.company_id = ${key.companyId}`,
+  );
+}
+
+const lockSeries = (tx: Tx, seriesId: number) =>
+  querySeries(tx, sql`s.id = ${seriesId} for update of s`);
 
 export async function loadAllSeries(db: Queryable): Promise<PriceSeriesRef[]> {
   const rows = await db.execute<SeriesRow>(
     sql`${SERIES_SELECT} order by s.index_id is null, c.market_cap_cr desc nulls last, s.id`,
   );
   return rows.map(toRef);
-}
-
-export async function seriesIdFor(
-  db: Queryable,
-  owner: { companyId: number } | { indexId: number },
-): Promise<number | null> {
-  const where =
-    "companyId" in owner ? sql`company_id = ${owner.companyId}` : sql`index_id = ${owner.indexId}`;
-  const rows = await db.execute<{ id: number }>(
-    sql`select id from price_series_state where ${where}`,
-  );
-  return rows[0] ? Number(rows[0].id) : null;
-}
-
-export async function latestSession(db: Queryable, onOrBefore: string): Promise<string | null> {
-  const rows = await db.execute<{ d: string | null }>(sql`
-    select max(date)::text as d from trading_sessions
-    where exchange = ${NSE_EXCHANGE} and date <= ${onOrBefore}`);
-  return rows[0]?.d ?? null;
 }
 
 export async function sessionsBack(
@@ -218,9 +213,8 @@ export async function desiredWindow(
   db: Queryable,
   today = istToday(),
 ): Promise<{ from: string; to: string }> {
-  const last = await latestSession(db, today);
-  const finalized = last ? ((await sessionsBack(db, today, 2)) ?? addDays(last, -1)) : null;
-  const to = finalized ?? addDays(today, -1);
+  const to =
+    (await sessionsBack(db, today, 2)) ?? addDays((await sessionsBack(db, today, 1)) ?? today, -1);
   return { from: addYears(to, -PRICE_HISTORY_YEARS), to };
 }
 
@@ -374,12 +368,13 @@ async function symbolOwned(tx: Queryable, ref: PriceSeriesRef, symbol: string): 
   return Boolean(rows[0]?.owned) && !rows[0]?.contested;
 }
 
+type SourcedBar = DailyBar & { source: string };
+
 export interface FetchedHistory {
-  bars: Array<DailyBar & { source: string }>;
+  bars: SourcedBar[];
   events: YahooEvent[];
   rejected: RejectedBar[];
-  hash: string | null;
-  source: string | null;
+  source: string;
   detail: string | null;
 }
 
@@ -410,10 +405,10 @@ async function fetchNseIndex(
 }
 
 export function mergeFallback(
-  primary: Array<DailyBar & { source: string }>,
+  primary: SourcedBar[],
   fallback: DailyBar[],
   source: string,
-): { bars: Array<DailyBar & { source: string }>; added: number; mismatches: number } {
+): { bars: SourcedBar[]; added: number; mismatches: number } {
   const byDate = new Map(primary.map((b) => [b.date, b]));
   let mismatches = 0;
   for (const f of fallback) {
@@ -442,24 +437,21 @@ async function fetchHistory(
     }),
   );
   const yahooBars = (history?.bars ?? []).map((b) => ({ ...b, source: "yahoo" }));
-  const base: FetchedHistory | null = history
-    ? {
-        bars: yahooBars,
-        events: history.events,
-        rejected: history.rejected,
-        hash: history.hash,
-        source: "yahoo",
-        detail: null,
+  const base: FetchedHistory | null = history && {
+    bars: yahooBars,
+    events: history.events,
+    rejected: history.rejected,
+    source: "yahoo",
+    detail: null,
+  };
+  if (yahooBars.length && mode !== "repair") return base;
+  if (ref.kind === "equity")
+    return (
+      base && {
+        ...base,
+        detail: yahooBars.length ? null : "yahoo empty; NSE equity fallback unverified",
       }
-    : null;
-  const wantsFallback = !history || !yahooBars.length || mode === "repair";
-  if (!wantsFallback) return base;
-  if (ref.kind === "equity") {
-    if (NSE_HISTORY_SOURCES.equity.verified) throw new Error("NSE equity fallback not wired");
-    return base
-      ? { ...base, detail: yahooBars.length ? null : "yahoo empty; NSE equity fallback unverified" }
-      : null;
-  }
+    );
   if (!ref.nseName) return base;
   let nse: DailyBar[];
   try {
@@ -475,11 +467,13 @@ async function fetchHistory(
     bars: merged.bars,
     events: [],
     rejected: base?.rejected ?? [],
-    hash: sha256(`${base?.hash ?? ""}:${JSON.stringify(nse)}`),
     source: merged.added ? (yahooBars.length ? "yahoo+nse" : "nse") : "yahoo",
     detail: merged.mismatches ? `nse overlap mismatch on ${merged.mismatches} sessions` : null,
   };
 }
+
+const staleGeneration = (current: number, generation: number, mode: PriceSyncMode) =>
+  mode === "rebuild" ? current !== generation - 1 : current > generation;
 
 export async function syncPriceWindow(
   ctx: IngestContext,
@@ -489,51 +483,31 @@ export async function syncPriceWindow(
 ): Promise<PriceWindowResult> {
   const ref = await loadSeries(ctx.db, unit.seriesId);
   if (!ref) return emptyResult("missing_series");
-  if (unit.generation !== undefined && ref.generation > unit.generation)
-    return emptyResult("stale_generation");
-  if (mode === "rebuild" && unit.generation !== undefined && ref.generation >= unit.generation)
-    return emptyResult("stale_generation");
+  const generation = unit.generation ?? ref.generation;
+  if (staleGeneration(ref.generation, generation, mode)) return emptyResult("stale_generation");
   const window = { from: unit.from, toExclusive: unit.toExclusive };
+  const write = { window, generation, mode, symbol: unit.symbol, signal };
+  let fetched: FetchedHistory | null = null;
+  let hint: PriceGapReason = "missing_source_data";
+  let detail: string | null = null;
+  let status: PriceWindowStatus = "written";
   if (!(await symbolOwned(ctx.db, ref, unit.symbol))) {
-    const r = await writeWindow(ctx, ref, {
-      window,
-      generation: unit.generation ?? ref.generation,
-      fetched: null,
-      hint: "unresolved_identity",
-      mode,
-      symbol: unit.symbol,
-      signal,
-    });
-    return { ...r, status: "identity_mismatch" };
+    hint = "unresolved_identity";
+    status = "identity_mismatch";
+  } else {
+    throwIfAborted(signal);
+    try {
+      fetched = await fetchHistory(ctx, ref, unit.symbol, window, mode, signal);
+      if (!fetched) status = "not_found";
+    } catch (err) {
+      if (!(err instanceof PriceValidationError)) throw err;
+      hint = "invalid_bars";
+      detail = err.message;
+      status = "invalid_response";
+    }
   }
-  throwIfAborted(signal);
-  let fetched: FetchedHistory | null;
-  try {
-    fetched = await fetchHistory(ctx, ref, unit.symbol, window, mode, signal);
-  } catch (err) {
-    if (!(err instanceof PriceValidationError)) throw err;
-    const r = await writeWindow(ctx, ref, {
-      window,
-      generation: unit.generation ?? ref.generation,
-      fetched: null,
-      hint: "invalid_bars",
-      detail: err.message,
-      mode,
-      symbol: unit.symbol,
-      signal,
-    });
-    return r.status === "written" ? { ...r, status: "invalid_response" } : r;
-  }
-  const r = await writeWindow(ctx, ref, {
-    window,
-    generation: unit.generation ?? ref.generation,
-    fetched,
-    hint: "missing_source_data",
-    mode,
-    symbol: unit.symbol,
-    signal,
-  });
-  return fetched || r.status !== "written" ? r : { ...r, status: "not_found" };
+  const r = await writeWindow(ctx, ref, { ...write, fetched, hint, detail });
+  return r.status === "written" ? { ...r, status } : r;
 }
 
 export async function rebuildSeries(
@@ -544,7 +518,6 @@ export async function rebuildSeries(
 ): Promise<PriceWindowResult> {
   const ref = await loadSeries(ctx.db, unit.seriesId);
   if (!ref) return emptyResult("missing_series");
-  if (ref.generation + 1 !== unit.generation) return emptyResult("stale_generation");
   return syncPriceWindow(
     ctx,
     {
@@ -569,11 +542,10 @@ interface WriteInput {
   generation: number;
   fetched: FetchedHistory | null;
   hint: PriceGapReason;
-  detail?: string;
+  detail: string | null;
   mode: PriceSyncMode;
   symbol: string;
   signal: AbortSignal | undefined;
-  today?: string;
 }
 
 interface ActionDiff {
@@ -676,20 +648,16 @@ async function writeWindow(
   ref: PriceSeriesRef,
   input: WriteInput,
 ): Promise<PriceWindowResult> {
-  const today = input.today ?? istToday();
+  const today = istToday();
   const now = new Date();
   return fencedTransaction(
     ctx.db,
     async (tx) => {
-      const locked = await tx.execute<{ g: number; q: PriceQualityStatus }>(sql`
-        select adjustment_generation as g, quality_status as q
-        from price_series_state where id = ${ref.seriesId} for update`);
-      const state = locked[0];
-      if (!state) return emptyResult("missing_series");
-      const current = Number(state.g);
-      if (current > input.generation) return emptyResult("stale_generation");
-      if (input.mode === "rebuild" && current !== input.generation - 1)
+      const locked = await lockSeries(tx, ref.seriesId);
+      if (!locked) return emptyResult("missing_series");
+      if (staleGeneration(locked.generation, input.generation, input.mode))
         return emptyResult("stale_generation");
+      const wasRebuildRequired = locked.qualityStatus === "rebuild_required";
 
       const fetched = input.fetched;
       if (input.mode === "rebuild" && !fetched?.bars.length) return emptyResult("not_found");
@@ -708,7 +676,7 @@ async function writeWindow(
             select (min(fetched_at) at time zone 'Asia/Kolkata')::date::text as d
             from prices_daily
             where company_id = ${ref.ownerId} and adjustment_generation = ${input.generation}`);
-          if (state.q === "rebuild_required" || needsRebuild(diff, basis[0]?.d ?? null)) {
+          if (wasRebuildRequired || needsRebuild(diff, basis[0]?.d ?? null)) {
             await tx.execute(sql`
               update price_series_state
               set quality_status = 'rebuild_required', action_hash = ${actionHash},
@@ -736,10 +704,7 @@ async function writeWindow(
       const isFinal = (date: string) => date < today;
 
       for (const batch of chunk(bars, 500)) {
-        const counts =
-          ref.kind === "equity"
-            ? await upsertEquityBars(tx, ref.ownerId, batch, input, now, isFinal)
-            : await upsertIndexBars(tx, ref.ownerId, batch, input, now, isFinal);
+        const counts = await upsertBars(tx, ref, batch, input, now, isFinal);
         result.inserted += counts.inserted;
         result.updated += counts.updated;
       }
@@ -769,9 +734,7 @@ async function writeWindow(
         now,
       });
       const quality: PriceQualityStatus =
-        state.q === "rebuild_required" && input.mode !== "rebuild"
-          ? "rebuild_required"
-          : coverage.quality;
+        wasRebuildRequired && input.mode !== "rebuild" ? "rebuild_required" : coverage.quality;
       await tx.execute(sql`
         update price_series_state
         set adjustment_generation = ${input.generation},
@@ -804,9 +767,6 @@ export function changedSql(table: string, exact: string[], floats: string[]): st
   return [same, ...drift].join(" or ");
 }
 
-const changed = (table: string, exact: string[], floats: string[]) =>
-  sql.raw(changedSql(table, exact, floats));
-
 const PRICE_COLUMNS = ["open", "high", "low", "close"];
 
 const BAR_COLUMNS = [
@@ -818,114 +778,41 @@ const BAR_COLUMNS = [
   "is_final",
 ];
 
-function countUpserts(rows: Array<{ inserted: boolean }>): { inserted: number; updated: number } {
+async function upsertBars(
+  tx: Tx,
+  ref: PriceSeriesRef,
+  bars: SourcedBar[],
+  input: WriteInput,
+  now: Date,
+  isFinal: (date: string) => boolean,
+): Promise<{ inserted: number; updated: number }> {
+  const equity = ref.kind === "equity";
+  const table = equity ? "prices_daily" : "index_prices_daily";
+  const owner = equity ? "company_id" : "index_id";
+  const exact = equity ? [...BAR_COLUMNS, "adjustment_status"] : BAR_COLUMNS;
+  const floats = equity ? [...PRICE_COLUMNS, "adj_close"] : PRICE_COLUMNS;
+  const columns = [...PRICE_COLUMNS, "fetched_at", ...exact, ...(equity ? ["adj_close"] : [])];
+  const fetchedAt = now.toISOString();
+  const rows = await tx.execute<{ inserted: boolean }>(sql`
+    insert into ${sql.raw(table)} (${sql.raw(owner)}, date, ${sql.raw(columns.join(", "))})
+    values ${sql.join(
+      bars.map(
+        (b) => sql`(${ref.ownerId}, ${b.date}::date, ${b.open}, ${b.high}, ${b.low}, ${b.close},
+          ${fetchedAt}::timestamptz, ${b.volume}, ${b.source}, ${b.source === "yahoo" ? input.symbol : null},
+          ${PRICE_PARSER_VERSION}, ${input.generation}, ${isFinal(b.date)}${
+            equity
+              ? sql`, ${b.adjClose == null ? "missing" : "provider_adjusted"}, ${b.adjClose}`
+              : sql``
+          })`,
+      ),
+      sql`, `,
+    )}
+    on conflict (${sql.raw(owner)}, date) do update
+      set ${sql.raw(columns.map((c) => `${c} = excluded.${c}`).join(", "))}
+      where ${sql.raw(changedSql(table, exact, floats))}
+    returning (xmax = 0) as inserted`);
   const inserted = rows.filter((r) => r.inserted).length;
   return { inserted, updated: rows.length - inserted };
-}
-
-async function upsertEquityBars(
-  tx: Tx,
-  companyId: number,
-  bars: Array<DailyBar & { source: string }>,
-  input: WriteInput,
-  now: Date,
-  isFinal: (date: string) => boolean,
-) {
-  const rows = await tx
-    .insert(pricesDaily)
-    .values(
-      bars.map((b) => ({
-        companyId,
-        date: b.date,
-        open: b.open,
-        high: b.high,
-        low: b.low,
-        close: b.close,
-        adjClose: b.adjClose,
-        volume: b.volume,
-        source: b.source,
-        sourceSymbol: input.symbol,
-        fetchedAt: now,
-        parserVersion: PRICE_PARSER_VERSION,
-        adjustmentGeneration: input.generation,
-        adjustmentStatus:
-          b.adjClose == null ? ("missing" as const) : ("provider_adjusted" as const),
-        isFinal: isFinal(b.date),
-      })),
-    )
-    .onConflictDoUpdate({
-      target: [pricesDaily.companyId, pricesDaily.date],
-      set: {
-        open: sql`excluded.open`,
-        high: sql`excluded.high`,
-        low: sql`excluded.low`,
-        close: sql`excluded.close`,
-        adjClose: sql`excluded.adj_close`,
-        volume: sql`excluded.volume`,
-        source: sql`excluded.source`,
-        sourceSymbol: sql`excluded.source_symbol`,
-        fetchedAt: sql`excluded.fetched_at`,
-        parserVersion: sql`excluded.parser_version`,
-        adjustmentGeneration: sql`excluded.adjustment_generation`,
-        adjustmentStatus: sql`excluded.adjustment_status`,
-        isFinal: sql`excluded.is_final`,
-      },
-      setWhere: changed(
-        "prices_daily",
-        [...BAR_COLUMNS, "adjustment_status"],
-        [...PRICE_COLUMNS, "adj_close"],
-      ),
-    })
-    .returning({ inserted: sql<boolean>`(xmax = 0)` });
-  return countUpserts(rows);
-}
-
-async function upsertIndexBars(
-  tx: Tx,
-  indexId: number,
-  bars: Array<DailyBar & { source: string }>,
-  input: WriteInput,
-  now: Date,
-  isFinal: (date: string) => boolean,
-) {
-  const rows = await tx
-    .insert(indexPricesDaily)
-    .values(
-      bars.map((b) => ({
-        indexId,
-        date: b.date,
-        open: b.open,
-        high: b.high,
-        low: b.low,
-        close: b.close,
-        volume: b.volume,
-        source: b.source,
-        sourceSymbol: b.source === "yahoo" ? input.symbol : null,
-        fetchedAt: now,
-        parserVersion: PRICE_PARSER_VERSION,
-        adjustmentGeneration: input.generation,
-        isFinal: isFinal(b.date),
-      })),
-    )
-    .onConflictDoUpdate({
-      target: [indexPricesDaily.indexId, indexPricesDaily.date],
-      set: {
-        open: sql`excluded.open`,
-        high: sql`excluded.high`,
-        low: sql`excluded.low`,
-        close: sql`excluded.close`,
-        volume: sql`excluded.volume`,
-        source: sql`excluded.source`,
-        sourceSymbol: sql`excluded.source_symbol`,
-        fetchedAt: sql`excluded.fetched_at`,
-        parserVersion: sql`excluded.parser_version`,
-        adjustmentGeneration: sql`excluded.adjustment_generation`,
-        isFinal: sql`excluded.is_final`,
-      },
-      setWhere: changed("index_prices_daily", BAR_COLUMNS, PRICE_COLUMNS),
-    })
-    .returning({ inserted: sql<boolean>`(xmax = 0)` });
-  return countUpserts(rows);
 }
 
 export interface GapRange {
@@ -1092,10 +979,7 @@ export async function reconcileSeries(
   return fencedTransaction(
     ctx.db,
     async (tx) => {
-      const locked = await tx.execute<{ q: PriceQualityStatus }>(sql`
-        select quality_status as q from price_series_state where id = ${seriesId} for update`);
-      if (!locked[0]) return null;
-      const ref = await loadSeries(tx, seriesId);
+      const ref = await lockSeries(tx, seriesId);
       if (!ref) return null;
       const summary = await recomputeGaps(tx, ref, {
         generation: ref.generation,
@@ -1105,7 +989,8 @@ export async function reconcileSeries(
         detail: null,
         now: new Date(),
       });
-      const quality = locked[0].q === "rebuild_required" ? "rebuild_required" : summary.quality;
+      const quality =
+        ref.qualityStatus === "rebuild_required" ? "rebuild_required" : summary.quality;
       await tx.execute(sql`
         update price_series_state
         set verified_through = ${summary.verifiedThrough}, quality_status = ${quality},
@@ -1300,24 +1185,21 @@ export async function syncPrices(
   range: YahooRange = "1y",
   signal?: AbortSignal,
 ): Promise<number> {
-  const company = await ctx.db.query.companies.findFirst({ where: eq(companies.id, companyId) });
-  if (!company?.yahooSymbol) return 0;
-  let seriesId = await seriesIdFor(ctx.db, { companyId });
-  if (seriesId === null) {
+  let ref = await loadSeries(ctx.db, { companyId });
+  if (!ref) {
     await ensureSeriesStates(ctx, await desiredWindow(ctx.db), signal);
-    seriesId = await seriesIdFor(ctx.db, { companyId });
+    ref = await loadSeries(ctx.db, { companyId });
   }
-  if (seriesId === null) return 0;
+  if (!ref?.yahooSymbol) return 0;
   const today = istToday();
-  const ref = await loadSeries(ctx.db, seriesId);
   const r = await syncPriceWindow(
     ctx,
     {
-      seriesId,
-      symbol: company.yahooSymbol,
+      seriesId: ref.seriesId,
+      symbol: ref.yahooSymbol,
       from: addDays(today, -RANGE_DAYS[range]),
       toExclusive: addDays(today, 1),
-      generation: ref?.generation ?? 0,
+      generation: ref.generation,
     },
     RANGE_DAYS[range] > 366 ? "backfill" : "daily",
     signal,

@@ -27,7 +27,7 @@ export type ReturnResult = { ok: true; value: number } | { ok: false; reason: Co
 
 export const RETURN_BASIS = { field: "adj_close", version: PRICE_BASIS.version } as const;
 
-export const ENDPOINT_TOLERANCE_SESSIONS = 1;
+const ENDPOINT_TOLERANCE_SESSIONS = 1;
 
 const IST_OFFSET_MS = 330 * 60_000;
 
@@ -88,33 +88,7 @@ export async function loadCloses(
 }
 
 export function expectedSession(sessions: string[], boundary: string): number {
-  let lo = 0;
-  let hi = sessions.length - 1;
-  let best = -1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if ((sessions[mid] as string) <= boundary) {
-      best = mid;
-      lo = mid + 1;
-    } else hi = mid - 1;
-  }
-  return best;
-}
-
-export function closeOnOrBefore(series: PriceSeries, date: string): number | null {
-  return datedCloseOnOrBefore(series, date)?.close ?? null;
-}
-
-export function datedCloseOnOrBefore(
-  series: PriceSeries,
-  date: string,
-): { date: string; close: number } | null {
-  let best: { date: string; close: number } | null = null;
-  for (const [d, c] of series) {
-    if (d <= date) best = { date: d, close: c };
-    else break;
-  }
-  return best;
+  return sessions.filter((s) => s <= boundary).length - 1;
 }
 
 function endpoint(
@@ -125,7 +99,11 @@ function endpoint(
   const idx = expectedSession(sessions, boundary);
   if (idx < 0) return "no_calendar";
   const oldest = sessions[Math.max(0, idx - ENDPOINT_TOLERANCE_SESSIONS)] as string;
-  const bar = datedCloseOnOrBefore(series, boundary);
+  let bar: { date: string; close: number } | null = null;
+  for (const [d, c] of series) {
+    if (d <= boundary) bar = { date: d, close: c };
+    else break;
+  }
   if (!bar || bar.date < oldest || bar.close <= 0) return "stale";
   return { close: bar.close };
 }
@@ -148,16 +126,6 @@ export function seriesReturn(
   if (end === "no_calendar") return { ok: false, reason: "no_calendar" };
   if (end === "stale") return { ok: false, reason: "stale_end" };
   return { ok: true, value: end.close / start.close - 1 };
-}
-
-export function totalReturn(
-  closes: PriceCloses,
-  companyId: number,
-  from: string,
-  to: string,
-): number | null {
-  const r = seriesReturn(closes, companyId, from, to);
-  return r.ok ? r.value : null;
 }
 
 export function coverageCounts(reasons: Iterable<CoverageReason>): Record<string, number> {

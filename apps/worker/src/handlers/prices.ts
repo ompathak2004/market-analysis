@@ -11,7 +11,7 @@ import {
   syncPrices,
   syncPriceWindow,
 } from "@ma/ingest";
-import { DeferredError, markSynced } from "@ma/jobs";
+import { DeferredError, type JobType, markSynced } from "@ma/jobs";
 import { numericMetrics, trackCompany } from "../batch.js";
 import {
   type ChildJob,
@@ -45,6 +45,10 @@ export function windowMetrics(r: PriceWindowResult): Record<string, number> {
 function children(jobs: ChildJob[], metrics: Record<string, number> = {}): HandlerResult {
   return { metrics: { ...metrics, children: jobs.length }, children: jobs };
 }
+
+const child =
+  (type: JobType, priority: number) =>
+  (payload: object): ChildJob => ({ type, payload: { ...payload }, priority });
 
 // A source-wide cooldown postpones the unit instead of burning its retry budget.
 async function deferRateLimits<T>(fn: () => Promise<T>): Promise<T> {
@@ -86,21 +90,9 @@ export const priceHandlers: PriceHandlers = {
     const m = await buildDailyManifest(ctx, { signal });
     return children(
       [
-        ...m.indices.map((payload) => ({
-          type: "index.daily" as const,
-          payload: { ...payload },
-          priority: PRICE_PRIORITY.index,
-        })),
-        ...m.rebuilds.map((payload) => ({
-          type: "prices.rebuild" as const,
-          payload: { ...payload },
-          priority: PRICE_PRIORITY.rebuild,
-        })),
-        ...m.equities.map((payload) => ({
-          type: "prices.daily" as const,
-          payload: { ...payload },
-          priority: PRICE_PRIORITY.daily,
-        })),
+        ...m.indices.map(child("index.daily", PRICE_PRIORITY.index)),
+        ...m.rebuilds.map(child("prices.rebuild", PRICE_PRIORITY.rebuild)),
+        ...m.equities.map(child("prices.daily", PRICE_PRIORITY.daily)),
       ],
       { indices: m.indices.length, equities: m.equities.length, rebuilds: m.rebuilds.length },
     );
@@ -114,16 +106,10 @@ export const priceHandlers: PriceHandlers = {
     });
     return children(
       [
-        ...m.rebuilds.map((payload) => ({
-          type: "prices.rebuild" as const,
-          payload: { ...payload },
-          priority: PRICE_PRIORITY.rebuild,
-        })),
-        ...m.refetch.map((u) => ({
-          type: "prices.window" as const,
-          payload: { ...u, mode: "repair" },
-          priority: PRICE_PRIORITY.backfill,
-        })),
+        ...m.rebuilds.map(child("prices.rebuild", PRICE_PRIORITY.rebuild)),
+        ...m.refetch.map((u) =>
+          child("prices.window", PRICE_PRIORITY.backfill)({ ...u, mode: "repair" }),
+        ),
       ],
       { reconciled: m.reconciled, openGaps: m.openGaps, rebuilds: m.rebuilds.length },
     );
@@ -131,30 +117,15 @@ export const priceHandlers: PriceHandlers = {
   "prices.backfill": async ({ ctx, signal }) => {
     const m = await buildBackfillManifest(ctx, { signal });
     for (const e of m.exceptions) ctx.logger.warn({ ...e }, "price backfill listing exception");
-    return children(
-      m.units.map((payload) => ({
-        type: "prices.window" as const,
-        payload: { ...payload },
-        priority: PRICE_PRIORITY.backfill,
-      })),
-      { series: m.series, exceptions: m.exceptions.length },
-    );
+    return children(m.units.map(child("prices.window", PRICE_PRIORITY.backfill)), {
+      series: m.series,
+      exceptions: m.exceptions.length,
+    });
   },
   "prices.window": async ({ ctx, payload, signal }) => {
     if (payload.parserVersion !== PRICE_PARSER_VERSION) return done({ stale_parser: 1 });
     const r = await deferRateLimits(() =>
-      syncPriceWindow(
-        ctx,
-        {
-          seriesId: payload.seriesId,
-          symbol: payload.symbol,
-          from: payload.from,
-          toExclusive: payload.toExclusive,
-          generation: payload.generation,
-        },
-        payload.mode ?? "backfill",
-        signal,
-      ),
+      syncPriceWindow(ctx, payload, payload.mode ?? "backfill", signal),
     );
     return done(windowMetrics(r));
   },

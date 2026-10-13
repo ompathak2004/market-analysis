@@ -5,7 +5,6 @@ import {
   istToday,
   type PriceCloses,
   seriesReturn,
-  totalReturn,
 } from "./prices.js";
 
 const SESSIONS = ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09"];
@@ -44,13 +43,17 @@ describe("seriesReturn", () => {
 
   it("returns adjusted-close returns between expected sessions", () => {
     const c = closes({ 1: full });
-    expect(totalReturn(c, 1, "2026-10-05", "2026-10-11")).toBeCloseTo(0.4);
-    expect(totalReturn(c, 1, "2026-10-06", "2026-10-08")).toBeCloseTo(20 / 110);
+    const ok = (value: number) => ({ ok: true, value: expect.closeTo(value) });
+    expect(seriesReturn(c, 1, "2026-10-05", "2026-10-11")).toEqual(ok(0.4));
+    expect(seriesReturn(c, 1, "2026-10-06", "2026-10-08")).toEqual(ok(20 / 110));
   });
 
   it("tolerates one missing session at an endpoint but not a stale close", () => {
     const oneGap = full.filter(([d]) => d !== "2026-10-09");
-    expect(totalReturn(closes({ 1: oneGap }), 1, "2026-10-05", "2026-10-09")).toBeCloseTo(0.3);
+    expect(seriesReturn(closes({ 1: oneGap }), 1, "2026-10-05", "2026-10-09")).toEqual({
+      ok: true,
+      value: expect.closeTo(0.3),
+    });
     const stale = full.filter(([d]) => d < "2026-10-08");
     expect(seriesReturn(closes({ 1: stale }), 1, "2026-10-05", "2026-10-09")).toEqual({
       ok: false,

@@ -175,7 +175,6 @@ describe.skipIf(!url)("price series writes (DATABASE_URL_TEST)", () => {
     bars,
     events,
     rejected: [],
-    hash: randomUUID(),
   });
 
   async function rows() {

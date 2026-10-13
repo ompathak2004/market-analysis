@@ -59,13 +59,6 @@ describe("parseChartHistory", () => {
     const pre = h.bars.find((b) => b.date === "2024-10-25");
     expect(pre?.close).toBeLessThan(1500);
     expect(pre?.adjClose).toBeLessThan(pre?.close ?? 0);
-    expect(h.hash).toMatch(/^[0-9a-f]{64}$/);
-  });
-
-  it("is deterministic so replays hash identically", () => {
-    const a = parseChartHistory(200, reliance, window2024, equity);
-    const b = parseChartHistory(200, reliance, window2024, equity);
-    expect(a?.hash).toBe(b?.hash);
   });
 
   it("drops bars and events outside the exclusive window", () => {

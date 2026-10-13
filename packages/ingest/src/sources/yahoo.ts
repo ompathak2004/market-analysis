@@ -1,4 +1,4 @@
-import { AppError, sha256, UpstreamError } from "@ma/core";
+import { AppError, UpstreamError } from "@ma/core";
 import type { HttpClient } from "../http.js";
 
 export interface DailyBar {
@@ -63,7 +63,6 @@ export interface YahooHistory {
   bars: DailyBar[];
   events: YahooEvent[];
   rejected: RejectedBar[];
-  hash: string;
 }
 
 export interface HistoryWindow {
@@ -418,27 +417,21 @@ export function parseChartHistory(
     prevClose = close;
     bars.push(bar);
   });
-  const inWindow = events.filter((e) => e.exDate >= window.from && e.exDate < window.toExclusive);
   return {
     meta,
     bars,
-    events: inWindow,
+    events: events.filter((e) => e.exDate >= window.from && e.exDate < window.toExclusive),
     rejected,
-    hash: sha256(JSON.stringify({ bars, events: inWindow })),
   };
 }
 
 function mergeHistories(parts: YahooHistory[]): YahooHistory | null {
   const first = parts[0];
   if (!first) return null;
-  if (parts.length === 1) return first;
-  const bars = parts.flatMap((p) => p.bars);
-  const events = parts.flatMap((p) => p.events);
   return {
     meta: first.meta,
-    bars,
-    events,
+    bars: parts.flatMap((p) => p.bars),
+    events: parts.flatMap((p) => p.events),
     rejected: parts.flatMap((p) => p.rejected),
-    hash: sha256(parts.map((p) => p.hash).join(":")),
   };
 }
