@@ -30,7 +30,6 @@ import {
 import { seedMarketIndices } from "./universe.js";
 
 export const PRICE_PARSER_VERSION = 1;
-export const PRICE_ADJUSTMENT_VERSION = 1;
 export const PRICE_HISTORY_YEARS = 5;
 export const PRICE_CONCURRENCY = 2;
 export const DAILY_LOOKBACK_SESSIONS = 10;
@@ -38,13 +37,6 @@ export const NSE_EXCHANGE = "NSE";
 export const PRICE_HISTORY_BUCKET = "yahoo:history";
 export const NSE_COOLDOWN_KEY = "cooldown:nse:history";
 export const NSE_COOLDOWN_MS = 30 * MINUTE;
-
-export const PRICE_BASIS = {
-  version: PRICE_ADJUSTMENT_VERSION,
-  ohlc: "yahoo_split_adjusted",
-  adjClose: "yahoo_split_and_dividend_adjusted",
-  index: "price_return_level",
-} as const;
 
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -740,14 +732,8 @@ async function writeWindow(
             )}
             on conflict do nothing`);
       }
-      const known = await latestSession(tx, today);
-      const maxBar = bars.at(-1)?.date ?? null;
-      const lastSession =
-        [known, maxBar]
-          .filter((d): d is string => !!d)
-          .sort()
-          .at(-1) ?? null;
-      const isFinal = (date: string) => lastSession !== null && date < lastSession && date < today;
+      // Fetched after its IST calendar day ended, a bar is the settled close for that session.
+      const isFinal = (date: string) => date < today;
 
       for (const batch of chunk(bars, 500)) {
         const counts =

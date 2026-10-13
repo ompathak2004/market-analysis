@@ -65,6 +65,15 @@ export type ListingStatus = (typeof LISTING_STATUSES)[number];
 
 export type AdjustmentStatus = "verified" | "provider_adjusted" | "missing" | "unverified";
 
+export const PRICE_ADJUSTMENT_VERSION = 1;
+
+export const PRICE_BASIS = {
+  version: PRICE_ADJUSTMENT_VERSION,
+  ohlc: "yahoo_split_adjusted",
+  adjClose: "yahoo_split_and_dividend_adjusted",
+  index: "price_return_level",
+} as const;
+
 const priceProvenance = {
   source: text("source").notNull().default("legacy_yahoo"),
   sourceSymbol: text("source_symbol"),
