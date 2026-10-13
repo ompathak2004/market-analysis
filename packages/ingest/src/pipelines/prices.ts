@@ -779,16 +779,25 @@ async function writeWindow(
   );
 }
 
-const changed = (table: string, cols: string[]) =>
-  sql.raw(
-    `(${cols.map((c) => `"${table}".${c}`).join(", ")}) is distinct from (${cols.map((c) => `excluded.${c}`).join(", ")})`,
+const FLOAT_TOLERANCE = 1e-5;
+
+// Yahoo recomputes adjusted values per request; sub-tick float jitter must not count as a change.
+export function changedSql(table: string, exact: string[], floats: string[]): string {
+  const t = (c: string) => `"${table}".${c}`;
+  const drift = floats.map(
+    (c) =>
+      `(${t(c)} is null) <> (excluded.${c} is null) or abs(${t(c)} - excluded.${c}) > ${FLOAT_TOLERANCE} * greatest(abs(excluded.${c}), 1)`,
   );
+  const same = `(${exact.map(t).join(", ")}) is distinct from (${exact.map((c) => `excluded.${c}`).join(", ")})`;
+  return [same, ...drift].join(" or ");
+}
+
+const changed = (table: string, exact: string[], floats: string[]) =>
+  sql.raw(changedSql(table, exact, floats));
+
+const PRICE_COLUMNS = ["open", "high", "low", "close"];
 
 const BAR_COLUMNS = [
-  "open",
-  "high",
-  "low",
-  "close",
   "volume",
   "source",
   "source_symbol",
@@ -849,7 +858,11 @@ async function upsertEquityBars(
         adjustmentStatus: sql`excluded.adjustment_status`,
         isFinal: sql`excluded.is_final`,
       },
-      setWhere: changed("prices_daily", [...BAR_COLUMNS, "adj_close", "adjustment_status"]),
+      setWhere: changed(
+        "prices_daily",
+        [...BAR_COLUMNS, "adjustment_status"],
+        [...PRICE_COLUMNS, "adj_close"],
+      ),
     })
     .returning({ inserted: sql<boolean>`(xmax = 0)` });
   return countUpserts(rows);
@@ -897,7 +910,7 @@ async function upsertIndexBars(
         adjustmentGeneration: sql`excluded.adjustment_generation`,
         isFinal: sql`excluded.is_final`,
       },
-      setWhere: changed("index_prices_daily", BAR_COLUMNS),
+      setWhere: changed("index_prices_daily", BAR_COLUMNS, PRICE_COLUMNS),
     })
     .returning({ inserted: sql<boolean>`(xmax = 0)` });
   return countUpserts(rows);
@@ -985,10 +998,10 @@ export async function recomputeGaps(
     to_date: string;
     reason: PriceGapReason;
     checks: number;
-    next_check_at: Date | null;
+    next_check_at: string | null;
     detail: string | null;
   }>(sql`
-    select from_date::text, to_date::text, reason, checks, next_check_at, detail
+    select from_date::text, to_date::text, reason, checks, next_check_at::text, detail
     from price_gaps where series_id = ${ref.seriesId} and status = 'open'`);
   const rejected = new Set(ctx.rejected.map((r) => r.date));
   const inWindow = (d: string) =>
@@ -1009,8 +1022,9 @@ export async function recomputeGaps(
         ctx.window !== null && g.to >= ctx.window.from && g.from < ctx.window.toExclusive;
       const checks = (prev?.checks ?? 0) + (looked ? 1 : 0);
       const next = looked
-        ? new Date(ctx.now.getTime() + gapBackoffMs(checks))
-        : (prev?.next_check_at ?? new Date(ctx.now.getTime() + UNLOOKED_GAP_RECHECK_MS));
+        ? new Date(ctx.now.getTime() + gapBackoffMs(checks)).toISOString()
+        : (prev?.next_check_at ??
+          new Date(ctx.now.getTime() + UNLOOKED_GAP_RECHECK_MS).toISOString());
       const detail = looked
         ? g.reason === "invalid_bars"
           ? ctx.rejected
@@ -1020,7 +1034,7 @@ export async function recomputeGaps(
           : ctx.detail
         : (prev?.detail ?? null);
       return sql`(${ref.seriesId}, ${g.from}::date, ${g.to}::date, ${g.reason}, 'open', ${g.sessions},
-        ${checks}, ${next.toISOString()}::timestamptz, ${detail})`;
+        ${checks}, ${next}::timestamptz, ${detail})`;
     });
     await tx.execute(sql`
       insert into price_gaps (series_id, from_date, to_date, reason, status, sessions, checks, next_check_at, detail)
