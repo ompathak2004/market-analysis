@@ -45,8 +45,17 @@ const webSchema = serviceSchema.extend({
 export type ServiceConfig = z.infer<typeof serviceSchema>;
 export type Config = z.infer<typeof webSchema>;
 
+function withoutBlanks(env: NodeJS.ProcessEnv): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    const trimmed = value?.trim();
+    if (trimmed) out[key] = trimmed;
+  }
+  return out;
+}
+
 function parse<S extends z.ZodTypeAny>(schema: S, env: NodeJS.ProcessEnv): z.infer<S> {
-  const parsed = schema.safeParse(env);
+  const parsed = schema.safeParse(withoutBlanks(env));
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     throw new Error(`Invalid environment: ${issues}`);

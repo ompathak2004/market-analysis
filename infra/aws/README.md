@@ -1,6 +1,6 @@
 # AWS worker infrastructure
 
-The queue worker (`apps/worker`) runs as one ECS Fargate task in `ap-south-1`, account `146552917880`. Everything is plain CloudFormation; there is no CDK toolchain.
+The queue worker (`apps/worker`) runs as one ECS Fargate task in `ap-south-1`, account `543588327217`. Everything is plain CloudFormation; there is no CDK toolchain.
 
 | File | What it creates or does |
 | --- | --- |
@@ -88,12 +88,14 @@ aws ecs execute-command --cluster market-analysis --task "$task" --container wor
 
 | Item | Monthly (USD) |
 | --- | --- |
-| Fargate Spot 0.5 vCPU / 1 GiB, always on (Spot price floats, typically ~70 % below on-demand) | ≈ 6–7.3 |
+| Fargate Spot 0.25 vCPU / 1 GiB, always on (Spot price floats, typically ~70 % below on-demand) | ≈ 3.5–4 |
 | Public IPv4 address on the task ($0.005/h) | ≈ 3.6 |
 | S3 archive (a few GB) | < 0.5 |
 | CloudWatch logs (14 d), custom metrics and three alarms | < 1 |
 | ECR (10 images, ~90 MB compressed each) | ≈ 0.1 |
-| **Total on Spot** | **≈ 11** (≈ 8 if the IPv4 charge is covered by credits or free tier) |
-| Same on on-demand Fargate (≈ $19 compute) | ≈ 24 |
+| **Total on Spot** | **≈ 8** (≈ 4.5 if the IPv4 charge is covered by credits or free tier) |
+| Same on on-demand Fargate (≈ $12 compute) | ≈ 17 |
+
+The worker is I/O-bound (HTTP, Postgres, LLM calls); 0.25 vCPU is enough for one task. The budget alarm defaults to $15/month.
 
 No NAT gateway and no load balancer: the task gets a public IP in a default-VPC public subnet and the security group allows egress only. Container Insights stays off (the not-running alarm uses the free `AWS/ECS` CPU metric). The budget emails `AlertEmail` at 80 % and 100 % of `MonthlyBudgetUsd` (default 20).

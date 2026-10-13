@@ -19,7 +19,7 @@ Parameters:
     Description: Public subnets of the default VPC (tasks get a public IP; no NAT gateway)
   MonthlyBudgetUsd:
     Type: Number
-    Default: 20
+    Default: 15
     MinValue: 1
   DesiredCount:
     Type: Number
@@ -263,7 +263,7 @@ Resources:
       RequiresCompatibilities:
         - FARGATE
       NetworkMode: awsvpc
-      Cpu: "512"
+      Cpu: "256"
       Memory: "1024"
       RuntimePlatform:
         OperatingSystemFamily: LINUX

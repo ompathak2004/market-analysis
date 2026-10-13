@@ -5,10 +5,10 @@
 | Component | Where | Notes |
 | --- | --- | --- |
 | Web UI, `/api/v1` read API | Vercel (`apps/web`) | Reads Postgres/Redis; no scheduled work after cutover. |
-| Queue worker, schedules, all ingestion/intel/LLM jobs | AWS ECS Fargate, `ap-south-1`, cluster `market-analysis`, service `market-analysis-worker` (`apps/worker`) | One task (0.5 vCPU / 1 GiB), Spot by default. Image in ECR `market-analysis-worker`, tagged by git sha. Infra in `infra/aws` (see its README). |
+| Queue worker, schedules, all ingestion/intel/LLM jobs | AWS ECS Fargate, `ap-south-1`, cluster `market-analysis`, service `market-analysis-worker` (`apps/worker`) | One task (0.25 vCPU / 1 GiB), Spot by default. Image in ECR `market-analysis-worker`, tagged by git sha. Infra in `infra/aws` (see its README). |
 | Queue (pg-boss), run ledger, `job_control` | Aiven Postgres | Same database as the data. |
 | Cache, rate limits, LLM/Firecrawl budgets | Managed Redis | |
-| Archive (DB backups under `backups/`, document blobs) | S3 `market-analysis-archive-146552917880` | `backups/` expires after 90 days. |
+| Archive (DB backups under `backups/`, document blobs) | S3 `market-analysis-archive-543588327217` | `backups/` expires after 90 days. |
 | Worker logs | CloudWatch Logs `/market-analysis/worker` | 14-day retention. |
 | Secrets | SSM Parameter Store `/market-analysis/prod/*` (SecureString) | Read by the task at start; `MIGRATION_DATABASE_URL` is read only by CI. |
 | Deploys | GitHub Actions (`infra/aws/github-workflow-worker.yml`, to be copied to `.github/workflows/worker.yml`) | Push to `main` touching the worker: verify → image → `pnpm db:migrate` → new task definition → rolling (stop-then-start) deploy. A failed migration stops the job before the deploy. |
