@@ -214,6 +214,8 @@ export interface JobEnvelope {
   runId: number | null;
   attemptBase: number;
   deferrals: number;
+  // pg-boss does not hand the priority back to a worker; app-managed retries re-send it from here.
+  priority?: number | undefined;
 }
 
 const envelopeSchema = z
@@ -224,6 +226,7 @@ const envelopeSchema = z
     runId: z.number().int().positive().nullable().default(null),
     attemptBase: z.number().int().min(0).default(0),
     deferrals: z.number().int().min(0).default(0),
+    priority: z.number().int().optional(),
   })
   .strict();
 

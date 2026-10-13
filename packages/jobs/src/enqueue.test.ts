@@ -48,6 +48,13 @@ describe("enqueue", () => {
     expect(calls[0]?.options).toMatchObject({ retryLimit: 1, startAfter });
   });
 
+  it("records the priority in the envelope so a retry can re-send it", async () => {
+    const { boss, calls } = fakeBoss();
+    await enqueue(boss, { type: "prices.sync", payload: { companyId: 9 }, priority: 3 });
+    expect(calls[0]?.data).toMatchObject({ priority: 3 });
+    expect(calls[0]?.options).toMatchObject({ priority: 3 });
+  });
+
   it("rejects invalid payloads before sending", async () => {
     const { boss, calls } = fakeBoss();
     await expect(
