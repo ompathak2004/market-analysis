@@ -17,6 +17,7 @@ export * from "./pipelines/aircraft.js";
 export * from "./pipelines/analysts.js";
 export * from "./pipelines/fundamentals.js";
 export * from "./pipelines/market.js";
+export * from "./pipelines/prices.js";
 export * from "./pipelines/relationships.js";
 export * from "./pipelines/research.js";
 export * from "./pipelines/universe.js";
