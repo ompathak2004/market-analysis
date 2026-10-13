@@ -1,4 +1,4 @@
-import { RateLimitedError } from "@ma/core";
+import { AppError, RateLimitedError } from "@ma/core";
 import {
   buildBackfillManifest,
   buildDailyManifest,
@@ -63,6 +63,18 @@ async function deferRateLimits<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+// Rows are already committed when this throws, so the ledger retry with backoff is idempotent and
+// the unit only succeeds once every expected session in its window is covered.
+export function requireComplete(r: PriceWindowResult): PriceWindowResult {
+  if (r.status === "incomplete" || r.status === "rebuild_incomplete")
+    throw new AppError(r.detail ?? `price window ${r.status}`, "price_incomplete", 503, {
+      status: r.status,
+      windowMissing: r.windowMissing,
+      missingSessions: r.missingSessions,
+    });
+  return r;
+}
+
 async function daily({
   ctx,
   payload,
@@ -80,7 +92,8 @@ async function daily({
       signal,
     ),
   );
-  if (ref.kind === "equity" && r.status === "written")
+  requireComplete(r);
+  if (ref.kind === "equity" && r.status === "written" && r.latestCovered)
     await markSynced(ctx.db, "prices", ref.ownerId, fence);
   return done(windowMetrics(r));
 }
@@ -118,15 +131,18 @@ export const priceHandlers: PriceHandlers = {
     const m = await buildBackfillManifest(ctx, { signal });
     for (const e of m.exceptions) ctx.logger.warn({ ...e }, "price backfill listing exception");
     return children(m.units.map(child("prices.window", PRICE_PRIORITY.backfill)), {
+      manifestId: m.manifestId,
+      companies: m.companies,
       series: m.series,
       exceptions: m.exceptions.length,
     });
   },
   "prices.window": async ({ ctx, payload, signal }) => {
     if (payload.parserVersion !== PRICE_PARSER_VERSION) return done({ stale_parser: 1 });
-    const r = await deferRateLimits(() =>
-      syncPriceWindow(ctx, payload, payload.mode ?? "backfill", signal),
-    );
+    const mode = payload.mode ?? "backfill";
+    const r = await deferRateLimits(() => syncPriceWindow(ctx, payload, mode, signal));
+    // Repair windows re-check known gaps; their next_check_at backoff is the retry, not the ledger.
+    if (mode !== "repair") requireComplete(r);
     return done(windowMetrics(r));
   },
   "prices.daily": daily,
@@ -134,7 +150,7 @@ export const priceHandlers: PriceHandlers = {
   "prices.rebuild": async ({ ctx, payload, signal }) => {
     if (payload.parserVersion !== PRICE_PARSER_VERSION) return done({ stale_parser: 1 });
     const r = await rebuildSeries(ctx, payload, signal);
-    return done(windowMetrics(r));
+    return done(windowMetrics(requireComplete(r)));
   },
   "prices.sync": async (run) => {
     const { ctx, payload, signal } = run;

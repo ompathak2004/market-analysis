@@ -8,6 +8,7 @@ import {
   type ListingStatus,
   type PriceGapReason,
   type PriceQualityStatus,
+  type PriceSeriesException,
   sql,
   type Tx,
 } from "@ma/db";
@@ -41,6 +42,7 @@ const DAY = 24 * HOUR;
 const UNLOOKED_GAP_RECHECK_MS = 6 * HOUR;
 const MAX_GAP_BACKOFF_MS = 30 * DAY;
 const NSE_OVERLAP_TOLERANCE = 5e-4;
+const NSE_OVERLAP_PAD_DAYS = 14;
 const REFETCHABLE: PriceGapReason[] = ["missing_source_data", "invalid_bars"];
 
 export type PriceSyncMode = "backfill" | "daily" | "repair" | "rebuild";
@@ -57,6 +59,7 @@ export interface PriceSeriesRef {
   desiredTo: string;
   generation: number;
   qualityStatus: PriceQualityStatus;
+  exceptionReason: PriceSeriesException | null;
   listedFrom: string | null;
   delistedOn: string | null;
   listingStatus: ListingStatus | null;
@@ -72,6 +75,8 @@ export interface PriceWindowUnit {
 
 export type PriceWindowStatus =
   | "written"
+  | "incomplete"
+  | "rebuild_incomplete"
   | "stale_generation"
   | "missing_series"
   | "identity_mismatch"
@@ -89,8 +94,11 @@ export interface PriceWindowResult {
   newActions: number;
   gaps: number;
   missingSessions: number;
+  windowMissing: number;
+  latestCovered: boolean;
   source: string | null;
   quality: PriceQualityStatus | null;
+  detail: string | null;
 }
 
 const emptyResult = (status: PriceWindowStatus): PriceWindowResult => ({
@@ -103,8 +111,11 @@ const emptyResult = (status: PriceWindowStatus): PriceWindowResult => ({
   newActions: 0,
   gaps: 0,
   missingSessions: 0,
+  windowMissing: 0,
+  latestCovered: false,
   source: null,
   quality: null,
+  detail: null,
 });
 
 let activeSlots = 0;
@@ -131,6 +142,7 @@ interface SeriesRow extends Record<string, unknown> {
   desired_to: string;
   adjustment_generation: number;
   quality_status: PriceQualityStatus;
+  exception_reason: PriceSeriesException | null;
   c_yahoo: string | null;
   nse_symbol: string | null;
   listed_from: string | null;
@@ -142,7 +154,7 @@ interface SeriesRow extends Record<string, unknown> {
 
 const SERIES_SELECT = sql`
   select s.id, s.company_id, s.index_id, s.desired_from::text, s.desired_to::text,
-         s.adjustment_generation, s.quality_status,
+         s.adjustment_generation, s.quality_status, s.exception_reason,
          c.yahoo_symbol as c_yahoo, c.nse_symbol, c.listed_from::text, c.delisted_on::text,
          c.listing_status, i.code as i_code, i.yahoo_symbol as i_yahoo
   from price_series_state s
@@ -163,6 +175,7 @@ function toRef(r: SeriesRow): PriceSeriesRef {
     desiredTo: r.desired_to,
     generation: Number(r.adjustment_generation),
     qualityStatus: r.quality_status,
+    exceptionReason: r.exception_reason,
     listedFrom: r.listed_from,
     delistedOn: r.delisted_on,
     listingStatus: r.listing_status,
@@ -190,6 +203,21 @@ export function loadSeries(
 const lockSeries = (tx: Tx, seriesId: number) =>
   querySeries(tx, sql`s.id = ${seriesId} for update of s`);
 
+const BLOCKING_EXCEPTIONS: ReadonlySet<PriceSeriesException> = new Set([
+  "no_yahoo_symbol",
+  "not_in_nse_equity_list",
+  "isin_mismatch",
+]);
+
+// Series whose identity is missing or contradicted are never fetched; they stay visible in the
+// coverage gate through their exception_reason instead.
+export function fetchable(
+  s: PriceSeriesRef,
+  reason: PriceSeriesException | null = s.exceptionReason,
+): s is PriceSeriesRef & { yahooSymbol: string } {
+  return s.yahooSymbol !== null && !(reason && BLOCKING_EXCEPTIONS.has(reason));
+}
+
 export async function loadAllSeries(db: Queryable): Promise<PriceSeriesRef[]> {
   const rows = await db.execute<SeriesRow>(
     sql`${SERIES_SELECT} order by s.index_id is null, c.market_cap_cr desc nulls last, s.id`,
@@ -213,8 +241,8 @@ export async function desiredWindow(
   db: Queryable,
   today = istToday(),
 ): Promise<{ from: string; to: string }> {
-  const to =
-    (await sessionsBack(db, today, 2)) ?? addDays((await sessionsBack(db, today, 1)) ?? today, -1);
+  const yesterday = addDays(today, -1);
+  const to = (await sessionsBack(db, yesterday, 1)) ?? yesterday;
   return { from: addYears(to, -PRICE_HISTORY_YEARS), to };
 }
 
@@ -228,11 +256,7 @@ export function backfillWindows(desiredFrom: string, today: string): HistoryWind
 export interface ListingException {
   companyId: number;
   symbol: string | null;
-  reason:
-    | "listing_source_unavailable"
-    | "not_in_nse_equity_list"
-    | "isin_mismatch"
-    | "no_yahoo_symbol";
+  reason: PriceSeriesException;
 }
 
 export async function reconcileListings(
@@ -276,11 +300,11 @@ export async function reconcileListings(
   for (const c of rows) {
     if (!c.nseSymbol || !c.yahooSymbol) continue;
     const l = bySymbol.get(c.nseSymbol);
-    if (!l)
+    if (!l && c.listingStatus !== "delisted")
       exceptions.push({ companyId: c.id, symbol: c.nseSymbol, reason: "not_in_nse_equity_list" });
-    else if (c.isin && l.isin && c.isin !== l.isin)
+    else if (l && c.isin && l.isin && c.isin !== l.isin)
       exceptions.push({ companyId: c.id, symbol: c.nseSymbol, reason: "isin_mismatch" });
-    else if (c.listingStatus === "unverified" || c.listingStatus === "active")
+    else if (l && (c.listingStatus === "unverified" || c.listingStatus === "active"))
       updates.push({ id: c.id, listedFrom: l.listedOn });
   }
   for (const batch of chunk(updates, 200)) {
@@ -312,15 +336,27 @@ export async function ensureSeriesStates(
   desired: { from: string; to: string },
   signal?: AbortSignal,
 ): Promise<number> {
-  await seedMarketIndices(ctx);
   return fencedTransaction(
     ctx.db,
     async (tx) => {
+      await seedMarketIndices(tx);
       const states = await tx.execute(sql`
         insert into price_series_state (company_id, desired_from, desired_to)
-        select id, ${desired.from}, ${desired.to} from companies where yahoo_symbol is not null
+        select id, ${desired.from}, ${desired.to} from companies
         on conflict (company_id) do update
           set desired_from = excluded.desired_from, desired_to = excluded.desired_to, updated_at = now()`);
+      await tx.execute(sql`
+        update price_series_state s
+        set exception_reason = 'no_yahoo_symbol', quality_status = 'exception', updated_at = now()
+        from companies c
+        where c.id = s.company_id and c.yahoo_symbol is null
+          and (s.exception_reason is distinct from 'no_yahoo_symbol' or s.quality_status <> 'exception')`);
+      await tx.execute(sql`
+        update price_series_state s
+        set exception_reason = null, quality_status = 'pending', updated_at = now()
+        from companies c
+        where c.id = s.company_id and c.yahoo_symbol is not null
+          and s.exception_reason = 'no_yahoo_symbol'`);
       await tx.execute(sql`
         insert into price_series_state (index_id, desired_from, desired_to)
         select id, ${desired.from}, ${desired.to} from indices where yahoo_symbol is not null
@@ -376,6 +412,7 @@ export interface FetchedHistory {
   rejected: RejectedBar[];
   source: string;
   detail: string | null;
+  firstTradeDate: string | null;
 }
 
 async function nseCooldown(ctx: IngestContext): Promise<void> {
@@ -404,21 +441,56 @@ async function fetchNseIndex(
   }
 }
 
+export interface FallbackMerge {
+  bars: SourcedBar[];
+  added: number;
+  agreements: number;
+  mismatches: number;
+}
+
+// Fallback bars count as coverage only when the fallback provably agrees with primary-source
+// closes on at least one overlapping session; zero overlap is no evidence at all.
 export function mergeFallback(
   primary: SourcedBar[],
   fallback: DailyBar[],
   source: string,
-): { bars: SourcedBar[]; added: number; mismatches: number } {
-  const byDate = new Map(primary.map((b) => [b.date, b]));
+  opts: { reference?: Map<string, number>; window?: HistoryWindow } = {},
+): FallbackMerge {
+  const primaryDates = new Set(primary.map((b) => b.date));
+  const closes = new Map(opts.reference);
+  for (const b of primary) closes.set(b.date, b.close);
+  let agreements = 0;
   let mismatches = 0;
   for (const f of fallback) {
-    const p = byDate.get(f.date);
-    if (p && Math.abs(p.close / f.close - 1) > NSE_OVERLAP_TOLERANCE) mismatches++;
+    const c = closes.get(f.date);
+    if (c === undefined) continue;
+    if (Math.abs(c / f.close - 1) > NSE_OVERLAP_TOLERANCE) mismatches++;
+    else agreements++;
   }
-  if (mismatches > 0) return { bars: primary, added: 0, mismatches };
-  const added = fallback.filter((f) => !byDate.has(f.date)).map((f) => ({ ...f, source }));
+  if (mismatches > 0 || agreements === 0)
+    return { bars: primary, added: 0, agreements, mismatches };
+  const w = opts.window;
+  const added = fallback
+    .filter(
+      (f) => !primaryDates.has(f.date) && (!w || (f.date >= w.from && f.date < w.toExclusive)),
+    )
+    .map((f) => ({ ...f, source }));
   const bars = [...primary, ...added].sort((a, b) => a.date.localeCompare(b.date));
-  return { bars, added: added.length, mismatches };
+  return { bars, added: added.length, agreements, mismatches };
+}
+
+async function storedYahooCloses(
+  db: Queryable,
+  ref: PriceSeriesRef,
+  window: HistoryWindow,
+): Promise<Map<string, number>> {
+  const table = ref.kind === "equity" ? sql`prices_daily` : sql`index_prices_daily`;
+  const owner = ref.kind === "equity" ? sql`company_id` : sql`index_id`;
+  const rows = await db.execute<{ date: string; close: number }>(sql`
+    select date::text as date, close from ${table}
+    where ${owner} = ${ref.ownerId} and source = 'yahoo' and adjustment_generation = ${ref.generation}
+      and date >= ${window.from} and date < ${window.toExclusive}`);
+  return new Map(rows.map((r) => [r.date, Number(r.close)]));
 }
 
 async function fetchHistory(
@@ -443,6 +515,7 @@ async function fetchHistory(
     rejected: history.rejected,
     source: "yahoo",
     detail: null,
+    firstTradeDate: history.meta.firstTradeDate,
   };
   if (yahooBars.length && mode !== "repair") return base;
   if (ref.kind === "equity")
@@ -453,22 +526,36 @@ async function fetchHistory(
       }
     );
   if (!ref.nseName) return base;
+  const padded = {
+    from: addDays(window.from, -NSE_OVERLAP_PAD_DAYS),
+    toExclusive: [
+      addDays(window.toExclusive, NSE_OVERLAP_PAD_DAYS),
+      addDays(istToday(), 1),
+    ].sort()[0] as string,
+  };
   let nse: DailyBar[];
   try {
-    nse = await fetchNseIndex(ctx, ref.nseName, window, signal);
+    nse = await fetchNseIndex(ctx, ref.nseName, padded, signal);
   } catch (err) {
     if (yahooBars.length && err instanceof RateLimitedError)
       return base && { ...base, detail: "nse fallback cooling down" };
     throw err;
   }
-  const merged = mergeFallback(yahooBars, nse, "nse");
+  const reference = await storedYahooCloses(ctx.db, ref, padded);
+  const merged = mergeFallback(yahooBars, nse, "nse", { reference, window });
   if (!merged.added && !base) return null;
+  const detail = merged.mismatches
+    ? `nse overlap mismatch on ${merged.mismatches} sessions`
+    : nse.length && !merged.agreements
+      ? "nse fallback uncorroborated: no overlapping yahoo close"
+      : null;
   return {
     bars: merged.bars,
     events: [],
     rejected: base?.rejected ?? [],
     source: merged.added ? (yahooBars.length ? "yahoo+nse" : "nse") : "yahoo",
-    detail: merged.mismatches ? `nse overlap mismatch on ${merged.mismatches} sessions` : null,
+    detail,
+    firstTradeDate: base?.firstTradeDate ?? null,
   };
 }
 
@@ -507,7 +594,8 @@ export async function syncPriceWindow(
     }
   }
   const r = await writeWindow(ctx, ref, { ...write, fetched, hint, detail });
-  return r.status === "written" ? { ...r, status } : r;
+  const wrote = r.status === "written" || r.status === "incomplete";
+  return wrote && status !== "written" ? { ...r, status, detail: detail ?? r.detail } : r;
 }
 
 export async function rebuildSeries(
@@ -688,6 +776,40 @@ async function writeWindow(
       }
 
       const bars = fetched?.bars ?? [];
+      if (input.mode === "rebuild") {
+        const shortfall = await rebuildShortfall(
+          tx,
+          locked,
+          bars.map((b) => b.date),
+          fetched?.firstTradeDate ?? null,
+        );
+        if (shortfall.length) {
+          const detail = `rebuild to g${input.generation} refused: source lacks ${shortfall.length} expected sessions (${shortfall[0]}..${shortfall.at(-1)})`;
+          const coverage = await recomputeGaps(tx, locked, {
+            generation: locked.generation,
+            window: input.window,
+            rejected: fetched?.rejected ?? [],
+            hint: "missing_source_data",
+            detail,
+            firstTradeDate: fetched?.firstTradeDate ?? null,
+            now,
+          });
+          await tx.execute(sql`
+            update price_series_state
+            set quality_status = 'rebuild_required', detail = ${detail},
+                checked_at = now(), updated_at = now()
+            where id = ${ref.seriesId}`);
+          return {
+            ...result,
+            status: "rebuild_incomplete",
+            gaps: coverage.gaps,
+            missingSessions: shortfall.length,
+            quality: "rebuild_required",
+            detail,
+          };
+        }
+      }
+
       if (ref.kind === "index" && ref.code === CALENDAR_INDEX && bars.length) {
         const dates = bars.filter((b) => b.date <= today).map((b) => b.date);
         const source = `benchmark:${input.symbol}`;
@@ -725,29 +847,48 @@ async function writeWindow(
           where company_id = ${ref.ownerId} and provider = 'yahoo' and symbol = ${input.symbol}
             and valid_to is null and verified_at is null`);
 
-      const coverage = await recomputeGaps(tx, ref, {
+      const gapDetail = fetched
+        ? fetched.detail
+        : (input.detail ?? "no history returned for window");
+      const coverage = await recomputeGaps(tx, locked, {
         generation: input.generation,
         window: input.window,
         rejected: fetched?.rejected ?? [],
         hint: fetched ? "missing_source_data" : input.hint,
-        detail: fetched ? fetched.detail : (input.detail ?? "no history returned for window"),
+        detail: gapDetail,
+        firstTradeDate: fetched?.firstTradeDate ?? null,
         now,
       });
       const quality: PriceQualityStatus =
         wasRebuildRequired && input.mode !== "rebuild" ? "rebuild_required" : coverage.quality;
+      const { end } = seriesBounds(locked);
+      const lastDay = addDays(input.window.toExclusive, -1);
+      const cal = await calendarThrough(tx);
+      const calendarReady = cal !== null && cal >= (lastDay < end ? lastDay : end);
+      const incomplete = !calendarReady || coverage.windowMissing > 0;
+      const detail = !calendarReady
+        ? `trading calendar ends ${cal ?? "nowhere"}; window not verifiable yet`
+        : coverage.windowMissing > 0
+          ? `${coverage.windowMissing} expected sessions missing in window${gapDetail ? `: ${gapDetail}` : ""}`
+          : null;
       await tx.execute(sql`
         update price_series_state
         set adjustment_generation = ${input.generation},
             action_hash = coalesce(${actionHash}, action_hash),
             verified_through = ${coverage.verifiedThrough},
             quality_status = ${quality},
+            detail = ${detail},
             checked_at = now(), updated_at = now()
         where id = ${ref.seriesId}`);
       return {
         ...result,
+        status: incomplete ? "incomplete" : "written",
         gaps: coverage.gaps,
         missingSessions: coverage.missing,
+        windowMissing: coverage.windowMissing,
+        latestCovered: coverage.latestCovered,
         quality,
+        detail,
       };
     },
     input.signal,
@@ -855,16 +996,58 @@ interface GapContext {
   rejected: RejectedBar[];
   hint: PriceGapReason;
   detail: string | null;
+  firstTradeDate?: string | null;
   now: Date;
 }
 
 export interface CoverageSummary {
   expected: number;
   missing: number;
+  windowMissing: number;
   gaps: number;
   finalThrough: string | null;
   verifiedThrough: string | null;
+  latestCovered: boolean;
   quality: PriceQualityStatus;
+}
+
+function seriesBounds(ref: PriceSeriesRef): { start: string; end: string } {
+  return {
+    start: [ref.desiredFrom, ref.listedFrom ?? ref.desiredFrom].sort().at(-1) as string,
+    end: [ref.desiredTo, ref.delistedOn ?? ref.desiredTo].sort()[0] as string,
+  };
+}
+
+async function calendarThrough(tx: Queryable): Promise<string | null> {
+  const rows = await tx.execute<{ d: string | null }>(
+    sql`select max(date)::text as d from trading_sessions where exchange = ${NSE_EXCHANGE}`,
+  );
+  return rows[0]?.d ?? null;
+}
+
+// Sessions a rebuild must return before it may replace the current generation: every expected
+// session except those already recorded as gaps (open or exempt) for this series.
+export async function rebuildShortfall(
+  tx: Queryable,
+  ref: PriceSeriesRef,
+  barDates: Iterable<string>,
+  firstTradeDate: string | null,
+): Promise<string[]> {
+  const { start, end } = seriesBounds(ref);
+  const from = firstTradeDate && firstTradeDate > start ? firstTradeDate : start;
+  if (from > end) return [];
+  const cal = await calendarThrough(tx);
+  if (!cal || cal < end) return [`calendar<${end}`];
+  const required = await tx.execute<{ d: string }>(sql`
+    select t.date::text as d from trading_sessions t
+    where t.exchange = ${NSE_EXCHANGE} and t.date between ${from} and ${end}
+      and not exists (
+        select 1 from price_gaps g
+        where g.series_id = ${ref.seriesId} and g.status in ('open', 'exempt')
+          and t.date between g.from_date and g.to_date)
+    order by t.date`);
+  const have = new Set(barDates);
+  return required.map((r) => r.d).filter((d) => !have.has(d));
 }
 
 export async function recomputeGaps(
@@ -874,8 +1057,7 @@ export async function recomputeGaps(
 ): Promise<CoverageSummary> {
   const table = ref.kind === "equity" ? sql`prices_daily` : sql`index_prices_daily`;
   const owner = ref.kind === "equity" ? sql`company_id` : sql`index_id`;
-  const start = [ref.desiredFrom, ref.listedFrom ?? ref.desiredFrom].sort().at(-1) as string;
-  const end = [ref.desiredTo, ref.delistedOn ?? ref.desiredTo].sort()[0] as string;
+  const { start, end } = seriesBounds(ref);
   const sessions =
     start <= end
       ? await tx.execute<{ date: string; missing: boolean }>(sql`
@@ -907,8 +1089,18 @@ export async function recomputeGaps(
     ctx.window !== null && d >= ctx.window.from && d < ctx.window.toExclusive;
   const priorReason = (d: string) =>
     existing.find((g) => d >= g.from_date && d <= g.to_date)?.reason ?? "missing_source_data";
+  const firstTrade = ctx.firstTradeDate ?? null;
+  const noSymbol = ref.yahooSymbol === null;
   const ranges = missingRanges(sessions, (d) =>
-    rejected.has(d) ? "invalid_bars" : inWindow(d) ? ctx.hint : priorReason(d),
+    noSymbol
+      ? "unresolved_identity"
+      : rejected.has(d)
+        ? "invalid_bars"
+        : firstTrade && d < firstTrade
+          ? "prelisting"
+          : inWindow(d)
+            ? ctx.hint
+            : priorReason(d),
   );
 
   await tx.execute(
@@ -955,18 +1147,26 @@ export async function recomputeGaps(
   const unverifiedListing =
     ref.kind === "equity" &&
     (ref.listingStatus === "unverified" || ref.listingStatus === "placeholder");
-  const quality: PriceQualityStatus =
-    missing === 0 && sessions.length > 0 && finalThrough !== null && finalThrough >= end
+  const latestCovered = finalThrough !== null && finalThrough >= end;
+  const quality: PriceQualityStatus = noSymbol
+    ? "exception"
+    : missing === 0 && sessions.length > 0 && latestCovered
       ? "complete"
       : unverifiedListing || ranges.some((g) => g.reason === "unresolved_identity")
         ? "exception"
         : "partial";
+  const windowMissing = ranges
+    .filter((g) => g.reason !== "prelisting")
+    .flatMap((g) => sessions.filter((x) => x.missing && x.date >= g.from && x.date <= g.to))
+    .filter((x) => inWindow(x.date)).length;
   return {
     expected: sessions.length,
     missing,
+    windowMissing,
     gaps: ranges.length,
     finalThrough,
     verifiedThrough,
+    latestCovered,
     quality,
   };
 }
@@ -1012,8 +1212,10 @@ export interface BackfillUnit {
 }
 
 export interface BackfillManifest {
+  manifestId: number;
   units: BackfillUnit[];
   series: number;
+  companies: number;
   exceptions: ListingException[];
   desired: { from: string; to: string };
 }
@@ -1027,9 +1229,11 @@ export async function buildBackfillManifest(
   const desired = await desiredWindow(ctx.db, today);
   await ensureSeriesStates(ctx, desired, opts.signal);
   const series = await loadAllSeries(ctx.db);
+  const listingReason = new Map(listing.exceptions.map((e) => [e.companyId, e.reason]));
   const units: BackfillUnit[] = [];
   for (const s of series) {
-    if (!s.yahooSymbol) continue;
+    const reason = s.kind === "equity" ? (listingReason.get(s.ownerId) ?? null) : null;
+    if (!fetchable(s, reason)) continue;
     const generation = Math.max(1, s.generation);
     for (const w of backfillWindows(desired.from, today))
       units.push({
@@ -1041,7 +1245,82 @@ export async function buildBackfillManifest(
         parserVersion: PRICE_PARSER_VERSION,
       });
   }
-  return { units, series: series.length, exceptions: listing.exceptions, desired };
+  const manifestId = await persistManifest(ctx.db, {
+    desired,
+    series,
+    units,
+    exceptions: listing.exceptions,
+    signal: opts.signal,
+  });
+  return {
+    manifestId,
+    units,
+    series: series.length,
+    companies: series.filter((s) => s.kind === "equity").length,
+    exceptions: listing.exceptions,
+    desired,
+  };
+}
+
+async function persistManifest(
+  db: Db,
+  m: {
+    desired: { from: string; to: string };
+    series: PriceSeriesRef[];
+    units: BackfillUnit[];
+    exceptions: ListingException[];
+    signal: AbortSignal | undefined;
+  },
+): Promise<number> {
+  const reasonOf = new Map(m.exceptions.map((e) => [e.companyId, e.reason]));
+  const unitsOf = new Map<number, number>();
+  for (const u of m.units) unitsOf.set(u.seriesId, (unitsOf.get(u.seriesId) ?? 0) + 1);
+  const equities = m.series.filter((s) => s.kind === "equity");
+  return fencedTransaction(
+    db,
+    async (tx) => {
+      await tx.execute(sql`
+        update price_series_state
+        set exception_reason = null,
+            quality_status = case when quality_status = 'exception' then 'pending' else quality_status end,
+            updated_at = now()
+        where company_id is not null and exception_reason is not null
+          and exception_reason <> 'no_yahoo_symbol'`);
+      for (const batch of chunk(
+        m.exceptions.filter((e) => e.reason !== "no_yahoo_symbol"),
+        200,
+      ))
+        await tx.execute(sql`
+          update price_series_state s
+          set exception_reason = v.reason,
+              quality_status = case when v.reason = 'listing_source_unavailable'
+                then s.quality_status else 'exception' end,
+              updated_at = now()
+          from (values ${sql.join(
+            batch.map((e) => sql`(${e.companyId}::int, ${e.reason})`),
+            sql`, `,
+          )}) as v(company_id, reason)
+          where s.company_id = v.company_id`);
+      const [row] = await tx.execute<{ id: number }>(sql`
+        insert into price_manifests (kind, desired_from, desired_to, companies, units)
+        values ('backfill', ${m.desired.from}, ${m.desired.to}, ${equities.length}, ${m.units.length})
+        returning id`);
+      const manifestId = Number(row?.id);
+      for (const batch of chunk(equities, 200))
+        await tx.execute(sql`
+          insert into price_manifest_companies
+            (manifest_id, company_id, series_id, symbol, units, exception_reason)
+          values ${sql.join(
+            batch.map(
+              (s) => sql`(${manifestId}, ${s.ownerId}, ${s.seriesId}, ${s.yahooSymbol},
+                ${unitsOf.get(s.seriesId) ?? 0}, ${reasonOf.get(s.ownerId) ?? (s.yahooSymbol ? null : "no_yahoo_symbol")})`,
+            ),
+            sql`, `,
+          )}`);
+      return manifestId;
+    },
+    m.signal,
+  );
 }
 
 export interface DailyUnit {
@@ -1059,7 +1338,7 @@ export async function buildDailyManifest(
   const series = await loadAllSeries(ctx.db);
   const polled = series.filter(
     (s) =>
-      s.yahooSymbol &&
+      fetchable(s) &&
       s.qualityStatus !== "rebuild_required" &&
       (s.kind === "index" ||
         (s.listingStatus !== "placeholder" &&
@@ -1086,7 +1365,7 @@ export interface RebuildUnit {
 
 function rebuildUnits(series: PriceSeriesRef[]): RebuildUnit[] {
   return series
-    .filter((s) => s.qualityStatus === "rebuild_required" && s.yahooSymbol)
+    .filter((s) => s.qualityStatus === "rebuild_required" && fetchable(s))
     .map((s) => ({
       seriesId: s.seriesId,
       symbol: s.yahooSymbol as string,
@@ -1132,7 +1411,7 @@ export async function buildRepairManifest(
   const bySeries = new Map(series.map((s) => [s.seriesId, s]));
   const refetch = due.flatMap((g) => {
     const s = bySeries.get(Number(g.series_id));
-    if (!s?.yahooSymbol) return [];
+    if (!s || !fetchable(s)) return [];
     return [
       {
         seriesId: s.seriesId,

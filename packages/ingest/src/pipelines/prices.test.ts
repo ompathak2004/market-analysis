@@ -7,7 +7,9 @@ import { type DailyBar, istToday, type YahooEvent, type YahooHistory } from "../
 import {
   actionHash,
   backfillWindows,
+  buildBackfillManifest,
   changedSql,
+  desiredWindow,
   gapBackoffMs,
   mergeFallback,
   missingRanges,
@@ -124,6 +126,27 @@ describe("mergeFallback", () => {
     expect(r).toMatchObject({ added: 0, mismatches: 1 });
     expect(r.bars).toBe(primary);
   });
+
+  it("adds nothing when no fallback session overlaps a primary close", () => {
+    const r = mergeFallback(primary, [bar("2024-01-02", 101), bar("2024-01-04", 103)], "nse");
+    expect(r).toMatchObject({ added: 0, agreements: 0, mismatches: 0 });
+    expect(r.bars).toBe(primary);
+    expect(mergeFallback([], [bar("2024-01-02", 101)], "nse").added).toBe(0);
+  });
+
+  it("corroborates against stored closes and only adds bars inside the window", () => {
+    const r = mergeFallback(
+      [],
+      [bar("2023-12-29", 99), bar("2024-01-02", 101), bar("2024-01-10", 105)],
+      "nse",
+      {
+        reference: new Map([["2023-12-29", 99.01]]),
+        window: { from: "2024-01-01", toExclusive: "2024-01-09" },
+      },
+    );
+    expect(r).toMatchObject({ added: 1, agreements: 1, mismatches: 0 });
+    expect(r.bars.map((b) => b.date)).toEqual(["2024-01-02"]);
+  });
 });
 
 describe("changedSql", () => {
@@ -228,7 +251,15 @@ describe.skipIf(!url)("price series writes (DATABASE_URL_TEST)", () => {
       { seriesId, symbol, ...window, generation: 1 },
       "backfill",
     );
-    expect(first).toMatchObject({ status: "written", inserted: 5, gaps: 1, missingSessions: 1 });
+    expect(first).toMatchObject({
+      status: "incomplete",
+      inserted: 5,
+      gaps: 1,
+      missingSessions: 1,
+      windowMissing: 1,
+      latestCovered: true,
+    });
+    expect(first.detail).toMatch(/^1 expected sessions missing in window/);
     const gaps = await db.execute<{ from_date: string; reason: string; checks: number }>(sql`
       select from_date::text, reason, checks from price_gaps where series_id = ${seriesId}`);
     expect(gaps).toEqual([{ from_date: "1990-01-04", reason: "missing_source_data", checks: 1 }]);
@@ -241,7 +272,7 @@ describe.skipIf(!url)("price series writes (DATABASE_URL_TEST)", () => {
       { seriesId, symbol, ...window, generation: 1 },
       "backfill",
     );
-    expect(replay).toMatchObject({ status: "written", inserted: 0, updated: 0, unchanged: 5 });
+    expect(replay).toMatchObject({ status: "incomplete", inserted: 0, updated: 0, unchanged: 5 });
   });
 
   it("completes the series once the gap is filled", async () => {
@@ -251,7 +282,14 @@ describe.skipIf(!url)("price series writes (DATABASE_URL_TEST)", () => {
       { seriesId, symbol, ...window, generation: 1 },
       "repair",
     );
-    expect(r).toMatchObject({ status: "written", inserted: 1, gaps: 0, quality: "complete" });
+    expect(r).toMatchObject({
+      status: "written",
+      inserted: 1,
+      gaps: 0,
+      windowMissing: 0,
+      quality: "complete",
+      detail: null,
+    });
     expect(await state()).toMatchObject({ q: "complete", verified_through: "1990-01-08" });
   });
 
@@ -284,6 +322,28 @@ describe.skipIf(!url)("price series writes (DATABASE_URL_TEST)", () => {
     expect(stale.status).toBe("stale_generation");
     expect(await rows()).toEqual(before);
 
+    history = historyOf(
+      sessions.slice(0, 3).map((d, i) => bar(d, 90 + i)),
+      [dividend(istToday(), 3)],
+    );
+    const partial = await rebuildSeries(ctx(), { seriesId, symbol, generation: 2 });
+    expect(partial).toMatchObject({
+      status: "rebuild_incomplete",
+      inserted: 0,
+      updated: 0,
+      missingSessions: 3,
+      quality: "rebuild_required",
+    });
+    expect(partial.detail).toMatch(
+      /refused: source lacks 3 expected sessions \(1990-01-04\.\.1990-01-08\)/,
+    );
+    expect(await rows()).toEqual(before);
+    expect(await state()).toMatchObject({ g: 1, q: "rebuild_required" });
+
+    history = historyOf(
+      sessions.map((d, i) => bar(d, 90 + i)),
+      [dividend(istToday(), 3)],
+    );
     const rebuilt = await rebuildSeries(ctx(), { seriesId, symbol, generation: 2 });
     expect(rebuilt).toMatchObject({ status: "written", updated: 6 });
     const after = await rows();
@@ -296,5 +356,97 @@ describe.skipIf(!url)("price series writes (DATABASE_URL_TEST)", () => {
       "backfill",
     );
     expect(late.status).toBe("stale_generation");
+  });
+
+  it("ends the desired window at the latest session before today", async () => {
+    expect((await desiredWindow(db, "1990-01-07")).to).toBe("1990-01-05");
+    expect((await desiredWindow(db, "1990-01-08")).to).toBe("1990-01-05");
+    expect((await desiredWindow(db, "1990-01-09")).to).toBe("1990-01-08");
+    expect((await desiredWindow(db, "1990-01-09")).from).toBe("1985-01-08");
+  });
+});
+
+describe.skipIf(!url)("price coverage manifest (DATABASE_URL_TEST)", () => {
+  let db: Db;
+  const tag = `M${randomUUID().slice(0, 8).toUpperCase()}`;
+  const ids: Record<"listed" | "unlisted", number> = { listed: 0, unlisted: 0 };
+  let manifestId = 0;
+
+  beforeAll(async () => {
+    db = createDb(url ?? "", 2);
+    for (const [k, yahoo] of [
+      ["listed", `${tag}.NS`],
+      ["unlisted", null],
+    ] as const) {
+      const [c] = await db.execute<{ id: number }>(sql`
+        insert into companies (name, normalized_name, nse_symbol, yahoo_symbol, listing_status)
+        values (${`${tag}${k}`}, ${`${tag}${k}`}, ${`${tag}${k}`.toUpperCase()}, ${yahoo}, 'active')
+        returning id`);
+      ids[k] = Number(c?.id);
+    }
+  });
+
+  afterAll(async () => {
+    await db.execute(sql`delete from price_manifests where id = ${manifestId}`);
+    for (const id of Object.values(ids)) {
+      await db.execute(sql`delete from price_series_state where company_id = ${id}`);
+      await db.execute(sql`delete from market_symbols where company_id = ${id}`);
+      await db.execute(sql`delete from companies where id = ${id}`);
+    }
+    await closeDb(db);
+  });
+
+  it("gives every company a series row and freezes a manifest that includes exceptions", async () => {
+    const ctx = {
+      db,
+      nse: {
+        equityListings: async () => {
+          throw new Error("offline");
+        },
+      },
+      logger: { warn: () => undefined, info: () => undefined },
+    } as unknown as IngestContext;
+    const m = await buildBackfillManifest(ctx);
+    manifestId = m.manifestId;
+    expect(m.manifestId).toBeGreaterThan(0);
+    const [{ n } = { n: -1 }] = await db.execute<{ n: number }>(
+      sql`select count(*)::int as n from companies`,
+    );
+    expect(m.companies).toBe(Number(n));
+
+    const states = await db.execute<{ company_id: number; reason: string | null; q: string }>(sql`
+      select company_id, exception_reason as reason, quality_status as q from price_series_state
+      where company_id in (${ids.listed}, ${ids.unlisted}) order by company_id`);
+    expect(states).toEqual([
+      { company_id: ids.listed, reason: null, q: "pending" },
+      { company_id: ids.unlisted, reason: "no_yahoo_symbol", q: "exception" },
+    ]);
+
+    const listedSeries = await db.execute<{ id: number }>(
+      sql`select id from price_series_state where company_id = ${ids.listed}`,
+    );
+    const unlistedSeries = await db.execute<{ id: number }>(
+      sql`select id from price_series_state where company_id = ${ids.unlisted}`,
+    );
+    expect(m.units.filter((u) => u.seriesId === listedSeries[0]?.id)).toHaveLength(
+      PRICE_HISTORY_YEARS,
+    );
+    expect(m.units.some((u) => u.seriesId === unlistedSeries[0]?.id)).toBe(false);
+
+    const frozen = await db.execute<{
+      company_id: number;
+      units: number;
+      reason: string | null;
+    }>(sql`
+      select company_id, units, exception_reason as reason from price_manifest_companies
+      where manifest_id = ${m.manifestId} and company_id in (${ids.listed}, ${ids.unlisted})
+      order by company_id`);
+    expect(frozen).toEqual([
+      { company_id: ids.listed, units: PRICE_HISTORY_YEARS, reason: null },
+      { company_id: ids.unlisted, units: 0, reason: "no_yahoo_symbol" },
+    ]);
+    const [header] = await db.execute<{ companies: number; units: number; kind: string }>(sql`
+      select companies, units, kind from price_manifests where id = ${m.manifestId}`);
+    expect(header).toEqual({ companies: Number(n), units: m.units.length, kind: "backfill" });
   });
 });

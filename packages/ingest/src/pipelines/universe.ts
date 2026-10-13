@@ -7,6 +7,7 @@ import {
   indexConstituents,
   indices,
   sql,
+  type Tx,
 } from "@ma/db";
 import type { IngestContext } from "../context.js";
 import { MARKET_INDICES, marketIndex } from "../data/market-indices.js";
@@ -80,13 +81,13 @@ export async function syncUniverse(
   );
 }
 
-export async function seedMarketIndices(ctx: Pick<IngestContext, "db">): Promise<number> {
+export async function seedMarketIndices(db: Pick<Tx, "insert">): Promise<number> {
   const rows = MARKET_INDICES.map((i) => ({
     code: i.code,
     name: i.name,
     yahooSymbol: i.yahooSymbol,
   }));
-  await ctx.db
+  await db
     .insert(indices)
     .values(rows)
     .onConflictDoUpdate({
