@@ -9,7 +9,6 @@ import {
   inArray,
   or,
   PRICE_BASIS,
-  pricesDaily,
   relationshipEstimates,
   relationships,
   signals,
@@ -116,78 +115,113 @@ const RANGE_DAYS: Record<YahooRange, number> = {
   max: 36_500,
 };
 
-export async function priceHistory(ctx: AppContext, symbol: string, range: YahooRange) {
-  const company = await findCompany(ctx, symbol);
-  const from = new Date(Date.now() - RANGE_DAYS[range] * 86_400_000).toISOString().slice(0, 10);
-  return ctx.api.getOrLoad(
-    `prices:${company.id}:${range}`,
-    () =>
-      ctx.db
-        .select({
-          date: pricesDaily.date,
-          open: pricesDaily.open,
-          high: pricesDaily.high,
-          low: pricesDaily.low,
-          close: pricesDaily.close,
-          adjClose: pricesDaily.adjClose,
-          volume: pricesDaily.volume,
-        })
-        .from(pricesDaily)
-        .where(sql`${pricesDaily.companyId} = ${company.id} and ${pricesDaily.date} >= ${from}`)
-        .orderBy(pricesDaily.date),
-    { ttlMs: 15 * MINUTE, staleMs: 2 * HOUR },
-  );
+export interface PriceBar {
+  date: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number;
+  adjClose: number | null;
+  volume: number | null;
+  final: boolean;
 }
 
 export interface PriceHistoryMeta {
   priceBasis: typeof PRICE_BASIS;
   generation: number | null;
   quality: string | null;
+  exceptionReason: string | null;
   finalThrough: string | null;
   verifiedThrough: string | null;
   openGaps: number;
   missingSessions: number;
+  provisional: "flagged";
 }
 
-export async function priceHistoryMeta(
+export interface PriceSnapshot {
+  bars: PriceBar[];
+  meta: PriceHistoryMeta;
+}
+
+// One statement, one snapshot, one cache entry: bars and their coverage metadata always describe
+// the same adjustment generation. Rows left over from an older generation are never served;
+// provisional (not yet final) bars are served but flagged per bar.
+export async function priceSnapshot(
   ctx: AppContext,
   symbol: string,
-): Promise<PriceHistoryMeta | null> {
+  range: YahooRange,
+): Promise<PriceSnapshot | null> {
   const company = await findCompany(ctx, symbol);
+  const from = new Date(Date.now() - RANGE_DAYS[range] * 86_400_000).toISOString().slice(0, 10);
   return ctx.api.getOrLoad(
-    `prices:${company.id}:meta`,
+    `prices:${company.id}:${range}:snapshot`,
     async () => {
       const rows = await ctx.db.execute<{
-        generation: number;
-        quality: string;
+        generation: number | null;
+        quality: string | null;
+        exception_reason: string | null;
         verified_through: string | null;
         final_through: string | null;
         open_gaps: number;
         missing_sessions: number;
+        bars: PriceBar[];
       }>(sql`
-        select s.adjustment_generation as generation, s.quality_status as quality,
-               s.verified_through::text,
+        with s as (
+          select id, adjustment_generation, quality_status, exception_reason, verified_through
+          from price_series_state where company_id = ${company.id}
+        ), g as (
+          select coalesce(
+            (select adjustment_generation from s),
+            (select max(adjustment_generation) from prices_daily where company_id = ${company.id})
+          ) as generation
+        )
+        select g.generation,
+               (select quality_status from s) as quality,
+               (select exception_reason from s) as exception_reason,
+               (select verified_through::text from s) as verified_through,
                (select max(p.date)::text from prices_daily p
-                 where p.company_id = s.company_id and p.is_final
-                   and p.adjustment_generation = s.adjustment_generation) as final_through,
-               (select count(*)::int from price_gaps g
-                 where g.series_id = s.id and g.status = 'open') as open_gaps,
-               (select coalesce(sum(g.sessions), 0)::int from price_gaps g
-                 where g.series_id = s.id and g.status = 'open') as missing_sessions
-        from price_series_state s where s.company_id = ${company.id}`);
+                 where p.company_id = ${company.id} and p.is_final
+                   and p.adjustment_generation = g.generation) as final_through,
+               (select count(*)::int from price_gaps x
+                 where x.series_id = (select id from s) and x.status = 'open') as open_gaps,
+               (select coalesce(sum(x.sessions), 0)::int from price_gaps x
+                 where x.series_id = (select id from s) and x.status = 'open') as missing_sessions,
+               coalesce((
+                 select json_agg(json_build_object(
+                   'date', p.date::text, 'open', p.open, 'high', p.high, 'low', p.low,
+                   'close', p.close, 'adjClose', p.adj_close, 'volume', p.volume,
+                   'final', p.is_final) order by p.date)
+                 from prices_daily p
+                 where p.company_id = ${company.id} and p.adjustment_generation = g.generation
+                   and p.date >= ${from}
+               ), '[]'::json) as bars
+        from g`);
       const r = rows[0];
       return {
-        priceBasis: PRICE_BASIS,
-        generation: r ? Number(r.generation) : null,
-        quality: r?.quality ?? null,
-        finalThrough: r?.final_through ?? null,
-        verifiedThrough: r?.verified_through ?? null,
-        openGaps: Number(r?.open_gaps ?? 0),
-        missingSessions: Number(r?.missing_sessions ?? 0),
+        bars: r?.bars ?? [],
+        meta: {
+          priceBasis: PRICE_BASIS,
+          generation: r?.generation == null ? null : Number(r.generation),
+          quality: r?.quality ?? null,
+          exceptionReason: r?.exception_reason ?? null,
+          finalThrough: r?.final_through ?? null,
+          verifiedThrough: r?.verified_through ?? null,
+          openGaps: Number(r?.open_gaps ?? 0),
+          missingSessions: Number(r?.missing_sessions ?? 0),
+          provisional: "flagged",
+        },
       };
     },
     { ttlMs: 15 * MINUTE, staleMs: 2 * HOUR },
   );
+}
+
+export async function priceHistory(
+  ctx: AppContext,
+  symbol: string,
+  range: YahooRange,
+): Promise<PriceBar[] | null> {
+  return (await priceSnapshot(ctx, symbol, range))?.bars ?? null;
 }
 
 export async function financials(ctx: AppContext, symbol: string) {
