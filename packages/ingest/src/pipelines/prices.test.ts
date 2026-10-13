@@ -410,9 +410,10 @@ describe.skipIf(!url)("price coverage manifest (DATABASE_URL_TEST)", () => {
     manifestId = m.manifestId;
     expect(m.manifestId).toBeGreaterThan(0);
     const [{ n } = { n: -1 }] = await db.execute<{ n: number }>(
-      sql`select count(*)::int as n from companies`,
+      sql`select count(*)::int as n from price_manifest_companies where manifest_id = ${m.manifestId}`,
     );
     expect(m.companies).toBe(Number(n));
+    expect(m.companies).toBeGreaterThanOrEqual(2);
 
     const states = await db.execute<{ company_id: number; reason: string | null; q: string }>(sql`
       select company_id, exception_reason as reason, quality_status as q from price_series_state
