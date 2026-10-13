@@ -1,8 +1,10 @@
+import { throwIfAborted } from "@ma/core";
 import {
   and,
   type Db,
   desc,
   eq,
+  fencedBatches,
   gte,
   lte,
   relationshipEstimates,
@@ -131,21 +133,14 @@ export async function refreshMomentumSignals(db: Db, asOf: string): Promise<numb
   const from = shiftDays(asOf, -HORIZONS["3m"] - 10);
   const closes = await loadCloses(db, [...ids], from, asOf);
 
-  let written = 0;
-  const write = async (
+  const rows: Array<typeof signals.$inferInsert> = [];
+  const write = (
     companyId: number,
     kind: string,
     value: number,
     inputs: Record<string, unknown>,
   ) => {
-    await db
-      .insert(signals)
-      .values({ companyId, asOf, kind, value, inputs, modelVersion: MOMENTUM_MODEL_VERSION })
-      .onConflictDoUpdate({
-        target: [signals.companyId, signals.asOf, signals.kind, signals.modelVersion],
-        set: { value: sql`excluded.value`, inputs: sql`excluded.inputs` },
-      });
-    written++;
+    rows.push({ companyId, asOf, kind, value, inputs, modelVersion: MOMENTUM_MODEL_VERSION });
   };
 
   for (const [prefix, map] of [
@@ -153,6 +148,7 @@ export async function refreshMomentumSignals(db: Db, asOf: string): Promise<numb
     ["supplier_momentum", byCustomer],
   ] as const) {
     for (const [companyId, links] of map) {
+      throwIfAborted();
       for (const [horizon, days] of Object.entries(HORIZONS) as Array<[Horizon, number]>) {
         const start = shiftDays(asOf, -days);
         const res = weightedMomentum(links, (id) => {
@@ -160,7 +156,7 @@ export async function refreshMomentumSignals(db: Db, asOf: string): Promise<numb
           return s ? totalReturn(s, start, asOf) : null;
         });
         if (res)
-          await write(companyId, `${prefix}_${horizon}`, res.value * 100, {
+          write(companyId, `${prefix}_${horizon}`, res.value * 100, {
             contributors: res.contributors,
             from: start,
           });
@@ -168,7 +164,7 @@ export async function refreshMomentumSignals(db: Db, asOf: string): Promise<numb
       if (prefix === "customer_momentum") {
         const total = links.reduce((s, l) => s + l.weight, 0);
         if (total > 0) {
-          await write(companyId, "customer_hhi", hhi(links.map((l) => l.weight / total)), {
+          write(companyId, "customer_hhi", hhi(links.map((l) => l.weight / total)), {
             customers: links.map((l) => ({
               id: l.counterpartyId,
               name: l.counterpartyName,
@@ -179,7 +175,16 @@ export async function refreshMomentumSignals(db: Db, asOf: string): Promise<numb
       }
     }
   }
-  return written;
+  await fencedBatches(db, rows, (tx, batch) =>
+    tx
+      .insert(signals)
+      .values(batch)
+      .onConflictDoUpdate({
+        target: [signals.companyId, signals.asOf, signals.kind, signals.modelVersion],
+        set: { value: sql`excluded.value`, inputs: sql`excluded.inputs` },
+      }),
+  );
+  return rows.length;
 }
 
 function push<K, V>(map: Map<K, V[]>, key: K, value: V): void {

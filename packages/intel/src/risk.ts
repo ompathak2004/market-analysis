@@ -1,4 +1,15 @@
-import { and, companies, type Db, desc, eq, fundamentals, inArray, signals, sql } from "@ma/db";
+import {
+  and,
+  companies,
+  type Db,
+  desc,
+  eq,
+  fencedBatches,
+  fundamentals,
+  inArray,
+  signals,
+  sql,
+} from "@ma/db";
 import { logistic, zScores } from "./stats.js";
 
 export const RISK_MODEL_VERSION = 1;
@@ -102,27 +113,29 @@ export async function refreshRiskSignals(
     }),
   );
   const scores = distressScores(ratios);
-  let written = 0;
+  const rows: Array<typeof signals.$inferInsert> = [];
   for (const [i, f] of latest.entries()) {
     const score = scores[i];
     if (score == null) continue;
-    await db
+    rows.push({
+      companyId: f.companyId,
+      asOf,
+      kind: "distress_score",
+      value: score,
+      inputs: { ...ratios[i], periodEnd: f.periodEnd },
+      modelVersion: RISK_MODEL_VERSION,
+    });
+  }
+  await fencedBatches(db, rows, (tx, batch) =>
+    tx
       .insert(signals)
-      .values({
-        companyId: f.companyId,
-        asOf,
-        kind: "distress_score",
-        value: score,
-        inputs: { ...ratios[i], periodEnd: f.periodEnd },
-        modelVersion: RISK_MODEL_VERSION,
-      })
+      .values(batch)
       .onConflictDoUpdate({
         target: [signals.companyId, signals.asOf, signals.kind, signals.modelVersion],
         set: { value: sql`excluded.value`, inputs: sql`excluded.inputs` },
-      });
-    written++;
-  }
-  return written;
+      }),
+  );
+  return rows.length;
 }
 
 const num = (v: string | null): number | null => (v == null ? null : Number(v));

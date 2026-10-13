@@ -1,5 +1,5 @@
 import { Cache, RateLimiter, type RedisClient } from "@ma/cache";
-import type { Config, Logger } from "@ma/core";
+import type { Logger, ServiceConfig } from "@ma/core";
 import type { Db } from "@ma/db";
 import { DocumentStore } from "./documents.js";
 import { Firecrawl } from "./firecrawl.js";
@@ -19,7 +19,7 @@ export interface IngestContext {
   nse: NseSource;
   yahoo: YahooSource;
   logger: Logger;
-  config: Config;
+  config: ServiceConfig;
 }
 
 export const HOST_LIMITS = {
@@ -43,7 +43,7 @@ export const HOST_LIMITS = {
 export function createIngestContext(deps: {
   db: Db;
   redis: RedisClient;
-  config: Config;
+  config: ServiceConfig;
   logger: Logger;
 }): IngestContext {
   const { db, redis, config, logger } = deps;

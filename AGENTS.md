@@ -12,10 +12,12 @@ Indian-equities intelligence terminal: Bloomberg-style supply-chain intelligence
 | `packages/llm` | `@ma/llm` | `LlmClient` for Cerebras (strict JSON-schema output, retries on 429/5xx, fallback model), `LlmBudget` (daily token budget in Redis), zod → JSON schema. |
 | `packages/ingest` | `@ma/ingest` | `DocumentStore`, `HttpClient` (per-host token buckets), sources (NSE, Yahoo, Screener, Moneycontrol, Firecrawl, adsb.lol, OpenSky, AISStream, aircraft registry), extractors, pipelines (`universe`, `prices`, `fundamentals`, `announcements`, `relationships`, `research`, `aircraft`, `vessels`), reference data in `src/data/`, Firecrawl monthly credit budget, CLI. |
 | `packages/intel` | `@ma/intel` | Estimates, momentum, DuPont distress, event-impact OLS (`src/*.ts`); rule insights, input assembly, hashing, prompts and LLM generators for company brief, broker digest, market brief, triage and broker thesis (`src/insights/`); travel and logistics alt-data signals (`src/altdata/`); CLI. |
+| `packages/jobs` | `@ma/jobs` | Job contracts (type → lane, payload schema, unit key, deadline, retry limit), retry/deferral policies, `job_control` mode, consumer lease, `job_runs`/`job_attempts` ledger, campaigns, retention, cache invalidation map, `company_sync` batch picking (`pickBatch`, `markSynced`, shared by web and worker). `@ma/jobs/queue` holds the pg-boss enqueue/queue setup so web never loads pg-boss. |
+| `apps/worker` | `@ma/worker` | Long-running pg-boss consumer (ECS Fargate): per-unit handlers (`src/handlers`), executor with ledger fencing (`src/execute.ts`), cron schedules in code (`src/schedules.ts`), CloudWatch metrics, CLI (`src/cli.ts`). |
 | `apps/web` | `@ma/web` | Next.js 15 app: terminal UI (`src/app`, `src/components`), `/api/v1` route handlers (`src/app/api/v1`), `/api/cron/[job]` runner, `src/server/{context,http,jobs,queries}`. Server components call `@/server/queries` directly; no secrets reach the browser. |
 | `docs/` | — | `methodology.md` (models), `plan.md` (status + next steps), `data-sources.md`. |
 
-Dependency direction: `core ← db ← cache ← ingest ← intel ← web` and `core ← llm ← intel`. Never import upward.
+Dependency direction: `core ← db ← cache ← ingest ← intel ← web`, `core ← llm ← intel` and `core, db, cache ← jobs ← web, worker`; `worker` also uses `ingest`, `intel` and `llm`. Never import upward.
 
 ## Commands
 
@@ -25,7 +27,12 @@ pnpm db:migrate                 # applies packages/db/drizzle to DATABASE_URL
 pnpm dev:web                    # UI + API + cron routes on :3000
 pnpm typecheck && pnpm lint && pnpm test
 pnpm build:web                  # builds packages then apps/web (what Vercel runs)
-pnpm job <name> [budgetMs]      # run one job once (names in apps/web/src/server/jobs)
+pnpm job <name> [budgetMs]      # legacy: run one web job once (only while job_control mode is legacy)
+pnpm dev:worker                 # queue consumer from source (tsx)
+pnpm build:worker               # builds packages then apps/worker (what the Docker image runs)
+pnpm worker:cli run <type|legacy-name> [payload-json] [--wait]   # enqueue one job
+pnpm worker:cli mode [legacy|paused|worker]                      # read or switch job_control
+pnpm worker:cli status | schedules | types
 pnpm exec tsx --conditions=@ma/source packages/ingest/src/cli.ts universe NIFTY50
 pnpm exec tsx --conditions=@ma/source packages/intel/src/cli.ts momentum
 ```
@@ -34,7 +41,15 @@ Load env with `set -a && . ./.env && set +a`. Every package exports `"@ma/source
 
 ## Jobs and cron
 
-Jobs are registered in `apps/web/src/server/jobs/{core,research,insights,altdata}.ts` and listed in `apps/web/vercel.json`. Vercel calls `GET /api/cron/<job>` with `Authorization: Bearer $CRON_SECRET`; `runJob` takes a Redis lock, records `ingest_runs`, enforces a per-job time budget below the function limit and invalidates cache prefixes after writes. Jobs: `universe, prices, fundamentals, announcements, relationships, intel, moneycontrol, broker-reports, insights, market-brief, triage, broker-theses, aircraft-registry, aircraft-sample, ais-collect, altdata-derive, altdata-signals, fleets, altdata-cleanup`.
+`job_control.mode` (singleton row, default `legacy`) decides who runs jobs:
+
+- `legacy`: Vercel cron calls `GET /api/cron/<job>` (`Authorization: Bearer $CRON_SECRET`); `runJob` in `apps/web/src/server/jobs` takes a Redis lock, records `ingest_runs`, enforces a time budget and invalidates cache prefixes. The worker holds its lease but consumes nothing and clears its schedules.
+- `paused`: nothing runs; web cron routes return `skipped/disabled`.
+- `worker`: `apps/worker` consumes the pg-boss queues (schema `pgboss`) and registers the cron schedules in `src/schedules.ts` (`Asia/Kolkata`, `missed: "once"`); web cron routes are no-ops.
+
+Worker model: every job type in `packages/jobs/src/contracts.ts` is either a `fanout` (picks stale units and enqueues children in one transaction, recorded as an `ingest_runs` campaign with `children_total/done/failed`) or a `unit` (one company, document or batch). Lanes `control, io, parse, compute, llm, cache` have fixed local concurrency (`LANE_CONCURRENCY`). Each logical unit is a `job_runs` row keyed by `(job_type, unit_key, campaign_id)` with one `job_attempts` row per try. Retries are app-managed with exponential backoff and Retry-After; LLM daily budget and Firecrawl monthly credit exhaustion defer to the next window without spending an attempt; non-retryable errors and exhausted retries go `dead`. A single consumer holds the `worker_leases` row `consumer`; every ledger write is fenced on the lease generation, and a new consumer marks prior running attempts `abandoned`. `ops.reconcile` (15 min) finishes campaigns, abandons overdue runs, raises `ops_alerts`; `ops.digest` emails a daily summary through Resend when `RESEND_API_KEY` and `OPS_DIGEST_TO` are set. With `CLOUDWATCH_METRICS=true` the worker publishes `worker.heartbeat` and `jobs.dead` (namespace `MarketAnalysis`) every minute. SIGTERM drains within 120 s.
+
+Production runs the compiled CLI as `node apps/worker/dist/cli.js ...` (no tsx at runtime). Legacy job names (`prices`, `moneycontrol`, `broker-reports`, ...) are accepted as aliases by `worker:cli run`.
 
 ## Data model (Postgres, Drizzle)
 

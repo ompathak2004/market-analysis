@@ -1,4 +1,4 @@
-import { chunk, DAY, HOUR, MINUTE, mapLimit } from "@ma/core";
+import { chunk, DAY, HOUR, MINUTE, mapLimit, throwIfAborted } from "@ma/core";
 import {
   aircraftFlights,
   aircraftPositions,
@@ -10,6 +10,7 @@ import {
   corporateAircraft,
   corporateAircraftCompanies,
   eq,
+  fencedTransaction,
   gt,
   gte,
   inArray,
@@ -17,6 +18,7 @@ import {
   ne,
   or,
   sql,
+  type Tx,
 } from "@ma/db";
 import {
   type DerivedLeg,
@@ -54,9 +56,11 @@ type Basis = SymbolLink[1];
 
 interface Deadline {
   deadline?: number;
+  signal?: AbortSignal;
 }
 
 function expired(opts: Deadline, reserveMs = 0): boolean {
+  throwIfAborted(opts.signal);
   return opts.deadline !== undefined && Date.now() > opts.deadline - reserveMs;
 }
 
@@ -69,16 +73,16 @@ async function symbolIds(ctx: IngestContext): Promise<Map<string, number>> {
 }
 
 async function replaceLinks(
-  ctx: IngestContext,
+  tx: Tx,
   aircraftId: number,
   links: ReadonlyArray<{ companyId: number; basis: Basis }>,
 ): Promise<number> {
-  await ctx.db
+  await tx
     .delete(corporateAircraftCompanies)
     .where(eq(corporateAircraftCompanies.aircraftId, aircraftId));
   const unique = [...new Map(links.map((l) => [l.companyId, l])).values()];
   if (!unique.length) return 0;
-  await ctx.db
+  await tx
     .insert(corporateAircraftCompanies)
     .values(unique.map((l) => ({ aircraftId, companyId: l.companyId, basis: l.basis })))
     .onConflictDoNothing();
@@ -135,24 +139,32 @@ export async function seedAircraftRegistry(
     );
     stats.candidates = candidates.length;
     for (const batch of chunk(candidates, 200)) {
-      const res = await ctx.db
-        .insert(corporateAircraft)
-        .values(
-          batch.map((r) => ({
-            registration: r.registration,
-            icaoHex: r.hex,
-            icaoType: r.icaoType,
-            model: r.model,
-            tier: "inferred" as const,
-            confidence: 0.2,
-            privacyFlagged: r.privacy,
-            active: false,
-          })),
-        )
-        .onConflictDoNothing()
-        .returning({ id: corporateAircraft.id });
+      throwIfAborted(opts.signal);
+      const res = await fencedTransaction(
+        ctx.db,
+        async (tx) => {
+          const res = await tx
+            .insert(corporateAircraft)
+            .values(
+              batch.map((r) => ({
+                registration: r.registration,
+                icaoHex: r.hex,
+                icaoType: r.icaoType,
+                model: r.model,
+                tier: "inferred" as const,
+                confidence: 0.2,
+                privacyFlagged: r.privacy,
+                active: false,
+              })),
+            )
+            .onConflictDoNothing()
+            .returning({ id: corporateAircraft.id });
+          await updateRegistryFacts(tx, batch);
+          return res;
+        },
+        opts.signal,
+      );
       stats.inserted = (stats.inserted ?? 0) + res.length;
-      await updateRegistryFacts(ctx, batch);
     }
   }
 
@@ -168,41 +180,50 @@ export async function seedAircraftRegistry(
     .where(
       and(ne(corporateAircraft.tier, "manual"), sql`${corporateAircraft.ownerName} is not null`),
     );
-  for (const row of rows) {
-    const owner = row.ownerName as string;
-    const group = OWNER_GROUPS.find((g) => g.pattern.test(owner));
-    let links: Array<{ companyId: number; basis: Basis }> = [];
-    let groupName: string | null = null;
-    if (group) {
-      links = resolveLinks(group.links, ids);
-      groupName = group.groupName;
-    } else if (CHARTER_OWNER.test(owner)) {
-      stats.charter = (stats.charter ?? 0) + 1;
-    } else {
-      const hits = [...matchCompanies(owner, matcher)];
-      links = hits.map((h) => ({ companyId: h.companyId, basis: "owner" as const }));
-      groupName = hits[0]?.matched ?? null;
-    }
-    const mismatch = mismatched.has(row.registration);
-    const linked = links.length > 0;
-    await ctx.db
-      .update(corporateAircraft)
-      .set({
-        tier: linked ? "registry" : "inferred",
-        confidence: linked ? (mismatch ? 0.6 : 0.9) : mismatch ? 0.1 : 0.2,
-        active: linked,
-        groupName,
-        sourceUrl: linked
-          ? `https://api.adsbdb.com/v0/aircraft/${row.registration}`
-          : row.sourceUrl,
-        updatedAt: new Date(),
-      })
-      .where(eq(corporateAircraft.id, row.id));
-    stats.links = (stats.links ?? 0) + (await replaceLinks(ctx, row.id, links));
-    if (linked) stats.linked = (stats.linked ?? 0) + 1;
+  for (const group of chunk(rows, 50)) {
+    throwIfAborted(opts.signal);
+    await fencedTransaction(
+      ctx.db,
+      async (tx) => {
+        for (const row of group) {
+          const owner = row.ownerName as string;
+          const group = OWNER_GROUPS.find((g) => g.pattern.test(owner));
+          let links: Array<{ companyId: number; basis: Basis }> = [];
+          let groupName: string | null = null;
+          if (group) {
+            links = resolveLinks(group.links, ids);
+            groupName = group.groupName;
+          } else if (CHARTER_OWNER.test(owner)) {
+            stats.charter = (stats.charter ?? 0) + 1;
+          } else {
+            const hits = [...matchCompanies(owner, matcher)];
+            links = hits.map((h) => ({ companyId: h.companyId, basis: "owner" as const }));
+            groupName = hits[0]?.matched ?? null;
+          }
+          const mismatch = mismatched.has(row.registration);
+          const linked = links.length > 0;
+          await tx
+            .update(corporateAircraft)
+            .set({
+              tier: linked ? "registry" : "inferred",
+              confidence: linked ? (mismatch ? 0.6 : 0.9) : mismatch ? 0.1 : 0.2,
+              active: linked,
+              groupName,
+              sourceUrl: linked
+                ? `https://api.adsbdb.com/v0/aircraft/${row.registration}`
+                : row.sourceUrl,
+              updatedAt: new Date(),
+            })
+            .where(eq(corporateAircraft.id, row.id));
+          stats.links = (stats.links ?? 0) + (await replaceLinks(tx, row.id, links));
+          if (linked) stats.linked = (stats.linked ?? 0) + 1;
+        }
+      },
+      opts.signal,
+    );
   }
 
-  stats.overrides = await applyOverrides(ctx, ids, csv);
+  stats.overrides = await applyOverrides(ctx, ids, csv, opts.signal);
   const [counts] = await ctx.db.execute<{ active: number; links: number }>(sql`
     select (select count(*)::int from corporate_aircraft where active) as active,
            (select count(*)::int from corporate_aircraft_companies) as links`);
@@ -211,12 +232,12 @@ export async function seedAircraftRegistry(
   return stats;
 }
 
-async function updateRegistryFacts(ctx: IngestContext, rows: AircraftDbRow[]): Promise<void> {
+async function updateRegistryFacts(tx: Tx, rows: AircraftDbRow[]): Promise<void> {
   if (!rows.length) return;
   const payload = JSON.stringify(
     rows.map((r) => ({ reg: r.registration, type: r.icaoType, model: r.model, p: r.privacy })),
   );
-  await ctx.db.execute(sql`
+  await tx.execute(sql`
     update corporate_aircraft a set
       icao_type = coalesce(a.icao_type, x.type),
       model = coalesce(a.model, x.model),
@@ -260,14 +281,16 @@ async function resolveOwners(
       await ctx.redis.sadd(MISMATCH_KEY, row.reg);
       ctx.logger.warn({ reg: row.reg, ours: row.hex, adsbdb: hit.modeS }, "adsbdb hex mismatch");
     }
-    await ctx.db
-      .update(corporateAircraft)
-      .set({
-        ownerName: hit.owner,
-        confidence: mismatch ? 0.1 : 0.2,
-        updatedAt: new Date(),
-      })
-      .where(eq(corporateAircraft.id, row.id));
+    const owner = hit.owner;
+    await fencedTransaction(
+      ctx.db,
+      (tx) =>
+        tx
+          .update(corporateAircraft)
+          .set({ ownerName: owner, confidence: mismatch ? 0.1 : 0.2, updatedAt: new Date() })
+          .where(eq(corporateAircraft.id, row.id)),
+      opts.signal,
+    );
     stats.ownersResolved = (stats.ownersResolved ?? 0) + 1;
   }
   await ctx.redis.expire(TRIED_KEY, 60 * 86_400);
@@ -277,14 +300,17 @@ async function applyOverrides(
   ctx: IngestContext,
   ids: Map<string, number>,
   csv: AircraftDbRow[] | null,
+  signal?: AbortSignal,
 ): Promise<number> {
   let applied = 0;
   const csvByReg = new Map((csv ?? []).map((r) => [r.registration, r]));
   for (const o of AIRCRAFT_OVERRIDES) {
-    let row = await ctx.db.query.corporateAircraft.findFirst({
+    throwIfAborted(signal);
+    const existing = await ctx.db.query.corporateAircraft.findFirst({
       where: eq(corporateAircraft.registration, o.registration),
     });
-    if (!row) {
+    let seed: typeof corporateAircraft.$inferInsert | null = null;
+    if (!existing) {
       const src = csvByReg.get(o.registration);
       const fallback = src ? null : await lookupAdsbdb(ctx.http, o.registration).catch(() => null);
       const hex = src?.hex ?? fallback?.modeS ?? null;
@@ -292,55 +318,62 @@ async function applyOverrides(
         ctx.logger.warn({ reg: o.registration }, "override aircraft not found in any registry");
         continue;
       }
-      const [inserted] = await ctx.db
-        .insert(corporateAircraft)
-        .values({
-          registration: o.registration,
-          icaoHex: hex,
-          icaoType: src?.icaoType ?? fallback?.icaoType ?? null,
-          model: src?.model ?? fallback?.model ?? null,
-          tier: "manual",
-          confidence: 1,
-          privacyFlagged: src?.privacy ?? false,
-          active: false,
-        })
-        .onConflictDoNothing()
-        .returning();
-      row = inserted;
-      if (!row) continue;
+      seed = {
+        registration: o.registration,
+        icaoHex: hex,
+        icaoType: src?.icaoType ?? fallback?.icaoType ?? null,
+        model: src?.model ?? fallback?.model ?? null,
+        tier: "manual",
+        confidence: 1,
+        privacyFlagged: src?.privacy ?? false,
+        active: false,
+      };
     }
-    const now = new Date();
-    if (o.action === "link") {
-      await ctx.db
-        .update(corporateAircraft)
-        .set({
-          tier: "manual",
-          confidence: 1,
-          active: true,
-          groupName: o.groupName ?? row.groupName,
-          ownerName: o.ownerName ?? row.ownerName,
-          linkedPerson: o.linkedPerson ?? row.linkedPerson,
-          linkedRole: o.linkedRole ?? row.linkedRole,
-          sourceUrl: o.sourceUrl,
-          verifiedAt: now,
-          updatedAt: now,
-        })
-        .where(eq(corporateAircraft.id, row.id));
-      await replaceLinks(ctx, row.id, resolveLinks(o.links ?? [], ids));
-    } else {
-      await ctx.db
-        .update(corporateAircraft)
-        .set({
-          tier: "manual",
-          confidence: 1,
-          active: false,
-          sourceUrl: o.sourceUrl,
-          updatedAt: now,
-        })
-        .where(eq(corporateAircraft.id, row.id));
-      if (o.action === "unlink") await replaceLinks(ctx, row.id, []);
-    }
-    applied++;
+    const done = await fencedTransaction(
+      ctx.db,
+      async (tx) => {
+        const row =
+          existing ??
+          (seed
+            ? (await tx.insert(corporateAircraft).values(seed).onConflictDoNothing().returning())[0]
+            : undefined);
+        if (!row) return false;
+        const now = new Date();
+        if (o.action === "link") {
+          await tx
+            .update(corporateAircraft)
+            .set({
+              tier: "manual",
+              confidence: 1,
+              active: true,
+              groupName: o.groupName ?? row.groupName,
+              ownerName: o.ownerName ?? row.ownerName,
+              linkedPerson: o.linkedPerson ?? row.linkedPerson,
+              linkedRole: o.linkedRole ?? row.linkedRole,
+              sourceUrl: o.sourceUrl,
+              verifiedAt: now,
+              updatedAt: now,
+            })
+            .where(eq(corporateAircraft.id, row.id));
+          await replaceLinks(tx, row.id, resolveLinks(o.links ?? [], ids));
+        } else {
+          await tx
+            .update(corporateAircraft)
+            .set({
+              tier: "manual",
+              confidence: 1,
+              active: false,
+              sourceUrl: o.sourceUrl,
+              updatedAt: now,
+            })
+            .where(eq(corporateAircraft.id, row.id));
+          if (o.action === "unlink") await replaceLinks(tx, row.id, []);
+        }
+        return true;
+      },
+      signal,
+    );
+    if (done) applied++;
   }
   return applied;
 }
@@ -407,38 +440,61 @@ export async function sampleAircraftPositions(
     if (!prev || prev.ts < s.ts) latest.set(s.hex, s);
   }
   const samples = [...latest.values()];
-  let inserted = 0;
+  const air = await buildAirEvents(ctx, samples, byHex);
+  throwIfAborted(opts.signal);
+  const { inserted, events } = await fencedTransaction(
+    ctx.db,
+    async (tx) => {
+      let positions = 0;
+      if (samples.length) {
+        const res = await tx
+          .insert(aircraftPositions)
+          .values(
+            samples.map((s) => ({
+              hex: s.hex,
+              ts: s.ts,
+              lat: s.lat,
+              lon: s.lon,
+              altFt: s.onGround ? null : s.altFt,
+              gsKt: s.gsKt,
+              track: s.track,
+              onGround: s.onGround,
+              squawk: s.squawk,
+              source: "adsb_lol",
+            })),
+          )
+          .onConflictDoNothing()
+          .returning({ hex: aircraftPositions.hex });
+        positions = res.length;
+        const payload = JSON.stringify(
+          samples.map((s) => ({ hex: s.hex, ts: s.ts.toISOString() })),
+        );
+        await tx.execute(sql`
+          update corporate_aircraft a set
+            last_seen_at = greatest(a.last_seen_at, x.ts),
+            first_seen_at = coalesce(a.first_seen_at, x.ts),
+            updated_at = now()
+          from jsonb_to_recordset(${payload}::jsonb) as x(hex text, ts timestamptz)
+          where a.icao_hex = x.hex`);
+      }
+      const events = air.rows.length
+        ? (
+            await tx
+              .insert(altdataEvents)
+              .values(air.rows)
+              .onConflictDoNothing()
+              .returning({ id: altdataEvents.id })
+          ).length
+        : 0;
+      await recordCoverage(tx, "air", "air:registry", samples.length, latest.size);
+      return { inserted: positions, events };
+    },
+    opts.signal,
+  );
   if (samples.length) {
-    const res = await ctx.db
-      .insert(aircraftPositions)
-      .values(
-        samples.map((s) => ({
-          hex: s.hex,
-          ts: s.ts,
-          lat: s.lat,
-          lon: s.lon,
-          altFt: s.onGround ? null : s.altFt,
-          gsKt: s.gsKt,
-          track: s.track,
-          onGround: s.onGround,
-          squawk: s.squawk,
-          source: "adsb_lol",
-        })),
-      )
-      .onConflictDoNothing()
-      .returning({ hex: aircraftPositions.hex });
-    inserted = res.length;
-    const payload = JSON.stringify(samples.map((s) => ({ hex: s.hex, ts: s.ts.toISOString() })));
-    await ctx.db.execute(sql`
-      update corporate_aircraft a set
-        last_seen_at = greatest(a.last_seen_at, x.ts),
-        first_seen_at = coalesce(a.first_seen_at, x.ts),
-        updated_at = now()
-      from jsonb_to_recordset(${payload}::jsonb) as x(hex text, ts timestamptz)
-      where a.icao_hex = x.hex`);
+    await ctx.redis.hset(LAST_KEY, air.next);
+    await ctx.redis.expire(LAST_KEY, 86_400);
   }
-  const events = await emitAirEvents(ctx, samples, byHex);
-  await recordCoverage(ctx, "air", "air:registry", samples.length, latest.size);
   return {
     aircraft: fleet.length,
     requests,
@@ -449,12 +505,13 @@ export async function sampleAircraftPositions(
   };
 }
 
-async function emitAirEvents(
+/** Builds the events; the caller writes them with the positions and only then advances LAST_KEY. */
+async function buildAirEvents(
   ctx: IngestContext,
   samples: PositionSample[],
   byHex: Map<string, ActiveAircraft>,
-): Promise<number> {
-  if (!samples.length) return 0;
+): Promise<{ rows: Array<typeof altdataEvents.$inferInsert>; next: Record<string, string> }> {
+  if (!samples.length) return { rows: [], next: {} };
   const prev = await ctx.redis.hgetall(LAST_KEY);
   const rows: Array<typeof altdataEvents.$inferInsert> = [];
   for (const s of samples) {
@@ -501,26 +558,18 @@ async function emitAirEvents(
   }
   const next: Record<string, string> = {};
   for (const s of samples) next[s.hex] = JSON.stringify({ ts: s.ts.getTime(), g: s.onGround });
-  await ctx.redis.hset(LAST_KEY, next);
-  await ctx.redis.expire(LAST_KEY, 86_400);
-  if (!rows.length) return 0;
-  const res = await ctx.db
-    .insert(altdataEvents)
-    .values(rows)
-    .onConflictDoNothing()
-    .returning({ id: altdataEvents.id });
-  return res.length;
+  return { rows, next };
 }
 
 export async function recordCoverage(
-  ctx: IngestContext,
+  db: Tx,
   layer: string,
   zone: string,
   messages: number,
   uniqueIds: number,
   day = new Date(),
 ): Promise<void> {
-  await ctx.db
+  await db
     .insert(altdataCoverage)
     .values({
       layer,
@@ -610,59 +659,66 @@ export async function deriveAircraftFlights(
       .where(and(eq(aircraftPositions.hex, a.hex), gte(aircraftPositions.ts, from)))
       .orderBy(aircraftPositions.ts);
     stats.samples += rows.length;
-    const derived: DerivedLeg[] = [];
-    for (const leg of segmentLegs(rows, { now })) {
-      const sum = summarizeLeg(leg);
-      const key = legDedupeKey(a.hex, sum.firstTs);
-      derived.push({ key, departedAt: sum.departedAt, endAt: sum.arrivedAt ?? sum.lastTs });
-      const values = {
-        aircraftId: a.id,
-        hex: a.hex,
-        departedAt: sum.departedAt,
-        arrivedAt: sum.arrivedAt,
-        durationMin: sum.durationMin,
-        depIcao: sum.dep?.icao ?? null,
-        depCity: sum.dep?.city ?? null,
-        depCountry: sum.dep?.country ?? null,
-        arrIcao: sum.arr?.icao ?? null,
-        arrCity: sum.arr?.city ?? null,
-        arrCountry: sum.arr?.country ?? null,
-        completeness: sum.completeness,
-        source: "sampled",
-        samples: sum.samples,
-        maxAltFt: sum.maxAltFt,
-        dedupeKey: key,
-      };
-      await ctx.db
-        .insert(aircraftFlights)
-        .values(values)
-        .onConflictDoUpdate({
-          target: aircraftFlights.dedupeKey,
-          set: {
-            departedAt: values.departedAt,
-            arrivedAt: values.arrivedAt,
-            durationMin: values.durationMin,
-            depIcao: sql`coalesce(excluded.dep_icao, ${aircraftFlights.depIcao})`,
-            depCity: sql`coalesce(excluded.dep_city, ${aircraftFlights.depCity})`,
-            depCountry: sql`coalesce(excluded.dep_country, ${aircraftFlights.depCountry})`,
-            arrIcao: sql`coalesce(excluded.arr_icao, ${aircraftFlights.arrIcao})`,
-            arrCity: sql`coalesce(excluded.arr_city, ${aircraftFlights.arrCity})`,
-            arrCountry: sql`coalesce(excluded.arr_country, ${aircraftFlights.arrCountry})`,
-            completeness: values.completeness,
-            samples: values.samples,
-            maxAltFt: values.maxAltFt,
-            updatedAt: new Date(),
-          },
-        });
-      stats.legs++;
-      if (leg.open) stats.open++;
-      if (sum.completeness === "full") stats.full++;
-    }
-    const superseded = supersededFlights(stored, derived, from);
-    if (superseded.length) {
-      await ctx.db.delete(aircraftFlights).where(inArray(aircraftFlights.id, superseded));
-      stats.removed += superseded.length;
-    }
+    throwIfAborted(opts.signal);
+    await fencedTransaction(
+      ctx.db,
+      async (tx) => {
+        const derived: DerivedLeg[] = [];
+        for (const leg of segmentLegs(rows, { now })) {
+          const sum = summarizeLeg(leg);
+          const key = legDedupeKey(a.hex, sum.firstTs);
+          derived.push({ key, departedAt: sum.departedAt, endAt: sum.arrivedAt ?? sum.lastTs });
+          const values = {
+            aircraftId: a.id,
+            hex: a.hex,
+            departedAt: sum.departedAt,
+            arrivedAt: sum.arrivedAt,
+            durationMin: sum.durationMin,
+            depIcao: sum.dep?.icao ?? null,
+            depCity: sum.dep?.city ?? null,
+            depCountry: sum.dep?.country ?? null,
+            arrIcao: sum.arr?.icao ?? null,
+            arrCity: sum.arr?.city ?? null,
+            arrCountry: sum.arr?.country ?? null,
+            completeness: sum.completeness,
+            source: "sampled",
+            samples: sum.samples,
+            maxAltFt: sum.maxAltFt,
+            dedupeKey: key,
+          };
+          await tx
+            .insert(aircraftFlights)
+            .values(values)
+            .onConflictDoUpdate({
+              target: aircraftFlights.dedupeKey,
+              set: {
+                departedAt: values.departedAt,
+                arrivedAt: values.arrivedAt,
+                durationMin: values.durationMin,
+                depIcao: sql`coalesce(excluded.dep_icao, ${aircraftFlights.depIcao})`,
+                depCity: sql`coalesce(excluded.dep_city, ${aircraftFlights.depCity})`,
+                depCountry: sql`coalesce(excluded.dep_country, ${aircraftFlights.depCountry})`,
+                arrIcao: sql`coalesce(excluded.arr_icao, ${aircraftFlights.arrIcao})`,
+                arrCity: sql`coalesce(excluded.arr_city, ${aircraftFlights.arrCity})`,
+                arrCountry: sql`coalesce(excluded.arr_country, ${aircraftFlights.arrCountry})`,
+                completeness: values.completeness,
+                samples: values.samples,
+                maxAltFt: values.maxAltFt,
+                updatedAt: new Date(),
+              },
+            });
+          stats.legs++;
+          if (leg.open) stats.open++;
+          if (sum.completeness === "full") stats.full++;
+        }
+        const superseded = supersededFlights(stored, derived, from);
+        if (superseded.length) {
+          await tx.delete(aircraftFlights).where(inArray(aircraftFlights.id, superseded));
+          stats.removed += superseded.length;
+        }
+      },
+      opts.signal,
+    );
     lastId = a.id;
     stats.processed++;
   }
@@ -670,7 +726,7 @@ export async function deriveAircraftFlights(
   if (opts.opensky && (await opts.opensky.available())) {
     stats.opensky = await mergeOpenSky(ctx, opts.opensky, fleet, opts);
   }
-  await updateHomeAirports(ctx);
+  await fencedTransaction(ctx.db, updateHomeAirports, opts.signal);
   return stats;
 }
 
@@ -693,68 +749,75 @@ async function mergeOpenSky(
       await opensky.disable(err instanceof Error ? err.message : String(err));
       break;
     }
-    for (const f of flights) {
-      const dep = airportByIcao(f.depIcao);
-      const arr = airportByIcao(f.arrIcao);
-      const overlap = await ctx.db
-        .select({ id: aircraftFlights.id })
-        .from(aircraftFlights)
-        .where(
-          and(
-            eq(aircraftFlights.aircraftId, a.id),
-            sql`${aircraftFlights.departedAt} <= ${new Date(f.lastSeen.getTime() + 45 * MINUTE).toISOString()}`,
-            sql`coalesce(${aircraftFlights.arrivedAt}, now()) >= ${new Date(f.firstSeen.getTime() - 45 * MINUTE).toISOString()}`,
-          ),
-        )
-        .limit(1);
-      const hit = overlap[0];
-      if (hit) {
-        await ctx.db
-          .update(aircraftFlights)
-          .set({
-            depIcao: sql`coalesce(${aircraftFlights.depIcao}, ${dep?.icao ?? null})`,
-            depCity: sql`coalesce(${aircraftFlights.depCity}, ${dep?.city ?? null})`,
-            depCountry: sql`coalesce(${aircraftFlights.depCountry}, ${dep?.country ?? null})`,
-            arrIcao: sql`coalesce(${aircraftFlights.arrIcao}, ${arr?.icao ?? null})`,
-            arrCity: sql`coalesce(${aircraftFlights.arrCity}, ${arr?.city ?? null})`,
-            arrCountry: sql`coalesce(${aircraftFlights.arrCountry}, ${arr?.country ?? null})`,
-            completeness: sql`case when coalesce(${aircraftFlights.depIcao}, ${dep?.icao ?? null}) is not null and coalesce(${aircraftFlights.arrIcao}, ${arr?.icao ?? null}) is not null then 'full'::flight_completeness else ${aircraftFlights.completeness} end`,
-            source: "merged",
-            updatedAt: new Date(),
-          })
-          .where(eq(aircraftFlights.id, hit.id));
-      } else {
-        await ctx.db
-          .insert(aircraftFlights)
-          .values({
-            aircraftId: a.id,
-            hex: a.hex,
-            departedAt: f.firstSeen,
-            arrivedAt: f.lastSeen,
-            durationMin: Math.round((f.lastSeen.getTime() - f.firstSeen.getTime()) / MINUTE),
-            depIcao: dep?.icao ?? null,
-            depCity: dep?.city ?? null,
-            depCountry: dep?.country ?? null,
-            arrIcao: arr?.icao ?? null,
-            arrCity: arr?.city ?? null,
-            arrCountry: arr?.country ?? null,
-            completeness:
-              dep && arr ? "full" : dep ? "departure_only" : arr ? "arrival_only" : "enroute",
-            source: "opensky",
-            samples: 0,
-            maxAltFt: null,
-            dedupeKey: `${legDedupeKey(a.hex, f.firstSeen)}:os`,
-          })
-          .onConflictDoNothing();
-      }
-      merged++;
-    }
+    throwIfAborted(opts.signal);
+    await fencedTransaction(
+      ctx.db,
+      async (tx) => {
+        for (const f of flights) {
+          const dep = airportByIcao(f.depIcao);
+          const arr = airportByIcao(f.arrIcao);
+          const overlap = await tx
+            .select({ id: aircraftFlights.id })
+            .from(aircraftFlights)
+            .where(
+              and(
+                eq(aircraftFlights.aircraftId, a.id),
+                sql`${aircraftFlights.departedAt} <= ${new Date(f.lastSeen.getTime() + 45 * MINUTE).toISOString()}`,
+                sql`coalesce(${aircraftFlights.arrivedAt}, now()) >= ${new Date(f.firstSeen.getTime() - 45 * MINUTE).toISOString()}`,
+              ),
+            )
+            .limit(1);
+          const hit = overlap[0];
+          if (hit) {
+            await tx
+              .update(aircraftFlights)
+              .set({
+                depIcao: sql`coalesce(${aircraftFlights.depIcao}, ${dep?.icao ?? null})`,
+                depCity: sql`coalesce(${aircraftFlights.depCity}, ${dep?.city ?? null})`,
+                depCountry: sql`coalesce(${aircraftFlights.depCountry}, ${dep?.country ?? null})`,
+                arrIcao: sql`coalesce(${aircraftFlights.arrIcao}, ${arr?.icao ?? null})`,
+                arrCity: sql`coalesce(${aircraftFlights.arrCity}, ${arr?.city ?? null})`,
+                arrCountry: sql`coalesce(${aircraftFlights.arrCountry}, ${arr?.country ?? null})`,
+                completeness: sql`case when coalesce(${aircraftFlights.depIcao}, ${dep?.icao ?? null}) is not null and coalesce(${aircraftFlights.arrIcao}, ${arr?.icao ?? null}) is not null then 'full'::flight_completeness else ${aircraftFlights.completeness} end`,
+                source: "merged",
+                updatedAt: new Date(),
+              })
+              .where(eq(aircraftFlights.id, hit.id));
+          } else {
+            await tx
+              .insert(aircraftFlights)
+              .values({
+                aircraftId: a.id,
+                hex: a.hex,
+                departedAt: f.firstSeen,
+                arrivedAt: f.lastSeen,
+                durationMin: Math.round((f.lastSeen.getTime() - f.firstSeen.getTime()) / MINUTE),
+                depIcao: dep?.icao ?? null,
+                depCity: dep?.city ?? null,
+                depCountry: dep?.country ?? null,
+                arrIcao: arr?.icao ?? null,
+                arrCity: arr?.city ?? null,
+                arrCountry: arr?.country ?? null,
+                completeness:
+                  dep && arr ? "full" : dep ? "departure_only" : arr ? "arrival_only" : "enroute",
+                source: "opensky",
+                samples: 0,
+                maxAltFt: null,
+                dedupeKey: `${legDedupeKey(a.hex, f.firstSeen)}:os`,
+              })
+              .onConflictDoNothing();
+          }
+          merged++;
+        }
+      },
+      opts.signal,
+    );
   }
   return merged;
 }
 
-async function updateHomeAirports(ctx: IngestContext): Promise<void> {
-  await ctx.db.execute(sql`
+async function updateHomeAirports(tx: Tx): Promise<void> {
+  await tx.execute(sql`
     update corporate_aircraft a set home_icao = h.icao, updated_at = now()
     from (
       select distinct on (aircraft_id) aircraft_id, arr_icao as icao

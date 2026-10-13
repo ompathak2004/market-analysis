@@ -1,0 +1,471 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: market-analysis worker on ECS Fargate (ap-south-1)
+
+Parameters:
+  ImageTag:
+    Type: String
+    Default: latest
+  EnvironmentName:
+    Type: String
+    Default: prod
+    AllowedPattern: "[a-z0-9-]+"
+  AlertEmail:
+    Type: String
+    AllowedPattern: ".+@.+"
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Public subnets of the default VPC (tasks get a public IP; no NAT gateway)
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 15
+    MinValue: 1
+  DesiredCount:
+    Type: Number
+    Default: 1
+    AllowedValues: [0, 1]
+    Description: 0 only while bootstrapping, before secrets and the first image exist
+  UseSpot:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+
+Conditions:
+  SpotEnabled: !Equals [!Ref UseSpot, "true"]
+
+Resources:
+  Repository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: market-analysis-worker
+      ImageTagMutability: MUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep the last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /market-analysis/worker
+      RetentionInDays: 14
+
+  ArchiveBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub market-analysis-archive-${AWS::AccountId}
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-backups
+            Status: Enabled
+            Prefix: backups/
+            ExpirationInDays: 90
+          - Id: abort-incomplete-multipart
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+
+  ArchiveBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArchiveBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt ArchiveBucket.Arn
+              - !Sub ${ArchiveBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: market-analysis-alerts
+
+  AlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # CloudWatch alarms publish to SNS as a service principal; the default topic policy only trusts the account.
+  AlertTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref AlertTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AccountOwner
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action:
+              - sns:Publish
+              - sns:Subscribe
+              - sns:GetTopicAttributes
+              - sns:SetTopicAttributes
+              - sns:ListSubscriptionsByTopic
+            Resource: !Ref AlertTopic
+          - Sid: CloudWatchAlarms
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref AlertTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: market-analysis
+      ClusterSettings:
+        - Name: containerInsights
+          Value: disabled
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: !If [SpotEnabled, FARGATE_SPOT, FARGATE]
+          Weight: 1
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub market-analysis-worker-execution-${EnvironmentName}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: read-ssm-secrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ssm:GetParameters
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/*
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+                  StringLike:
+                    kms:EncryptionContext:PARAMETER_ARN: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/*
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub market-analysis-worker-task-${EnvironmentName}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: worker-runtime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt ArchiveBucket.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub ${ArchiveBucket.Arn}/*
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: MarketAnalysis
+              # ECS Exec opens its session through SSM Messages from inside the task.
+              - Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: "*"
+
+  WorkerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: market-analysis worker, egress only
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: market-analysis-worker
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: market-analysis-worker
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: "256"
+      Memory: "1024"
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: X86_64
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: worker
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${Repository}:${ImageTag}
+          Essential: true
+          StopTimeout: 120
+          LinuxParameters:
+            InitProcessEnabled: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: worker
+              mode: non-blocking
+              max-buffer-size: 4m
+          Environment:
+            - Name: NODE_ENV
+              Value: production
+            - Name: LOG_LEVEL
+              Value: info
+            - Name: CLOUDWATCH_METRICS
+              Value: "true"
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: S3_ARCHIVE_BUCKET
+              Value: !Ref ArchiveBucket
+          Secrets:
+            - Name: DATABASE_URL
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/DATABASE_URL
+            - Name: REDIS_URL
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/REDIS_URL
+            - Name: RESEND_API_KEY
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/RESEND_API_KEY
+            - Name: FIRECRAWL_API_KEY
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/FIRECRAWL_API_KEY
+            - Name: FIRECRAWL_MONTHLY_CREDITS
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/FIRECRAWL_MONTHLY_CREDITS
+            - Name: CEREBRAS_API_KEY
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/CEREBRAS_API_KEY
+            - Name: CEREBRAS_MODEL
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/CEREBRAS_MODEL
+            - Name: CEREBRAS_FALLBACK_MODEL
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/CEREBRAS_FALLBACK_MODEL
+            - Name: CEREBRAS_RPM
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/CEREBRAS_RPM
+            - Name: LLM_DAILY_TOKEN_BUDGET
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/LLM_DAILY_TOKEN_BUDGET
+            - Name: AISSTREAM_API_KEY
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/AISSTREAM_API_KEY
+            - Name: OPENSKY_CLIENT_ID
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/OPENSKY_CLIENT_ID
+            - Name: OPENSKY_CLIENT_SECRET
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/OPENSKY_CLIENT_SECRET
+            - Name: ALTDATA_ENABLED
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/ALTDATA_ENABLED
+            - Name: ALTDATA_AIS_BURST_SECONDS
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/ALTDATA_AIS_BURST_SECONDS
+            - Name: INTEL_UNIVERSE
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/INTEL_UNIVERSE
+            - Name: DATA_UNIVERSE
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/DATA_UNIVERSE
+            - Name: NSE_BASE_URL
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/NSE_BASE_URL
+            - Name: SCRAPE_CONCURRENCY
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/SCRAPE_CONCURRENCY
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: market-analysis-worker
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: !Ref DesiredCount
+      CapacityProviderStrategy:
+        - CapacityProvider: !If [SpotEnabled, FARGATE_SPOT, FARGATE]
+          Weight: 1
+      PlatformVersion: LATEST
+      EnableExecuteCommand: true
+      PropagateTags: SERVICE
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref WorkerSecurityGroup
+          Subnets: !Ref SubnetIds
+
+  NoHeartbeatAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: worker-no-heartbeat
+      AlarmDescription: The worker has not published MarketAnalysis/worker.heartbeat for 15 minutes.
+      Namespace: MarketAnalysis
+      MetricName: worker.heartbeat
+      Statistic: SampleCount
+      Period: 300
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions:
+        - !Ref AlertTopic
+      OKActions:
+        - !Ref AlertTopic
+
+  # RunningTaskCount exists only with Container Insights (paid); AWS/ECS emits one CPUUtilization sample per minute per running service, so no samples means no running task.
+  NotRunningAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: worker-not-running
+      AlarmDescription: The worker service has had no running task for 10 minutes.
+      Namespace: AWS/ECS
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref Cluster
+        - Name: ServiceName
+          Value: !GetAtt Service.Name
+      Statistic: SampleCount
+      Period: 60
+      EvaluationPeriods: 10
+      DatapointsToAlarm: 10
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions:
+        - !Ref AlertTopic
+      OKActions:
+        - !Ref AlertTopic
+
+  DeadJobsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: worker-dead-jobs
+      AlarmDescription: At least one job reached the dead state.
+      Namespace: MarketAnalysis
+      MetricName: jobs.dead
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertTopic
+      OKActions:
+        - !Ref AlertTopic
+
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub market-analysis-${EnvironmentName}-monthly
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
+Outputs:
+  RepositoryUri:
+    Value: !GetAtt Repository.RepositoryUri
+  ClusterName:
+    Value: !Ref Cluster
+  ServiceName:
+    Value: !GetAtt Service.Name
+  TaskDefinitionFamily:
+    Value: market-analysis-worker
+  TaskRoleArn:
+    Value: !GetAtt TaskRole.Arn
+  TaskExecutionRoleArn:
+    Value: !GetAtt TaskExecutionRole.Arn
+  ArchiveBucketName:
+    Value: !Ref ArchiveBucket
+  AlertTopicArn:
+    Value: !Ref AlertTopic

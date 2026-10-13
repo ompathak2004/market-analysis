@@ -1,7 +1,9 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  bigserial,
   boolean,
+  check,
   date,
   index,
   integer,
@@ -15,7 +17,9 @@ import {
   smallint,
   text,
   timestamp,
+  unique,
   uniqueIndex,
+  uuid,
 } from "drizzle-orm/pg-core";
 
 const timestamps = {
@@ -47,6 +51,7 @@ export const analystAction = pgEnum("analyst_action", [
 ]);
 export const documentStatus = pgEnum("document_status", ["fetched", "parsed", "failed", "skipped"]);
 export const ingestStatus = pgEnum("ingest_status", ["running", "succeeded", "failed"]);
+export const ingestRunKind = pgEnum("ingest_run_kind", ["legacy", "campaign"]);
 
 export const companies = pgTable(
   "companies",
@@ -339,8 +344,16 @@ export const ingestRuns = pgTable(
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     stats: jsonb("stats").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
     error: text("error"),
+    kind: ingestRunKind("kind").notNull().default("legacy"),
+    childrenTotal: integer("children_total").notNull().default(0),
+    childrenDone: integer("children_done").notNull().default(0),
+    childrenFailed: integer("children_failed").notNull().default(0),
+    parentJobId: text("parent_job_id"),
   },
-  (t) => [index("ingest_runs_source_started_idx").on(t.source, t.startedAt)],
+  (t) => [
+    index("ingest_runs_source_started_idx").on(t.source, t.startedAt),
+    uniqueIndex("ingest_runs_parent_job_idx").on(t.parentJobId),
+  ],
 );
 
 export const companySync = pgTable(
@@ -860,4 +873,110 @@ export const altdataCoverage = pgTable(
     uniqueIds: integer("unique_ids").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.layer, t.zone, t.day] })],
+);
+
+export const jobStatus = pgEnum("job_status", [
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "dead",
+  "deferred",
+  "abandoned",
+]);
+export const jobMode = pgEnum("job_mode", ["legacy", "paused", "worker"]);
+
+export const jobRuns = pgTable(
+  "job_runs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    jobType: text("job_type").notNull(),
+    unitKey: text("unit_key").notNull(),
+    campaignId: integer("campaign_id").references(() => ingestRuns.id, { onDelete: "cascade" }),
+    status: jobStatus("status").notNull().default("queued"),
+    attempt: integer("attempt").notNull().default(0),
+    lane: text("lane").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    deadlineAt: timestamp("deadline_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    error: text("error"),
+    metrics: jsonb("metrics").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamps.createdAt,
+  },
+  (t) => [
+    unique("job_runs_unit_key").on(t.jobType, t.unitKey, t.campaignId).nullsNotDistinct(),
+    index("job_runs_status_created_idx").on(t.status, t.createdAt),
+    index("job_runs_campaign_status_idx").on(t.campaignId, t.status),
+  ],
+);
+
+export const jobAttempts = pgTable(
+  "job_attempts",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    runId: bigint("run_id", { mode: "number" })
+      .notNull()
+      .references(() => jobRuns.id, { onDelete: "cascade" }),
+    attempt: integer("attempt").notNull(),
+    queueJobId: uuid("queue_job_id"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    outcome: jobStatus("outcome").notNull().default("running"),
+    error: text("error"),
+    workerOwner: uuid("worker_owner"),
+    generation: bigint("generation", { mode: "number" }),
+  },
+  (t) => [
+    index("job_attempts_run_idx").on(t.runId),
+    index("job_attempts_started_idx").on(t.startedAt),
+  ],
+);
+
+export const jobDailyStats = pgTable(
+  "job_daily_stats",
+  {
+    day: date("day").notNull(),
+    jobType: text("job_type").notNull(),
+    succeeded: integer("succeeded").notNull().default(0),
+    failed: integer("failed").notNull().default(0),
+    dead: integer("dead").notNull().default(0),
+    deferred: integer("deferred").notNull().default(0),
+    abandoned: integer("abandoned").notNull().default(0),
+    durationMsTotal: bigint("duration_ms_total", { mode: "number" }).notNull().default(0),
+    durationMsMax: integer("duration_ms_max").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.day, t.jobType] })],
+);
+
+export const workerLeases = pgTable("worker_leases", {
+  name: text("name").primaryKey(),
+  ownerId: uuid("owner_id").notNull(),
+  generation: bigint("generation", { mode: "number" }).notNull().default(1),
+  leasedUntil: timestamp("leased_until", { withTimezone: true }).notNull(),
+  heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const jobControl = pgTable(
+  "job_control",
+  {
+    id: smallint("id").primaryKey().default(1),
+    mode: jobMode("mode").notNull().default("legacy"),
+    updatedAt: timestamps.updatedAt,
+  },
+  (t) => [check("job_control_singleton", sql`${t.id} = 1`)],
+);
+
+export const opsAlerts = pgTable(
+  "ops_alerts",
+  {
+    id: serial("id").primaryKey(),
+    kind: text("kind").notNull(),
+    key: text("key").notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  },
+  (t) => [unique("ops_alerts_kind_key").on(t.kind, t.key)],
 );

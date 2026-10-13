@@ -7,9 +7,17 @@ export class DeadlineExceededError extends AppError {
   }
 }
 
+export type CommitGuard = (tx: unknown) => Promise<void>;
+
+export interface DeadlineOptions {
+  signal?: AbortSignal;
+  commitGuard?: CommitGuard;
+}
+
 interface DeadlineScope {
   deadline: number;
   signal: AbortSignal;
+  commitGuard?: CommitGuard;
 }
 
 const scope = new AsyncLocalStorage<DeadlineScope>();
@@ -17,12 +25,31 @@ const scope = new AsyncLocalStorage<DeadlineScope>();
 export function withDeadline<T>(
   deadline: number,
   fn: (signal: AbortSignal) => Promise<T>,
+  opts: DeadlineOptions = {},
 ): Promise<T> {
   const outer = scope.getStore();
   const effective = outer ? Math.min(outer.deadline, deadline) : deadline;
   const own = AbortSignal.timeout(Math.max(0, effective - Date.now()));
-  const signal = outer ? AbortSignal.any([outer.signal, own]) : own;
-  return scope.run({ deadline: effective, signal }, () => fn(signal));
+  const parts = [own, ...(outer ? [outer.signal] : []), ...(opts.signal ? [opts.signal] : [])];
+  const signal = parts.length === 1 ? own : AbortSignal.any(parts);
+  const commitGuard = opts.commitGuard ?? outer?.commitGuard;
+  return scope.run({ deadline: effective, signal, ...(commitGuard ? { commitGuard } : {}) }, () =>
+    fn(signal),
+  );
+}
+
+export function currentSignal(): AbortSignal | null {
+  return scope.getStore()?.signal ?? null;
+}
+
+export function throwIfAborted(signal?: AbortSignal | null): void {
+  signal?.throwIfAborted();
+  currentSignal()?.throwIfAborted();
+}
+
+export async function guardCommit(tx: unknown, signal?: AbortSignal | null): Promise<void> {
+  throwIfAborted(signal);
+  await scope.getStore()?.commitGuard?.(tx);
 }
 
 export function currentDeadline(): number | null {
@@ -37,9 +64,11 @@ export function remainingMs(): number {
 export function assertTimeLeft(needMs: number): void {
   const left = remainingMs();
   if (left < needMs) throw new DeadlineExceededError(needMs, Math.max(0, left));
+  currentSignal()?.throwIfAborted();
 }
 
 export function deadlineSignal(timeoutMs: number, extra?: AbortSignal | null): AbortSignal {
   const timeout = AbortSignal.timeout(Math.max(0, Math.min(timeoutMs, remainingMs())));
-  return extra ? AbortSignal.any([timeout, extra]) : timeout;
+  const parts = [timeout, currentSignal(), extra].filter((s): s is AbortSignal => s != null);
+  return parts.length === 1 ? timeout : AbortSignal.any(parts);
 }

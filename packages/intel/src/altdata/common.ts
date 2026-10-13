@@ -1,4 +1,4 @@
-import { altdataEvents, and, type Db, eq, inArray, signals, sql } from "@ma/db";
+import { altdataEvents, and, type Db, eq, fencedTransaction, inArray, signals, sql } from "@ma/db";
 import type { AltdataSignal } from "./types.js";
 
 export const DAY_MS = 86_400_000;
@@ -65,35 +65,37 @@ export async function writeAltdataSignals(
   modelVersion: number,
 ): Promise<number> {
   const kinds = rows.map((r) => r.kind);
-  await db
-    .delete(signals)
-    .where(
-      and(
-        eq(signals.companyId, companyId),
-        eq(signals.asOf, asOf),
-        eq(signals.modelVersion, modelVersion),
-        inArray(signals.kind, [...allKinds]),
-        kinds.length ? sql`${signals.kind} not in ${kinds}` : undefined,
-      ),
-    );
-  if (!rows.length) return 0;
-  await db
-    .insert(signals)
-    .values(
-      rows.map((r) => ({
-        companyId,
-        asOf,
-        kind: r.kind,
-        value: r.value ?? 0,
-        inputs: r.inputs as unknown as Record<string, unknown>,
-        modelVersion,
-      })),
-    )
-    .onConflictDoUpdate({
-      target: [signals.companyId, signals.asOf, signals.kind, signals.modelVersion],
-      set: { value: sql`excluded.value`, inputs: sql`excluded.inputs` },
-    });
-  return rows.length;
+  return fencedTransaction(db, async (tx) => {
+    await tx
+      .delete(signals)
+      .where(
+        and(
+          eq(signals.companyId, companyId),
+          eq(signals.asOf, asOf),
+          eq(signals.modelVersion, modelVersion),
+          inArray(signals.kind, [...allKinds]),
+          kinds.length ? sql`${signals.kind} not in ${kinds}` : undefined,
+        ),
+      );
+    if (!rows.length) return 0;
+    await tx
+      .insert(signals)
+      .values(
+        rows.map((r) => ({
+          companyId,
+          asOf,
+          kind: r.kind,
+          value: r.value ?? 0,
+          inputs: r.inputs as unknown as Record<string, unknown>,
+          modelVersion,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: [signals.companyId, signals.asOf, signals.kind, signals.modelVersion],
+        set: { value: sql`excluded.value`, inputs: sql`excluded.inputs` },
+      });
+    return rows.length;
+  });
 }
 
 export interface AltdataEventInput {
@@ -111,25 +113,27 @@ export interface AltdataEventInput {
 export async function emitAltdataEvents(db: Db, events: AltdataEventInput[]): Promise<number> {
   const unique = [...new Map(events.map((e) => [e.dedupeKey, e])).values()];
   if (!unique.length) return 0;
-  const rows = await db
-    .insert(altdataEvents)
-    .values(
-      unique.map((e) => ({
-        layer: e.layer,
-        kind: e.kind,
-        companyId: e.companyId,
-        facilityId: e.facilityId ?? null,
-        occurredAt: new Date(e.occurredAt),
-        headline: fitRead(e.headline),
-        detail: e.detail,
-        severity: e.severity,
-        dedupeKey: e.dedupeKey,
-      })),
-    )
-    .onConflictDoUpdate({
-      target: altdataEvents.dedupeKey,
-      set: { headline: sql`excluded.headline`, detail: sql`excluded.detail` },
-    })
-    .returning({ id: altdataEvents.id });
+  const rows = await fencedTransaction(db, (tx) =>
+    tx
+      .insert(altdataEvents)
+      .values(
+        unique.map((e) => ({
+          layer: e.layer,
+          kind: e.kind,
+          companyId: e.companyId,
+          facilityId: e.facilityId ?? null,
+          occurredAt: new Date(e.occurredAt),
+          headline: fitRead(e.headline),
+          detail: e.detail,
+          severity: e.severity,
+          dedupeKey: e.dedupeKey,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: altdataEvents.dedupeKey,
+        set: { headline: sql`excluded.headline`, detail: sql`excluded.detail` },
+      })
+      .returning({ id: altdataEvents.id }),
+  );
   return rows.length;
 }

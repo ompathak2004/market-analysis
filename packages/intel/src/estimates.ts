@@ -1,15 +1,17 @@
-import { isoDate } from "@ma/core";
+import { isoDate, throwIfAborted } from "@ma/core";
 import {
   and,
   type Db,
   desc,
   eq,
+  fencedBatches,
   fundamentals,
   gte,
   lte,
   relationshipEstimates,
   relationships,
   signals,
+  sql,
 } from "@ma/db";
 
 export const ESTIMATE_MODEL_VERSION = 1;
@@ -164,8 +166,9 @@ export async function refreshEstimates(db: Db, asOf = isoDate(new Date())): Prom
     return financials.get(id) ?? null;
   };
 
-  let written = 0;
+  const rows: Array<typeof relationshipEstimates.$inferInsert> = [];
   for (const rel of active) {
+    throwIfAborted();
     const [supplier, customer] = await Promise.all([
       getFin(rel.supplierCompanyId),
       getFin(rel.customerCompanyId),
@@ -182,20 +185,23 @@ export async function refreshEstimates(db: Db, asOf = isoDate(new Date())): Prom
     const est = estimateRelationship(rel, supplier, customer, {
       largestCustomerPct: top1?.value ?? null,
     });
-    await db
+    rows.push({
+      relationshipId: rel.id,
+      asOf,
+      method: est.method,
+      valueCr: est.valueCr?.toString() ?? null,
+      valueLowCr: est.valueLowCr?.toString() ?? null,
+      valueHighCr: est.valueHighCr?.toString() ?? null,
+      supplierRevenuePct: est.supplierRevenuePct,
+      customerCostPct: est.customerCostPct,
+      inputs: est.inputs,
+      modelVersion: ESTIMATE_MODEL_VERSION,
+    });
+  }
+  await fencedBatches(db, rows, (tx, batch) =>
+    tx
       .insert(relationshipEstimates)
-      .values({
-        relationshipId: rel.id,
-        asOf,
-        method: est.method,
-        valueCr: est.valueCr?.toString() ?? null,
-        valueLowCr: est.valueLowCr?.toString() ?? null,
-        valueHighCr: est.valueHighCr?.toString() ?? null,
-        supplierRevenuePct: est.supplierRevenuePct,
-        customerCostPct: est.customerCostPct,
-        inputs: est.inputs,
-        modelVersion: ESTIMATE_MODEL_VERSION,
-      })
+      .values(batch)
       .onConflictDoUpdate({
         target: [
           relationshipEstimates.relationshipId,
@@ -203,16 +209,15 @@ export async function refreshEstimates(db: Db, asOf = isoDate(new Date())): Prom
           relationshipEstimates.modelVersion,
         ],
         set: {
-          method: est.method,
-          valueCr: est.valueCr?.toString() ?? null,
-          valueLowCr: est.valueLowCr?.toString() ?? null,
-          valueHighCr: est.valueHighCr?.toString() ?? null,
-          supplierRevenuePct: est.supplierRevenuePct,
-          customerCostPct: est.customerCostPct,
-          inputs: est.inputs,
+          method: sql`excluded.method`,
+          valueCr: sql`excluded.value_cr`,
+          valueLowCr: sql`excluded.value_low_cr`,
+          valueHighCr: sql`excluded.value_high_cr`,
+          supplierRevenuePct: sql`excluded.supplier_revenue_pct`,
+          customerCostPct: sql`excluded.customer_cost_pct`,
+          inputs: sql`excluded.inputs`,
         },
-      });
-    written++;
-  }
-  return written;
+      }),
+  );
+  return rows.length;
 }

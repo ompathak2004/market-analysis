@@ -1,4 +1,4 @@
-import { median } from "@ma/core";
+import { median, throwIfAborted } from "@ma/core";
 import { type Db, sql } from "@ma/db";
 import {
   type AltdataEventInput,
@@ -827,6 +827,7 @@ export async function refreshLogisticsSignals(
   const chokepointZones = opts.chokepointSlugs.map((s) => `chokepoint:${s}`);
   const events: AltdataEventInput[] = [];
   for (const companyId of ids) {
+    throwIfAborted();
     if (opts.deadline && Date.now() > opts.deadline - 5_000) {
       result.skipped += ids.length - result.companies;
       break;
@@ -872,6 +873,7 @@ export async function refreshLogisticsSignals(
     events.push(...computed.events);
     result.companies++;
   }
+  throwIfAborted();
   result.events = await emitAltdataEvents(db, events);
   return result;
 }

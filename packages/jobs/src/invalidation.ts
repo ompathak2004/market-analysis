@@ -1,4 +1,7 @@
-import type { AppContext } from "../context";
+import type { Cache } from "@ma/cache";
+import type { Logger } from "@ma/core";
+
+export const API_CACHE = { namespace: "api", version: 2 } as const;
 
 const BRIEF_INPUTS = "insights:";
 
@@ -31,7 +34,12 @@ export const JOB_INVALIDATIONS: Record<string, readonly string[]> = {
   "altdata-cleanup": ["travel:", "logistics:", "altdata:"],
 };
 
-export async function invalidateAfterJob(ctx: AppContext, job: string): Promise<void> {
+export interface InvalidationTarget {
+  api: Pick<Cache, "invalidatePrefix">;
+  logger: Pick<Logger, "warn">;
+}
+
+export async function invalidateAfterJob(ctx: InvalidationTarget, job: string): Promise<void> {
   for (const prefix of JOB_INVALIDATIONS[job] ?? []) {
     await ctx.api
       .invalidatePrefix(prefix)

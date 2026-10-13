@@ -1,11 +1,11 @@
-import { createLogger, isoDate, loadConfig } from "@ma/core";
+import { createLogger, isoDate, loadServiceConfig } from "@ma/core";
 import { closeDb, companies, createDb } from "@ma/db";
 import { refreshEstimates } from "./estimates.js";
 import { eventImpact } from "./exposure.js";
 import { refreshMomentumSignals } from "./momentum.js";
 import { refreshRiskSignals } from "./risk.js";
 
-const config = loadConfig();
+const config = loadServiceConfig();
 const logger = createLogger("intel-cli", config.LOG_LEVEL);
 const db = createDb(config.DATABASE_URL, 4);
 const [cmd, ...args] = process.argv.slice(2);

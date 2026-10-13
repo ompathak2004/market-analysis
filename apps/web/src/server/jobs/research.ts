@@ -1,6 +1,7 @@
 import { HOUR, MINUTE } from "@ma/core";
 import { fetchBrokerReports, syncMoneycontrol } from "@ma/ingest";
-import { forEachCompany, pickBatch } from "./batch";
+import { pickBatch } from "@ma/jobs";
+import { forEachCompany } from "./batch";
 import type { JobDef } from "./run";
 
 export const researchJobs: JobDef[] = [
@@ -8,7 +9,7 @@ export const researchJobs: JobDef[] = [
     name: "moneycontrol",
     budgetMs: 4.5 * MINUTE,
     run: async (run) => {
-      const ids = await pickBatch(run.ctx, "moneycontrol", run.ctx.config.INTEL_UNIVERSE, 10, {
+      const ids = await pickBatch(run.ctx.db, "moneycontrol", run.ctx.config.INTEL_UNIVERSE, 10, {
         maxAgeMs: 12 * HOUR,
       });
       return forEachCompany(

@@ -1,4 +1,4 @@
-import { assertTimeLeft, isoDate, NotFoundError, sha256 } from "@ma/core";
+import { assertTimeLeft, isoDate, NotFoundError, sha256, throwIfAborted } from "@ma/core";
 import {
   analystCalls,
   analystRatings,
@@ -10,10 +10,12 @@ import {
   earningsEstimates,
   earningsSurprises,
   eq,
+  fencedTransaction,
   isNull,
   priceTargets,
   shareholding,
   sql,
+  type Tx,
 } from "@ma/db";
 import type { IngestContext } from "../context.js";
 import {
@@ -51,6 +53,7 @@ export interface MoneycontrolSyncResult {
 export async function syncMoneycontrol(
   ctx: IngestContext,
   companyId: number,
+  signal?: AbortSignal,
 ): Promise<MoneycontrolSyncResult | null> {
   const company = await ctx.db.query.companies.findFirst({ where: eq(companies.id, companyId) });
   if (!company?.nseSymbol) return null;
@@ -65,10 +68,21 @@ export async function syncMoneycontrol(
     code = match.code;
     pageUrl = match.url;
     resolved = 1;
-    await ctx.db
-      .update(companies)
-      .set({ moneycontrolCode: code, moneycontrolUrl: pageUrl, updatedAt: new Date() })
-      .where(eq(companies.id, companyId));
+    const resolvedCode = code;
+    const resolvedUrl = pageUrl;
+    await fencedTransaction(
+      ctx.db,
+      (tx) =>
+        tx
+          .update(companies)
+          .set({
+            moneycontrolCode: resolvedCode,
+            moneycontrolUrl: resolvedUrl,
+            updatedAt: new Date(),
+          })
+          .where(eq(companies.id, companyId)),
+      signal,
+    );
   }
 
   const { doc, changed } = await ctx.docs.fetch(pageUrl, {
@@ -76,6 +90,7 @@ export async function syncMoneycontrol(
     companyId,
     maxAgeMs: PAGE_MAX_AGE_MS,
     extract: trimMoneycontrolPage,
+    ...(signal ? { signal } : {}),
   });
   const page = parseMoneycontrolPage(doc.content);
   const pageCurrent =
@@ -85,7 +100,8 @@ export async function syncMoneycontrol(
   let inserted = 0;
   let quarters = 0;
   if (!pageCurrent) {
-    const swot = page.swotUrl ? await fetchSwot(ctx, page.swotUrl, companyId) : {};
+    const swot = page.swotUrl ? await fetchSwot(ctx, page.swotUrl, companyId, signal) : {};
+    throwIfAborted(signal);
     const facts: MoneycontrolFacts = {
       moneycontrolUrl: pageUrl,
       stockScore: page.stockScore?.score ?? null,
@@ -96,58 +112,6 @@ export async function syncMoneycontrol(
       management: page.management,
       website: page.website,
     };
-    await ctx.db
-      .insert(companyFacts)
-      .values({
-        companyId,
-        source: "moneycontrol",
-        parserVersion: MONEYCONTROL_PARSER_VERSION,
-        facts: { ...facts },
-        fetchedAt: doc.fetchedAt,
-      })
-      .onConflictDoUpdate({
-        target: [companyFacts.companyId, companyFacts.source],
-        set: {
-          parserVersion: sql`excluded.parser_version`,
-          facts: sql`excluded.facts`,
-          fetchedAt: sql`excluded.fetched_at`,
-        },
-      });
-
-    const city = page.registeredOffice?.city ?? null;
-    if (city && city !== company.registeredCity) {
-      await ctx.db
-        .update(companies)
-        .set({ registeredCity: city, updatedAt: new Date() })
-        .where(eq(companies.id, companyId));
-    }
-
-    if (page.shareholding.trend.length) {
-      await ctx.db
-        .insert(shareholding)
-        .values(
-          page.shareholding.trend.map((p) => ({
-            companyId,
-            quarterEnd: p.quarterEnd,
-            holder: p.holder,
-            pct: p.pct,
-            pledgePct: p.pledgePct,
-            source: "moneycontrol",
-            parserVersion: MONEYCONTROL_PARSER_VERSION,
-          })),
-        )
-        .onConflictDoUpdate({
-          target: [shareholding.companyId, shareholding.quarterEnd, shareholding.holder],
-          set: {
-            pct: sql`excluded.pct`,
-            pledgePct: sql`excluded.pledge_pct`,
-            parserVersion: sql`excluded.parser_version`,
-            updatedAt: sql`now()`,
-          },
-        });
-      quarters = new Set(page.shareholding.trend.map((p) => p.quarterEnd)).size;
-    }
-
     const calls: BrokerCall[] = page.brokerCards.map((c) => ({
       companyId,
       nseSymbol: company.nseSymbol as string,
@@ -160,9 +124,67 @@ export async function syncMoneycontrol(
       title: null,
       summary: null,
     }));
-    cards = calls.length;
-    if (calls.length) inserted = (await upsertBrokerCalls(ctx, calls, "moneycontrol")).inserted;
-    await ctx.docs.markParsed(doc.id, MONEYCONTROL_PARSER_VERSION);
+    await fencedTransaction(
+      ctx.db,
+      async (tx) => {
+        await tx
+          .insert(companyFacts)
+          .values({
+            companyId,
+            source: "moneycontrol",
+            parserVersion: MONEYCONTROL_PARSER_VERSION,
+            facts: { ...facts },
+            fetchedAt: doc.fetchedAt,
+          })
+          .onConflictDoUpdate({
+            target: [companyFacts.companyId, companyFacts.source],
+            set: {
+              parserVersion: sql`excluded.parser_version`,
+              facts: sql`excluded.facts`,
+              fetchedAt: sql`excluded.fetched_at`,
+            },
+          });
+
+        const city = page.registeredOffice?.city ?? null;
+        if (city && city !== company.registeredCity) {
+          await tx
+            .update(companies)
+            .set({ registeredCity: city, updatedAt: new Date() })
+            .where(eq(companies.id, companyId));
+        }
+
+        if (page.shareholding.trend.length) {
+          await tx
+            .insert(shareholding)
+            .values(
+              page.shareholding.trend.map((p) => ({
+                companyId,
+                quarterEnd: p.quarterEnd,
+                holder: p.holder,
+                pct: p.pct,
+                pledgePct: p.pledgePct,
+                source: "moneycontrol",
+                parserVersion: MONEYCONTROL_PARSER_VERSION,
+              })),
+            )
+            .onConflictDoUpdate({
+              target: [shareholding.companyId, shareholding.quarterEnd, shareholding.holder],
+              set: {
+                pct: sql`excluded.pct`,
+                pledgePct: sql`excluded.pledge_pct`,
+                parserVersion: sql`excluded.parser_version`,
+                updatedAt: sql`now()`,
+              },
+            });
+          quarters = new Set(page.shareholding.trend.map((p) => p.quarterEnd)).size;
+        }
+
+        cards = calls.length;
+        if (calls.length) inserted = (await upsertBrokerCalls(tx, calls, "moneycontrol")).inserted;
+        await ctx.docs.markParsed(doc.id, MONEYCONTROL_PARSER_VERSION, "parsed", tx);
+      },
+      signal,
+    );
   }
 
   const est = await ctx.cache.getOrLoad<MoneycontrolEstimates>(
@@ -170,7 +192,10 @@ export async function syncMoneycontrol(
     () => mc.estimates(code),
     { ttlMs: ESTIMATES_TTL_MS },
   );
-  const written = est ? await writeEstimates(ctx, companyId, est) : null;
+  throwIfAborted(signal);
+  const written = est
+    ? await fencedTransaction(ctx.db, (tx) => writeEstimates(tx, companyId, est), signal)
+    : null;
 
   return {
     resolved,
@@ -183,23 +208,25 @@ export async function syncMoneycontrol(
   };
 }
 
-async function fetchSwot(ctx: IngestContext, url: string, companyId: number) {
+async function fetchSwot(ctx: IngestContext, url: string, companyId: number, signal?: AbortSignal) {
   try {
     const { doc } = await ctx.docs.fetch(url, {
       source: "moneycontrol_swot",
       companyId,
       maxAgeMs: SWOT_MAX_AGE_MS,
       extract: trimSwotPage,
+      ...(signal ? { signal } : {}),
     });
     return parseSwotPage(doc.content);
   } catch (err) {
+    throwIfAborted(signal);
     ctx.logger.warn({ url, companyId, err }, "moneycontrol swot fetch failed");
     return {};
   }
 }
 
 async function writeEstimates(
-  ctx: IngestContext,
+  db: Tx,
   companyId: number,
   est: MoneycontrolEstimates,
 ): Promise<{ estimates: number; surprises: number; consensus: number }> {
@@ -208,7 +235,7 @@ async function writeEstimates(
   const decimal = (v: number | null) => (v === null ? null : v.toFixed(2));
 
   if (est.rating) {
-    await ctx.db
+    await db
       .insert(analystRatings)
       .values({ companyId, asOf, ...est.rating, source: "moneycontrol", parserVersion: version })
       .onConflictDoUpdate({
@@ -227,7 +254,7 @@ async function writeEstimates(
   }
 
   if (est.consensus.length) {
-    await ctx.db
+    await db
       .insert(consensusHistory)
       .values(
         est.consensus.map((c) => ({
@@ -251,7 +278,7 @@ async function writeEstimates(
   }
 
   if (est.estimates.length) {
-    await ctx.db
+    await db
       .insert(earningsEstimates)
       .values(
         est.estimates.map((e) => ({
@@ -287,7 +314,7 @@ async function writeEstimates(
   }
 
   if (est.priceTarget) {
-    await ctx.db
+    await db
       .insert(priceTargets)
       .values({
         companyId,
@@ -308,7 +335,7 @@ async function writeEstimates(
   }
 
   if (est.surprises.length) {
-    await ctx.db
+    await db
       .insert(earningsSurprises)
       .values(
         est.surprises.map((s) => ({
@@ -356,34 +383,45 @@ export interface BrokerReportsResult {
 export async function fetchBrokerReports(
   ctx: IngestContext,
   limit: number,
-  opts: { stop?: () => boolean } = {},
+  opts: { stop?: () => boolean; signal?: AbortSignal } = {},
 ): Promise<BrokerReportsResult> {
   const queue = await pendingBrokerReports(ctx, limit, opts.stop);
   const out: BrokerReportsResult = { fetched: 0, linked: 0, failed: 0, skipped: 0 };
   for (const item of queue) {
+    throwIfAborted(opts.signal);
     if (opts.stop?.()) {
       out.skipped++;
       continue;
     }
+    let docId: number;
     try {
       const { doc } = await ctx.docs.fetch(item.url, {
         source: "broker_pdf",
         companyId: item.companyId,
         maxAgeMs: 30 * DAY_MS,
         pdfMaxPages: 12,
+        ...(opts.signal ? { signal: opts.signal } : {}),
       });
-      out.fetched++;
-      const linked = await ctx.db
-        .update(analystCalls)
-        .set({ reportDocumentId: doc.id })
-        .where(and(eq(analystCalls.reportUrl, item.url), isNull(analystCalls.reportDocumentId)))
-        .returning({ id: analystCalls.id });
-      out.linked += linked.length;
+      docId = doc.id;
     } catch (err) {
+      throwIfAborted(opts.signal);
       out.failed++;
       ctx.logger.warn({ url: item.url, err }, "broker report fetch failed");
       await ctx.redis.set(failureKey(item.url), "1", "EX", REPORT_FAILURE_TTL_S);
+      continue;
     }
+    out.fetched++;
+    const linked = await fencedTransaction(
+      ctx.db,
+      (tx) =>
+        tx
+          .update(analystCalls)
+          .set({ reportDocumentId: docId })
+          .where(and(eq(analystCalls.reportUrl, item.url), isNull(analystCalls.reportDocumentId)))
+          .returning({ id: analystCalls.id }),
+      opts.signal,
+    );
+    out.linked += linked.length;
   }
   return out;
 }

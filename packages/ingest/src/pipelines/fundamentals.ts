@@ -1,4 +1,5 @@
-import { companies, eq, fundamentals, sql } from "@ma/db";
+import { throwIfAborted } from "@ma/core";
+import { companies, eq, fencedTransaction, fundamentals, sql } from "@ma/db";
 import type { IngestContext } from "../context.js";
 import {
   parseScreenerCompany,
@@ -20,6 +21,7 @@ export interface FundamentalsSyncResult {
 export async function syncFundamentals(
   ctx: IngestContext,
   companyId: number,
+  signal?: AbortSignal,
 ): Promise<FundamentalsSyncResult | null> {
   const company = await ctx.db.query.companies.findFirst({ where: eq(companies.id, companyId) });
   if (!company?.screenerSlug) return null;
@@ -28,6 +30,7 @@ export async function syncFundamentals(
     source: "screener",
     companyId,
     maxAgeMs: DAY_MS,
+    ...(signal ? { signal } : {}),
   });
   const parsed = parseScreenerCompany(doc.content);
   const upToDate =
@@ -42,39 +45,46 @@ export async function syncFundamentals(
   }
 
   const periods = [...parsed.annual, ...parsed.quarterly];
-  if (periods.length) {
-    await ctx.db
-      .insert(fundamentals)
-      .values(periods.map((p) => toRow(companyId, doc.id, p)))
-      .onConflictDoUpdate({
-        target: [fundamentals.companyId, fundamentals.periodEnd, fundamentals.periodType],
-        set: {
-          revenue: sql`excluded.revenue`,
-          cogs: sql`excluded.cogs`,
-          operatingProfit: sql`excluded.operating_profit`,
-          interestExpense: sql`excluded.interest_expense`,
-          pretaxIncome: sql`excluded.pretax_income`,
-          netIncome: sql`excluded.net_income`,
-          totalAssets: sql`excluded.total_assets`,
-          totalEquity: sql`excluded.total_equity`,
-          totalDebt: sql`excluded.total_debt`,
-          cashFromOps: sql`excluded.cash_from_ops`,
-          sourceDocumentId: sql`excluded.source_document_id`,
-          updatedAt: sql`now()`,
-        },
-      });
-  }
+  throwIfAborted(signal);
+  await fencedTransaction(
+    ctx.db,
+    async (tx) => {
+      if (periods.length) {
+        await tx
+          .insert(fundamentals)
+          .values(periods.map((p) => toRow(companyId, doc.id, p)))
+          .onConflictDoUpdate({
+            target: [fundamentals.companyId, fundamentals.periodEnd, fundamentals.periodType],
+            set: {
+              revenue: sql`excluded.revenue`,
+              cogs: sql`excluded.cogs`,
+              operatingProfit: sql`excluded.operating_profit`,
+              interestExpense: sql`excluded.interest_expense`,
+              pretaxIncome: sql`excluded.pretax_income`,
+              netIncome: sql`excluded.net_income`,
+              totalAssets: sql`excluded.total_assets`,
+              totalEquity: sql`excluded.total_equity`,
+              totalDebt: sql`excluded.total_debt`,
+              cashFromOps: sql`excluded.cash_from_ops`,
+              sourceDocumentId: sql`excluded.source_document_id`,
+              updatedAt: sql`now()`,
+            },
+          });
+      }
 
-  await ctx.db
-    .update(companies)
-    .set({
-      sector: parsed.sectorPath[0] ?? company.sector,
-      industry: parsed.sectorPath.at(-1) ?? company.industry,
-      marketCapCr: parsed.marketCapCr?.toString() ?? company.marketCapCr,
-      updatedAt: new Date(),
-    })
-    .where(eq(companies.id, companyId));
-  await ctx.docs.markParsed(doc.id, SCREENER_PARSER_VERSION);
+      await tx
+        .update(companies)
+        .set({
+          sector: parsed.sectorPath[0] ?? company.sector,
+          industry: parsed.sectorPath.at(-1) ?? company.industry,
+          marketCapCr: parsed.marketCapCr?.toString() ?? company.marketCapCr,
+          updatedAt: new Date(),
+        })
+        .where(eq(companies.id, companyId));
+      await ctx.docs.markParsed(doc.id, SCREENER_PARSER_VERSION, "parsed", tx);
+    },
+    signal,
+  );
 
   return {
     periods: periods.length,

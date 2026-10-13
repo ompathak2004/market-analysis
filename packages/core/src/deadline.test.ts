@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   assertTimeLeft,
   currentDeadline,
   DeadlineExceededError,
   deadlineSignal,
+  guardCommit,
   remainingMs,
+  throwIfAborted,
   withDeadline,
 } from "./deadline.js";
 
@@ -52,5 +54,49 @@ describe("deadline scope", () => {
     expect(signal.aborted).toBe(false);
     ctl.abort();
     expect(signal.aborted).toBe(true);
+  });
+
+  it("propagates an external abort to request signals and checkpoints in the scope", async () => {
+    const ctl = new AbortController();
+    await withDeadline(
+      Date.now() + 60_000,
+      async () => {
+        const request = deadlineSignal(60_000);
+        expect(() => throwIfAborted()).not.toThrow();
+        ctl.abort(new Error("stopping"));
+        expect(request.aborted).toBe(true);
+        expect(() => throwIfAborted()).toThrow("stopping");
+        expect(() => assertTimeLeft(10)).toThrow("stopping");
+      },
+      { signal: ctl.signal },
+    );
+  });
+
+  it("runs the scope's commit guard, inherited by nested scopes", async () => {
+    const seen: unknown[] = [];
+    const commitGuard = async (tx: unknown) => {
+      seen.push(tx);
+    };
+    await withDeadline(
+      Date.now() + 60_000,
+      () => withDeadline(Date.now() + 30_000, () => guardCommit("tx-1")),
+      { commitGuard },
+    );
+    await guardCommit("outside");
+    expect(seen).toEqual(["tx-1"]);
+  });
+
+  it("refuses to commit once the scope is aborted", async () => {
+    const ctl = new AbortController();
+    const commitGuard = vi.fn(async () => {});
+    await withDeadline(
+      Date.now() + 60_000,
+      async () => {
+        ctl.abort(new Error("stopping"));
+        await expect(guardCommit("tx")).rejects.toThrow("stopping");
+      },
+      { signal: ctl.signal, commitGuard },
+    );
+    expect(commitGuard).not.toHaveBeenCalled();
   });
 });
