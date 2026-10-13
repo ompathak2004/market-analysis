@@ -30,6 +30,7 @@ export interface FetchOptions {
   timeoutMs?: number;
   retries?: number;
   method?: "GET" | "POST";
+  bucket?: string;
   body?: string;
   signal?: AbortSignal;
 }
@@ -49,6 +50,7 @@ export class HttpClient {
     const retries = opts.retries ?? 2;
     for (let attempt = 0; ; attempt++) {
       assertTimeLeft(MIN_ATTEMPT_MS);
+      if (opts.bucket) await this.limiter.acquire(opts.bucket);
       await this.limiter.acquire(host);
       const started = Date.now();
       try {
