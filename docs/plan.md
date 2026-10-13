@@ -64,7 +64,9 @@ Worker equivalents (after `pnpm build:worker`): `pnpm worker:cli run prices --wa
    - Verify the NSE equity history fallback from an Indian egress; from the build host NSE answers with a 200 HTML region block, so only the index fallback is verified.
    - Stage rebuilds in a side table and swap generations, instead of one transaction over ~1,250 rows per series.
    - Monthly rotating full-source reconciliation of finalized history (today the daily repair reconciles stored rows against the calendar and refetches only open gaps; the daily job rereads the last ten sessions).
-   - Archive raw provider payloads; only the response hash is kept today.
+   - Archive raw provider payloads; none are kept today.
+   - Apply the completeness rule to the on-demand `prices.sync` path and to a rebuild whose refetch returns no bars at all (today `not_found`, not retried until the next fanout).
+   - Prune old `price_manifests` once the cutover acceptance is signed off.
    - Model rights issues, demergers and other non-split/dividend actions as documented exceptions.
 2. **Alt-data coverage**: Indian port geofences see almost no AISStream traffic; measure `altdata_coverage` over 24–72 h and either widen the watched zones or gate the SHIP pane on a coverage threshold. Jets depend on `aircraft-registry` links, which are provisional until confirmed from filings.
 3. **Relationship recall**: add a sentence classifier behind `extractNamedMentions` to catch mentions without lexical cues; keep the regex path as a fast pre-filter.
