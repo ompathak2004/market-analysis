@@ -1,3 +1,4 @@
+import { throwIfAborted } from "@ma/core";
 import { companies, companyAliases, eq, indexConstituents, indices, sql } from "@ma/db";
 import type { IngestContext } from "../context.js";
 import { normalizeCompanyName } from "../extract/relationships.js";
@@ -14,10 +15,12 @@ const INDEX_NAMES: Record<string, { name: string; yahooSymbol: string | null }> 
 export async function syncUniverse(
   ctx: IngestContext,
   indexCode: string,
+  signal?: AbortSignal,
 ): Promise<{ companies: number }> {
   const meta = INDEX_NAMES[indexCode];
   if (!meta) throw new Error(`Unknown index ${indexCode}`);
   const members = await ctx.nse.indexMembers(indexCode);
+  throwIfAborted(signal);
 
   const [index] = await ctx.db
     .insert(indices)

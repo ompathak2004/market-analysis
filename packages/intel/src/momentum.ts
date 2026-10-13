@@ -1,3 +1,4 @@
+import { throwIfAborted } from "@ma/core";
 import {
   and,
   type Db,
@@ -138,6 +139,7 @@ export async function refreshMomentumSignals(db: Db, asOf: string): Promise<numb
     value: number,
     inputs: Record<string, unknown>,
   ) => {
+    throwIfAborted();
     await db
       .insert(signals)
       .values({ companyId, asOf, kind, value, inputs, modelVersion: MOMENTUM_MODEL_VERSION })

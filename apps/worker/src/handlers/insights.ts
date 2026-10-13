@@ -60,12 +60,14 @@ export const insightHandlers: InsightHandlers = {
       children: [{ type: "insights.digest", payload: { companyId: payload.companyId } }],
     };
   },
-  "insights.digest": async ({ ctx, payload }) =>
-    trackCompany(ctx.db, "insights", payload.companyId, async () => {
+  "insights.digest": async (run) => {
+    const { ctx, payload } = run;
+    return trackCompany(run, "insights", payload.companyId, async () => {
       const inputs = await assembleCompanyInputs(ctx.db, payload.companyId, isoDate(new Date()));
       const outcome = await generateBrokerDigest(ctx, payload.companyId, { inputs });
       return done(tally({}, outcome, "digest"));
-    }),
+    });
+  },
   "market-brief": async ({ ctx }) => done(tally({}, await generateMarketBrief(ctx), "brief")),
   "triage.batch": async ({ ctx, expired }) => {
     const companyIds = await universeIds(ctx.db, ctx.config.INTEL_UNIVERSE);

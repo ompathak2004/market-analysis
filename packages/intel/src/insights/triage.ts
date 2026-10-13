@@ -1,4 +1,4 @@
-import { chunk, sha256 } from "@ma/core";
+import { chunk, sha256, throwIfAborted } from "@ma/core";
 import { and, announcements, companies, desc, eq, inArray, insights, isNull } from "@ma/db";
 import type { IntelContext } from "./context.js";
 import { inputMessage, TRIAGE_SYSTEM } from "./prompts.js";
@@ -94,6 +94,7 @@ export async function loadTriageCandidates(
 
 async function markRoutine(ctx: IntelContext, ids: number[]): Promise<void> {
   if (!ids.length) return;
+  throwIfAborted();
   await ctx.db
     .update(announcements)
     .set({
@@ -140,6 +141,7 @@ export async function triageAnnouncements(
     const perItemCompletion = Math.round(res.completionTokens / batch.length);
     for (const { candidate, item } of matched) {
       const input = triageItemInput(candidate);
+      throwIfAborted();
       await ctx.db
         .update(announcements)
         .set({

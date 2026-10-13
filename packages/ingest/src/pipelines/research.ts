@@ -1,4 +1,4 @@
-import { assertTimeLeft, isoDate, NotFoundError, sha256 } from "@ma/core";
+import { assertTimeLeft, isoDate, NotFoundError, sha256, throwIfAborted } from "@ma/core";
 import {
   analystCalls,
   analystRatings,
@@ -51,6 +51,7 @@ export interface MoneycontrolSyncResult {
 export async function syncMoneycontrol(
   ctx: IngestContext,
   companyId: number,
+  signal?: AbortSignal,
 ): Promise<MoneycontrolSyncResult | null> {
   const company = await ctx.db.query.companies.findFirst({ where: eq(companies.id, companyId) });
   if (!company?.nseSymbol) return null;
@@ -65,6 +66,7 @@ export async function syncMoneycontrol(
     code = match.code;
     pageUrl = match.url;
     resolved = 1;
+    throwIfAborted(signal);
     await ctx.db
       .update(companies)
       .set({ moneycontrolCode: code, moneycontrolUrl: pageUrl, updatedAt: new Date() })
@@ -76,6 +78,7 @@ export async function syncMoneycontrol(
     companyId,
     maxAgeMs: PAGE_MAX_AGE_MS,
     extract: trimMoneycontrolPage,
+    ...(signal ? { signal } : {}),
   });
   const page = parseMoneycontrolPage(doc.content);
   const pageCurrent =
@@ -85,7 +88,8 @@ export async function syncMoneycontrol(
   let inserted = 0;
   let quarters = 0;
   if (!pageCurrent) {
-    const swot = page.swotUrl ? await fetchSwot(ctx, page.swotUrl, companyId) : {};
+    const swot = page.swotUrl ? await fetchSwot(ctx, page.swotUrl, companyId, signal) : {};
+    throwIfAborted(signal);
     const facts: MoneycontrolFacts = {
       moneycontrolUrl: pageUrl,
       stockScore: page.stockScore?.score ?? null,
@@ -170,6 +174,7 @@ export async function syncMoneycontrol(
     () => mc.estimates(code),
     { ttlMs: ESTIMATES_TTL_MS },
   );
+  throwIfAborted(signal);
   const written = est ? await writeEstimates(ctx, companyId, est) : null;
 
   return {
@@ -183,16 +188,18 @@ export async function syncMoneycontrol(
   };
 }
 
-async function fetchSwot(ctx: IngestContext, url: string, companyId: number) {
+async function fetchSwot(ctx: IngestContext, url: string, companyId: number, signal?: AbortSignal) {
   try {
     const { doc } = await ctx.docs.fetch(url, {
       source: "moneycontrol_swot",
       companyId,
       maxAgeMs: SWOT_MAX_AGE_MS,
       extract: trimSwotPage,
+      ...(signal ? { signal } : {}),
     });
     return parseSwotPage(doc.content);
   } catch (err) {
+    throwIfAborted(signal);
     ctx.logger.warn({ url, companyId, err }, "moneycontrol swot fetch failed");
     return {};
   }
@@ -356,11 +363,12 @@ export interface BrokerReportsResult {
 export async function fetchBrokerReports(
   ctx: IngestContext,
   limit: number,
-  opts: { stop?: () => boolean } = {},
+  opts: { stop?: () => boolean; signal?: AbortSignal } = {},
 ): Promise<BrokerReportsResult> {
   const queue = await pendingBrokerReports(ctx, limit, opts.stop);
   const out: BrokerReportsResult = { fetched: 0, linked: 0, failed: 0, skipped: 0 };
   for (const item of queue) {
+    throwIfAborted(opts.signal);
     if (opts.stop?.()) {
       out.skipped++;
       continue;
@@ -371,7 +379,9 @@ export async function fetchBrokerReports(
         companyId: item.companyId,
         maxAgeMs: 30 * DAY_MS,
         pdfMaxPages: 12,
+        ...(opts.signal ? { signal: opts.signal } : {}),
       });
+      throwIfAborted(opts.signal);
       out.fetched++;
       const linked = await ctx.db
         .update(analystCalls)
@@ -380,6 +390,7 @@ export async function fetchBrokerReports(
         .returning({ id: analystCalls.id });
       out.linked += linked.length;
     } catch (err) {
+      throwIfAborted(opts.signal);
       out.failed++;
       ctx.logger.warn({ url: item.url, err }, "broker report fetch failed");
       await ctx.redis.set(failureKey(item.url), "1", "EX", REPORT_FAILURE_TTL_S);

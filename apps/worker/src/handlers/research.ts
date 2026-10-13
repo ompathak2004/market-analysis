@@ -18,17 +18,19 @@ export const researchHandlers: ResearchHandlers = {
         maxAgeMs: 12 * HOUR,
       }),
     ),
-  "research.sync": async ({ ctx, payload }) => {
-    const r = await trackCompany(ctx.db, "moneycontrol", payload.companyId, () =>
-      syncMoneycontrol(ctx, payload.companyId),
+  "research.sync": async (run) => {
+    const { ctx, payload, signal } = run;
+    const r = await trackCompany(run, "moneycontrol", payload.companyId, () =>
+      syncMoneycontrol(ctx, payload.companyId, signal),
     );
     return done(r ? numericMetrics(r) : { missing: 1 });
   },
-  "broker.fetch": async ({ ctx, expired }) =>
+  "broker.fetch": async ({ ctx, expired, signal }) =>
     done(
       numericMetrics(
         await fetchBrokerReports(ctx, BROKER_REPORTS_PER_RUN, {
           stop: () => expired(BROKER_RESERVE_MS),
+          signal,
         }),
       ),
     ),

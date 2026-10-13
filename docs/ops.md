@@ -13,6 +13,29 @@
 | Secrets | SSM Parameter Store `/market-analysis/prod/*` (SecureString) | Read by the task at start; `MIGRATION_DATABASE_URL` is read only by CI. |
 | Deploys | GitHub Actions (`infra/aws/github-workflow-worker.yml`, to be copied to `.github/workflows/worker.yml`) | Push to `main` touching the worker: verify → image → `pnpm db:migrate` → new task definition → rolling (stop-then-start) deploy. A failed migration stops the job before the deploy. |
 
+## Database roles and connection budget
+
+Aiven's free plan allows 15 connections (12 usable) and has no pooler, so the budget is enforced by role connection limits rather than by each process's pool size:
+
+| Role | Used by | Connection limit | Timeouts (statement / lock / idle in transaction) | Rights |
+| --- | --- | --- | --- | --- |
+| `ma_worker` | ECS worker and its CLI (`DATABASE_URL` in SSM) | 3 (pg-boss pool 1 + app pool 2) | 30 s / 2 s / 15 s | DML on `public`, owner of schema `pgboss` |
+| `ma_web` | Vercel (`DATABASE_URL` in the Vercel project) | 5 | 5 s / 1 s / 10 s | `SELECT` on `public`, read-only transactions, no access to `pgboss` |
+| admin (`avnadmin`) | `pnpm db:migrate` in CI (`MIGRATION_DATABASE_URL`), the bootstrap script | Aiven default | none | DDL |
+
+A fourth worker connection fails with `too many connections for role "ma_worker"` instead of starving the web app. Every Vercel instance counts against the same 5, so keep the web pool at `max=2`.
+
+Create or update the roles (idempotent; rerun after changing `packages/db/roles/bootstrap.sql`):
+
+```bash
+psql "$ADMIN_URL" -v worker_password="$WORKER_PW" -v web_password="$WEB_PW" \
+  -f packages/db/roles/bootstrap.sql
+```
+
+The script also creates schema `pgboss` owned by `ma_worker` and transfers any existing pg-boss tables to it, so pg-boss can run its own migrations at start without `CREATE` on the database. The worker only asks pg-boss to create the schema when it is missing and the role is allowed to, so run the script before the first worker start. Default privileges cover tables created later by the admin or by `ma_migrator`.
+
+Cutover order: run `pnpm db:migrate` (migrations through `0004_campaign_parent_job`), run the bootstrap script, set the SSM `DATABASE_URL` to the `ma_worker` URL (then force a new deployment), and set the Vercel `DATABASE_URL` to the `ma_web` URL. The worker reads only the shared variables; `API_KEY`, `CRON_SECRET` and `ADMIN_API_KEY` belong to the web app and are not stored for the worker.
+
 ## Pause, resume, enqueue
 
 The authoritative switch is the `job_control` row (`legacy` = old Vercel crons, `paused` = nobody claims work, `worker` = the ECS worker runs schedules and jobs). Changing it does not need a deploy.

@@ -47,7 +47,17 @@ export const JOB_CONTRACTS = {
     (p) => p.index,
   ),
   "prices.fanout": job("prices", "control", "fanout", empty, MINUTE),
-  "prices.sync": job("prices", "io", "unit", companyUnit, 2 * MINUTE, byCompany),
+  "prices.repair": job("prices", "control", "fanout", empty, MINUTE),
+  "prices.sync": job(
+    "prices",
+    "io",
+    "unit",
+    z
+      .object({ companyId: z.number().int().positive(), range: z.enum(["1mo", "1y"]).optional() })
+      .strict(),
+    2 * MINUTE,
+    byCompany,
+  ),
   "fundamentals.fanout": job("fundamentals", "control", "fanout", empty, MINUTE),
   "fundamentals.sync": job("fundamentals", "io", "unit", companyUnit, 3 * MINUTE, byCompany),
   "announcements.fanout": job("announcements", "control", "fanout", empty, MINUTE),

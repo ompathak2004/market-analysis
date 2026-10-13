@@ -301,12 +301,6 @@ Resources:
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/DATABASE_URL
             - Name: REDIS_URL
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/REDIS_URL
-            - Name: API_KEY
-              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/API_KEY
-            - Name: CRON_SECRET
-              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/CRON_SECRET
-            - Name: ADMIN_API_KEY
-              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/ADMIN_API_KEY
             - Name: RESEND_API_KEY
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/RESEND_API_KEY
             - Name: FIRECRAWL_API_KEY

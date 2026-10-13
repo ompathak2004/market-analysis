@@ -1,3 +1,4 @@
+import { throwIfAborted } from "@ma/core";
 import { companies, eq, fundamentals, sql } from "@ma/db";
 import type { IngestContext } from "../context.js";
 import {
@@ -20,6 +21,7 @@ export interface FundamentalsSyncResult {
 export async function syncFundamentals(
   ctx: IngestContext,
   companyId: number,
+  signal?: AbortSignal,
 ): Promise<FundamentalsSyncResult | null> {
   const company = await ctx.db.query.companies.findFirst({ where: eq(companies.id, companyId) });
   if (!company?.screenerSlug) return null;
@@ -28,6 +30,7 @@ export async function syncFundamentals(
     source: "screener",
     companyId,
     maxAgeMs: DAY_MS,
+    ...(signal ? { signal } : {}),
   });
   const parsed = parseScreenerCompany(doc.content);
   const upToDate =
@@ -42,6 +45,7 @@ export async function syncFundamentals(
   }
 
   const periods = [...parsed.annual, ...parsed.quarterly];
+  throwIfAborted(signal);
   if (periods.length) {
     await ctx.db
       .insert(fundamentals)

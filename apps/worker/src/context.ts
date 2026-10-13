@@ -1,5 +1,5 @@
 import { Cache, createRedis } from "@ma/cache";
-import { type Config, createLogger, loadConfig } from "@ma/core";
+import { createLogger, loadServiceConfig, type ServiceConfig } from "@ma/core";
 import { closeDb, createDb, llmUsage } from "@ma/db";
 import { createIngestContext, type IngestContext } from "@ma/ingest";
 import { API_CACHE } from "@ma/jobs";
@@ -43,7 +43,7 @@ export interface WorkerContext extends IngestContext {
 
 export function createWorkerContext(
   name: string,
-  config: Config = loadConfig(),
+  config: ServiceConfig = loadServiceConfig(),
   env: WorkerEnv = loadWorkerEnv(),
 ): WorkerContext {
   const logger = createLogger(name, config.LOG_LEVEL);

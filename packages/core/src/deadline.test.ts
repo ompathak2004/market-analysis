@@ -5,6 +5,7 @@ import {
   DeadlineExceededError,
   deadlineSignal,
   remainingMs,
+  throwIfAborted,
   withDeadline,
 } from "./deadline.js";
 
@@ -52,5 +53,21 @@ describe("deadline scope", () => {
     expect(signal.aborted).toBe(false);
     ctl.abort();
     expect(signal.aborted).toBe(true);
+  });
+
+  it("propagates an external abort to request signals and checkpoints in the scope", async () => {
+    const ctl = new AbortController();
+    await withDeadline(
+      Date.now() + 60_000,
+      async () => {
+        const request = deadlineSignal(60_000);
+        expect(() => throwIfAborted()).not.toThrow();
+        ctl.abort(new Error("stopping"));
+        expect(request.aborted).toBe(true);
+        expect(() => throwIfAborted()).toThrow("stopping");
+        expect(() => assertTimeLeft(10)).toThrow("stopping");
+      },
+      ctl.signal,
+    );
   });
 });

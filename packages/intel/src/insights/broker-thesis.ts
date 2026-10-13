@@ -1,3 +1,4 @@
+import { throwIfAborted } from "@ma/core";
 import { analystCalls, companies, documents, eq, sql } from "@ma/db";
 import { LlmInvalidOutput } from "@ma/llm";
 import type { IntelContext } from "./context.js";
@@ -103,6 +104,7 @@ export async function summarizeBrokerReport(
     result = await ask(groundingFeedback(describeViolations(result.violations)));
   const thesis = groundThesis(result.thesis, result.violations, input);
   if (!thesis) throw new LlmInvalidOutput("broker_thesis", "no grounded key points");
+  throwIfAborted();
   await ctx.db
     .update(analystCalls)
     .set({

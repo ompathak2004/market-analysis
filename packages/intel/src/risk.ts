@@ -1,3 +1,4 @@
+import { throwIfAborted } from "@ma/core";
 import { and, companies, type Db, desc, eq, fundamentals, inArray, signals, sql } from "@ma/db";
 import { logistic, zScores } from "./stats.js";
 
@@ -106,6 +107,7 @@ export async function refreshRiskSignals(
   for (const [i, f] of latest.entries()) {
     const score = scores[i];
     if (score == null) continue;
+    throwIfAborted();
     await db
       .insert(signals)
       .values({

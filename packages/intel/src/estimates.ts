@@ -1,4 +1,4 @@
-import { isoDate } from "@ma/core";
+import { isoDate, throwIfAborted } from "@ma/core";
 import {
   and,
   type Db,
@@ -182,6 +182,7 @@ export async function refreshEstimates(db: Db, asOf = isoDate(new Date())): Prom
     const est = estimateRelationship(rel, supplier, customer, {
       largestCustomerPct: top1?.value ?? null,
     });
+    throwIfAborted();
     await db
       .insert(relationshipEstimates)
       .values({

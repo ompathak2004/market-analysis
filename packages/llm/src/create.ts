@@ -1,10 +1,10 @@
 import type { RedisClient } from "@ma/cache";
-import type { Config, Logger } from "@ma/core";
+import type { Logger, ServiceConfig } from "@ma/core";
 import { LlmBudget } from "./budget.js";
 import { LlmClient, type LlmUsage } from "./client.js";
 
 export function createLlmClient(deps: {
-  config: Config;
+  config: ServiceConfig;
   redis: RedisClient;
   logger: Logger;
   record?: (usage: LlmUsage) => Promise<void> | void;

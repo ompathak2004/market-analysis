@@ -348,8 +348,12 @@ export const ingestRuns = pgTable(
     childrenTotal: integer("children_total").notNull().default(0),
     childrenDone: integer("children_done").notNull().default(0),
     childrenFailed: integer("children_failed").notNull().default(0),
+    parentJobId: text("parent_job_id"),
   },
-  (t) => [index("ingest_runs_source_started_idx").on(t.source, t.startedAt)],
+  (t) => [
+    index("ingest_runs_source_started_idx").on(t.source, t.startedAt),
+    uniqueIndex("ingest_runs_parent_job_idx").on(t.parentJobId),
+  ],
 );
 
 export const companySync = pgTable(

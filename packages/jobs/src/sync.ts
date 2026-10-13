@@ -1,4 +1,7 @@
 import { companySync, type Db, sql } from "@ma/db";
+import { assertFence, type Fence } from "./lease.js";
+
+type SQL = ReturnType<typeof sql>;
 
 export async function universeIds(db: Db, indexCode: string): Promise<number[]> {
   const rows = await db.execute<{ id: number }>(sql`
@@ -15,7 +18,7 @@ export async function pickBatch(
   job: string,
   indexCode: string,
   limit: number,
-  opts: { maxAgeMs?: number; where?: ReturnType<typeof sql> } = {},
+  opts: { maxAgeMs?: number; where?: SQL; due?: SQL } = {},
 ): Promise<number[]> {
   const maxAge = opts.maxAgeMs ?? 0;
   const rows = await db.execute<{ id: number }>(sql`
@@ -25,7 +28,9 @@ export async function pickBatch(
     left join company_sync s on s.company_id = c.id and s.job = ${job}
     where c.listed
       and (s.failures is null or s.failures < 5 or s.attempted_at < now() - interval '6 hours')
-      and (${maxAge} = 0 or s.synced_at is null or s.synced_at < now() - (${maxAge} * interval '1 millisecond'))
+      and (${maxAge} = 0 or s.synced_at is null
+        or s.synced_at < now() - (${maxAge} * interval '1 millisecond')
+        ${opts.due ? sql`or (${opts.due})` : sql``})
       ${opts.where ? sql`and (${opts.where})` : sql``}
     order by s.synced_at nulls first, c.market_cap_cr desc nulls last
     limit ${limit}`);
@@ -57,15 +62,23 @@ export async function pickBriefBatch(db: Db, indexCode: string, limit: number): 
   return rows.map((r) => Number(r.id));
 }
 
-export async function markSynced(db: Db, job: string, companyId: number): Promise<void> {
+export async function markSynced(
+  db: Db,
+  job: string,
+  companyId: number,
+  fence?: Fence,
+): Promise<void> {
   const now = new Date();
-  await db
-    .insert(companySync)
-    .values({ companyId, job, syncedAt: now, attemptedAt: now, failures: 0, error: null })
-    .onConflictDoUpdate({
-      target: [companySync.companyId, companySync.job],
-      set: { syncedAt: now, attemptedAt: now, failures: 0, error: null },
-    });
+  await db.transaction(async (tx) => {
+    if (fence) await assertFence(tx, fence);
+    await tx
+      .insert(companySync)
+      .values({ companyId, job, syncedAt: now, attemptedAt: now, failures: 0, error: null })
+      .onConflictDoUpdate({
+        target: [companySync.companyId, companySync.job],
+        set: { syncedAt: now, attemptedAt: now, failures: 0, error: null },
+      });
+  });
 }
 
 export async function markFailed(

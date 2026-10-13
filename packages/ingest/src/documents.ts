@@ -1,4 +1,4 @@
-import { type Logger, sha256, UpstreamError } from "@ma/core";
+import { type Logger, sha256, throwIfAborted, UpstreamError } from "@ma/core";
 import { type Db, documents, eq } from "@ma/db";
 import { extractText, getDocumentProxy } from "unpdf";
 import type { Firecrawl } from "./firecrawl.js";
@@ -14,6 +14,7 @@ export interface FetchDocumentOptions {
   via?: "direct" | "firecrawl";
   extract?: (content: string) => string;
   pdfMaxPages?: number;
+  signal?: AbortSignal;
 }
 
 export interface FetchDocumentResult {
@@ -42,7 +43,8 @@ export class DocumentStore {
     const fetched =
       opts.via === "firecrawl"
         ? await this.viaFirecrawl(url)
-        : await this.viaDirect(url, existing, opts.headers, opts.pdfMaxPages);
+        : await this.viaDirect(url, existing, opts.headers, opts.pdfMaxPages, opts.signal);
+    throwIfAborted(opts.signal);
 
     if (fetched.notModified && existing) {
       const [doc] = await this.db
@@ -108,8 +110,10 @@ export class DocumentStore {
     existing: StoredDocument | undefined,
     headers?: Record<string, string>,
     pdfMaxPages?: number,
+    signal?: AbortSignal,
   ): Promise<Fetched> {
     const res = await this.http.get(url, {
+      ...(signal ? { signal } : {}),
       etag: existing?.etag ?? null,
       lastModified: existing?.lastModified ?? null,
       ...(headers ? { headers } : {}),

@@ -114,7 +114,7 @@ export interface FinishInput {
   lease: Lease;
 }
 
-export async function finishAttempt(db: Db, input: FinishInput): Promise<boolean> {
+export async function finishAttempt(db: Executor, input: FinishInput): Promise<boolean> {
   return db.transaction(async (tx) => {
     const updated = await tx.execute(sql`
       update job_runs
@@ -152,13 +152,27 @@ export async function bumpDailyStats(
       duration_ms_max = greatest(job_daily_stats.duration_ms_max, excluded.duration_ms_max)`);
 }
 
-export async function createCampaign(db: Executor, source: string): Promise<number> {
+export async function createCampaign(
+  db: Executor,
+  source: string,
+  parentJobId: string | null = null,
+): Promise<number> {
   const [row] = await db
     .insert(ingestRuns)
-    .values({ source, kind: "campaign" })
+    .values({ source, kind: "campaign", parentJobId })
     .returning({ id: ingestRuns.id });
   if (!row) throw new Error(`campaign insert returned no id for ${source}`);
   return row.id;
+}
+
+export async function findCampaign(
+  db: Executor,
+  parentJobId: string,
+): Promise<{ campaignId: number; enqueued: number } | null> {
+  const rows = await db.execute<{ id: number; children_total: number }>(sql`
+    select id, children_total from ingest_runs where parent_job_id = ${parentJobId}`);
+  const row = rows[0];
+  return row ? { campaignId: Number(row.id), enqueued: Number(row.children_total) } : null;
 }
 
 export async function setCampaignTotal(

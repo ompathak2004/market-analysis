@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { loadConfig } from "@ma/core";
+import { loadServiceConfig } from "@ma/core";
 import { eq, jobRuns, sql } from "@ma/db";
 import {
   getJobMode,
@@ -12,13 +12,14 @@ import {
 } from "@ma/jobs";
 import { enqueue, ensureQueues } from "@ma/jobs/queue";
 import { closeWorkerContext, createWorkerContext, type WorkerContext } from "./context.js";
-import { createBoss } from "./queue.js";
+import { canCreateSchema, createBoss } from "./queue.js";
 import { SCHEDULE_TZ, SCHEDULES, scheduleId } from "./schedules.js";
 
 export const FAMILY_ALIASES: Record<string, { type: JobType; payload?: Record<string, unknown> }> =
   {
     universe: { type: "universe.fanout" },
     prices: { type: "prices.fanout" },
+    "prices-repair": { type: "prices.repair" },
     fundamentals: { type: "fundamentals.fanout" },
     announcements: { type: "announcements.fanout" },
     relationships: { type: "relationships.fanout" },
@@ -64,7 +65,11 @@ async function runCommand(ctx: WorkerContext, args: string[]): Promise<void> {
   const [name, rawPayload] = args.filter((a) => a !== "--wait");
   if (!name) throw new Error(USAGE);
   const { type, payload } = resolveJob(name, rawPayload);
-  const boss = createBoss(ctx.config.DATABASE_URL, { schedule: false, supervise: false });
+  const boss = createBoss(ctx.config.DATABASE_URL, {
+    schedule: false,
+    supervise: false,
+    createSchema: await canCreateSchema(ctx.db),
+  });
   boss.on("error", (err: unknown) => ctx.logger.warn({ err }, "pg-boss error"));
   await boss.start();
   try {
@@ -126,7 +131,7 @@ async function main(argv: string[]): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const ctx = createWorkerContext("worker-cli", loadConfig());
+  const ctx = createWorkerContext("worker-cli", loadServiceConfig());
   try {
     if (command === "run") await runCommand(ctx, args);
     else if (command === "status") await statusCommand(ctx);

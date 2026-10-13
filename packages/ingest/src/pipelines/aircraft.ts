@@ -1,4 +1,4 @@
-import { chunk, DAY, HOUR, MINUTE, mapLimit } from "@ma/core";
+import { chunk, DAY, HOUR, MINUTE, mapLimit, throwIfAborted } from "@ma/core";
 import {
   aircraftFlights,
   aircraftPositions,
@@ -54,9 +54,11 @@ type Basis = SymbolLink[1];
 
 interface Deadline {
   deadline?: number;
+  signal?: AbortSignal;
 }
 
 function expired(opts: Deadline, reserveMs = 0): boolean {
+  throwIfAborted(opts.signal);
   return opts.deadline !== undefined && Date.now() > opts.deadline - reserveMs;
 }
 

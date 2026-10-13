@@ -1,4 +1,4 @@
-import { addYears, assertTimeLeft, DeadlineExceededError, isoDate } from "@ma/core";
+import { addYears, assertTimeLeft, DeadlineExceededError, isoDate, throwIfAborted } from "@ma/core";
 import { companies, companyAliases, eq, relationships, signals, sql } from "@ma/db";
 import type { IngestContext } from "../context.js";
 import {
@@ -50,6 +50,7 @@ export async function extractRelationshipsForCompany(
   companyId: number,
   sources: Array<{ label: string; url: string; kind: "annual_report" | "concall" }>,
   matcher: AliasMatcher,
+  signal?: AbortSignal,
 ): Promise<RelationshipExtractionResult> {
   const company = await ctx.db.query.companies.findFirst({ where: eq(companies.id, companyId) });
   if (!company) throw new Error(`company ${companyId} not found`);
@@ -60,18 +61,26 @@ export async function extractRelationshipsForCompany(
 
   for (const src of sources) {
     assertTimeLeft(DOCUMENT_MS);
+    throwIfAborted(signal);
     const fyEnd = periodEndFromLabel(src.label);
     const fiscalYear = src.kind === "annual_report" ? fiscalYearFromLabel(src.label) : null;
     let doc: Awaited<ReturnType<typeof ctx.docs.fetch>>["doc"];
     try {
-      ({ doc } = await ctx.docs.fetch(src.url, { source: src.kind, companyId, maxAgeMs: YEAR_MS }));
+      ({ doc } = await ctx.docs.fetch(src.url, {
+        source: src.kind,
+        companyId,
+        maxAgeMs: YEAR_MS,
+        ...(signal ? { signal } : {}),
+      }));
     } catch (err) {
       if (err instanceof DeadlineExceededError) throw err;
+      throwIfAborted(signal);
       ctx.logger.warn({ err, url: src.url }, "document fetch failed");
       continue;
     }
     if (doc.status === "parsed" && doc.parserVersion === RELATIONSHIP_EXTRACTOR_VERSION) continue;
     documentsProcessed++;
+    throwIfAborted(signal);
 
     if (src.kind === "annual_report") {
       const c = extractConcentration(doc.content);
@@ -104,6 +113,7 @@ export async function extractRelationshipsForCompany(
     const mentions = extractNamedMentions(doc.content, matcher, companyId);
     for (const m of mentions) {
       if (m.role === "unknown") continue;
+      throwIfAborted(signal);
       const other = await ctx.db.query.companies.findFirst({
         where: eq(companies.id, m.companyId),
       });
@@ -132,6 +142,7 @@ export async function extractRelationshipsForCompany(
         .returning({ id: relationships.id });
       relCount += res.length;
     }
+    throwIfAborted(signal);
     await ctx.docs.markParsed(doc.id, RELATIONSHIP_EXTRACTOR_VERSION);
   }
 

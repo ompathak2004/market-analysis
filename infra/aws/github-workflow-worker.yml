@@ -9,6 +9,7 @@ on:
       - Dockerfile
       - pnpm-lock.yaml
       - infra/aws/github-workflow-worker.yml
+      - .github/workflows/worker.yml
   workflow_dispatch:
 
 permissions:
@@ -68,6 +69,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
+      - run: DATABASE_URL="$DATABASE_URL_TEST" pnpm db:migrate
       - run: pnpm test
 
   deploy:

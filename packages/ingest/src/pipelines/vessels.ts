@@ -1,4 +1,4 @@
-import { chunk, DAY, HOUR, MINUTE } from "@ma/core";
+import { chunk, DAY, HOUR, MINUTE, throwIfAborted } from "@ma/core";
 import {
   altdataEvents,
   and,
@@ -43,9 +43,11 @@ export const FLEET_PARSER_VERSION = 1;
 
 interface Deadline {
   deadline?: number;
+  signal?: AbortSignal;
 }
 
 function expired(opts: Deadline, reserveMs = 0): boolean {
+  throwIfAborted(opts.signal);
   return opts.deadline !== undefined && Date.now() > opts.deadline - reserveMs;
 }
 

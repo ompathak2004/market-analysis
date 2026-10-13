@@ -6,6 +6,7 @@ import { API_CACHE } from "@ma/jobs";
 import { createLlmClient, type LlmClient } from "@ma/llm";
 
 export interface AppContext extends IngestContext {
+  config: Config;
   api: Cache;
   llm: LlmClient;
 }
@@ -26,7 +27,7 @@ export function createAppContext(name: string, config: Config = loadConfig()): A
         .catch((err: unknown) => logger.warn({ err }, "llm usage insert failed"));
     },
   });
-  return { ...ingest, api: new Cache(redis, { ...API_CACHE, logger }), llm };
+  return { ...ingest, config, api: new Cache(redis, { ...API_CACHE, logger }), llm };
 }
 
 const g = globalThis as { __maContext?: AppContext };

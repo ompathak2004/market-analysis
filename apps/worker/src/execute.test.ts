@@ -1,12 +1,19 @@
 import { AppError } from "@ma/core";
-import { DeferredError, type FinishInput, type Lease, NonRetryableError } from "@ma/jobs";
+import {
+  DeferredError,
+  type FinishInput,
+  type Lease,
+  LeaseLostError,
+  NonRetryableError,
+} from "@ma/jobs";
 import type { EnqueueRequest } from "@ma/jobs/queue";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkerContext } from "./context.js";
 import {
+  ABORT_SETTLE_MS,
   type ExecutorDeps,
   executeJob,
-  LeaseLostError,
+  HARD_GRACE_MS,
   type LedgerPort,
   WorkerStoppingError,
 } from "./execute.js";
@@ -44,9 +51,10 @@ function harness(
       h.finished.push(input);
       return true;
     },
-    spawnChildren: async (source, children) => {
+    completeFanout: async ({ source, children, ...finish }) => {
       h.spawned.push({ source, children });
-      return { campaignId: 31, enqueued: children.length };
+      h.finished.push(finish);
+      return { campaignId: 31, enqueued: children.length, replayed: false };
     },
     recordRoot: async (outcome) => {
       h.roots.push(outcome);
@@ -124,6 +132,9 @@ describe("executeJob", () => {
     });
     expect(report.metrics).toMatchObject({ enqueued: 2, campaignId: 31 });
     expect(h.spawned[0]?.source).toBe("prices");
+    expect(h.finished).toHaveLength(1);
+    expect(h.finished[0]).toMatchObject({ outcome: "succeeded", attemptId: 21 });
+    expect(h.counts["jobs.succeeded"]).toBe(1);
     expect(h.invalidated).toEqual([]);
   });
 
@@ -192,16 +203,56 @@ describe("executeJob", () => {
 
   it("marks the attempt abandoned when the worker is stopping", async () => {
     const controller = new AbortController();
+    let sawAbort = false;
     const h = harness(
-      () =>
-        new Promise(() => {
+      (run) =>
+        new Promise((_, reject) => {
+          run.signal.addEventListener("abort", () => {
+            sawAbort = true;
+            reject(run.signal.reason);
+          });
           controller.abort();
         }),
       { stop: controller.signal },
     );
     await expect(executeJob(h.deps, pricesJob())).rejects.toBeInstanceOf(WorkerStoppingError);
+    expect(sawAbort).toBe(true);
     expect(h.finished[0]?.outcome).toBe("abandoned");
     expect(h.retries).toHaveLength(0);
+  });
+
+  describe("after the hard deadline", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const overrun = 2 * 60_000 + HARD_GRACE_MS;
+
+    it("retries only once the aborted handler has settled", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const h = harness(
+        (run) =>
+          new Promise((_, reject) => {
+            run.signal.addEventListener("abort", () => reject(run.signal.reason));
+          }),
+      );
+      const pending = executeJob(h.deps, pricesJob());
+      await vi.advanceTimersByTimeAsync(overrun);
+      const report = await pending;
+      expect(report.outcome).toBe("failed");
+      expect(h.retries).toHaveLength(1);
+    });
+
+    it("abandons without retry when the handler ignores the abort", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const h = harness(() => new Promise(() => undefined));
+      const pending = executeJob(h.deps, pricesJob());
+      await vi.advanceTimersByTimeAsync(overrun + ABORT_SETTLE_MS);
+      const report = await pending;
+      expect(report.outcome).toBe("abandoned");
+      expect(h.finished[0]?.outcome).toBe("abandoned");
+      expect(h.retries).toHaveLength(0);
+    });
   });
 
   it("drops invalid envelopes and counts them dead", async () => {

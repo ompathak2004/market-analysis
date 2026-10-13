@@ -65,15 +65,15 @@ export async function altdataPrices(ctx: WorkerContext): Promise<Prices | null> 
 }
 
 export const altdataHandlers: Pick<HandlerMap, AltdataType> = {
-  "aircraft.registry": gated(async ({ ctx, deadline }) => {
+  "aircraft.registry": gated(async ({ ctx, deadline, signal }) => {
     const facilities = await seedFacilities(ctx);
-    const registry = await seedAircraftRegistry(ctx, { deadline: deadline - 20_000 });
+    const registry = await seedAircraftRegistry(ctx, { deadline: deadline - 20_000, signal });
     return { ...prefixed("facilities", facilities), ...prefixed("registry", registry) };
   }),
-  "aircraft.sample": gated(async ({ ctx, deadline }) =>
-    numericMetrics(await sampleAircraftPositions(ctx, { deadline: deadline - 5_000 })),
+  "aircraft.sample": gated(async ({ ctx, deadline, signal }) =>
+    numericMetrics(await sampleAircraftPositions(ctx, { deadline: deadline - 5_000, signal })),
   ),
-  "ais.collect": gated(async ({ ctx, deadline }) => {
+  "ais.collect": gated(async ({ ctx, deadline, signal }) => {
     const apiKey = ctx.config.AISSTREAM_API_KEY;
     if (!apiKey) return { skipped: 1 };
     return numericMetrics(
@@ -81,17 +81,19 @@ export const altdataHandlers: Pick<HandlerMap, AltdataType> = {
         apiKey,
         seconds: ctx.config.ALTDATA_AIS_BURST_SECONDS,
         deadline: deadline - 15_000,
+        signal,
       }),
     );
   }),
-  "altdata.derive": gated(async ({ ctx, deadline }) => {
+  "altdata.derive": gated(async ({ ctx, deadline, signal }) => {
     const now = new Date();
     const air = await deriveAircraftFlights(ctx, {
       deadline: deadline - 90_000,
+      signal,
       opensky: openSky(ctx),
       now,
     });
-    const sea = await deriveVesselActivity(ctx, { deadline: deadline - 10_000, now });
+    const sea = await deriveVesselActivity(ctx, { deadline: deadline - 10_000, signal, now });
     return { ...prefixed("air", air), ...prefixed("sea", sea) };
   }),
   "altdata.signals": gated(async ({ ctx, deadline }) => {
@@ -115,10 +117,10 @@ export const altdataHandlers: Pick<HandlerMap, AltdataType> = {
       pricesAvailable: prices ? 1 : 0,
     };
   }),
-  fleets: gated(async ({ ctx, deadline }) =>
-    numericMetrics(await syncFleets(ctx, { deadline: deadline - 15_000 })),
+  fleets: gated(async ({ ctx, deadline, signal }) =>
+    numericMetrics(await syncFleets(ctx, { deadline: deadline - 15_000, signal })),
   ),
-  "altdata.cleanup": gated(async ({ ctx, deadline }) =>
-    numericMetrics(await cleanupAltdataPositions(ctx, { deadline: deadline - 10_000 })),
+  "altdata.cleanup": gated(async ({ ctx, deadline, signal }) =>
+    numericMetrics(await cleanupAltdataPositions(ctx, { deadline: deadline - 10_000, signal })),
   ),
 };

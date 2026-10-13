@@ -3,12 +3,14 @@ import {
   type AttemptOutcome,
   asDeferred,
   contractOf,
+  type Fence,
   type FinishInput,
   familyOf,
   isRetryable,
   type JobEnvelope,
   type JobType,
   type Lease,
+  LeaseLostError,
   laneOf,
   parseEnvelope,
   parsePayload,
@@ -27,12 +29,7 @@ import type { ChildJob, Handler, HandlerMap, HandlerResult } from "./registry.js
 
 export const MAX_DEFERRALS = 60;
 export const HARD_GRACE_MS = 15_000;
-
-export class LeaseLostError extends AppError {
-  constructor() {
-    super("consumer lease lost; refusing to commit", "lease_lost", 503);
-  }
-}
+export const ABORT_SETTLE_MS = 10_000;
 
 export class WorkerStoppingError extends AppError {
   constructor() {
@@ -49,13 +46,20 @@ export interface QueueJob {
 export interface SpawnResult {
   campaignId: number;
   enqueued: number;
+  replayed: boolean;
+}
+
+export interface FanoutCompletion extends FinishInput {
+  source: string;
+  children: ChildJob[];
+  queueJobId: string;
 }
 
 export interface LedgerPort {
   ensureRun(input: RunInput): Promise<number>;
   startAttempt(input: StartInput): Promise<number | null>;
   finishAttempt(input: FinishInput): Promise<boolean>;
-  spawnChildren(source: string, children: ChildJob[], lease: Lease): Promise<SpawnResult>;
+  completeFanout(input: FanoutCompletion): Promise<SpawnResult>;
   recordRoot(outcome: RootOutcome): Promise<void>;
 }
 
@@ -87,26 +91,25 @@ export interface ExecutionReport {
   error?: string;
 }
 
+type Invocation =
+  | { ok: true; value: HandlerResult }
+  | { ok: false; error: unknown; settled: boolean };
+
 function invokeHandler(
   deps: ExecutorDeps,
   handler: Handler,
   env: JobEnvelope,
   attempt: number,
   deadline: number,
-): Promise<HandlerResult> {
+  fence: Fence,
+): Promise<Invocation> {
   const now = deps.now ?? Date.now;
-  return new Promise<HandlerResult>((resolve, reject) => {
-    if (deps.stop.aborted) {
-      reject(new WorkerStoppingError());
-      return;
-    }
-    const onStop = () => reject(new WorkerStoppingError());
-    deps.stop.addEventListener("abort", onStop, { once: true });
-    const timer = setTimeout(
-      () => reject(new DeadlineExceededError(0, deadline - now())),
-      Math.max(0, deadline - now()) + HARD_GRACE_MS,
-    );
-    withDeadline(deadline, (signal) =>
+  if (deps.stop.aborted)
+    return Promise.resolve({ ok: false, error: new WorkerStoppingError(), settled: true });
+  const abort = new AbortController();
+  const work: Promise<Invocation> = withDeadline(
+    deadline,
+    (signal) =>
       handler({
         ctx: deps.ctx,
         type: env.type,
@@ -114,16 +117,42 @@ function invokeHandler(
         attempt,
         campaignId: env.campaignId,
         deadline,
-        signal: AbortSignal.any([signal, deps.stop]),
+        signal,
+        fence,
         expired: (reserveMs = 0) => now() + reserveMs >= deadline,
       }),
-    )
-      .then(resolve, reject)
-      .finally(() => {
-        clearTimeout(timer);
-        deps.stop.removeEventListener("abort", onStop);
-      });
+    AbortSignal.any([abort.signal, deps.stop]),
+  ).then(
+    (value) => ({ ok: true, value }),
+    (error: unknown) => ({ ok: false, error, settled: true }),
+  );
+
+  const timers: NodeJS.Timeout[] = [];
+  let onStop = () => {};
+  const interrupted = new Promise<Error>((resolve) => {
+    onStop = () => resolve(new WorkerStoppingError());
+    deps.stop.addEventListener("abort", onStop, { once: true });
+    timers.push(
+      setTimeout(
+        () => resolve(new DeadlineExceededError(0, deadline - now())),
+        Math.max(0, deadline - now()) + HARD_GRACE_MS,
+      ),
+    );
   });
+  const graceExpired = () =>
+    new Promise<null>((resolve) => timers.push(setTimeout(() => resolve(null), ABORT_SETTLE_MS)));
+
+  return Promise.race([work, interrupted])
+    .then(async (first): Promise<Invocation> => {
+      if (!(first instanceof Error)) return first;
+      abort.abort(first);
+      const late = await Promise.race([work, graceExpired()]);
+      return { ok: false, error: first, settled: late !== null };
+    })
+    .finally(() => {
+      for (const t of timers) clearTimeout(t);
+      deps.stop.removeEventListener("abort", onStop);
+    });
 }
 
 export async function executeJob(deps: ExecutorDeps, job: QueueJob): Promise<ExecutionReport> {
@@ -167,18 +196,24 @@ export async function executeJob(deps: ExecutorDeps, job: QueueJob): Promise<Exe
   if (attemptId === null) throw new LeaseLostError();
   const log = { job: env.type, unitKey: key, runId, attempt };
 
+  const finishInput = (
+    outcome: AttemptOutcome,
+    metrics: Metrics,
+    error: string | null,
+  ): FinishInput => ({
+    runId,
+    attemptId,
+    jobType: env.type,
+    campaignId: env.campaignId,
+    outcome,
+    error,
+    metrics,
+    durationMs: now() - started,
+    lease,
+  });
+
   const finish = async (outcome: AttemptOutcome, metrics: Metrics, error: string | null) => {
-    const ok = await deps.ledger.finishAttempt({
-      runId,
-      attemptId,
-      jobType: env.type,
-      campaignId: env.campaignId,
-      outcome,
-      error,
-      metrics,
-      durationMs: now() - started,
-      lease,
-    });
+    const ok = await deps.ledger.finishAttempt(finishInput(outcome, metrics, error));
     if (!ok) throw new LeaseLostError();
     deps.metrics.count(`jobs.${outcome}`);
   };
@@ -199,14 +234,23 @@ export async function executeJob(deps: ExecutorDeps, job: QueueJob): Promise<Exe
   };
 
   const handler = deps.handlers[env.type] as Handler;
+  const invocation = await invokeHandler(deps, handler, env, attempt, deadline, {
+    lease,
+    attemptId,
+  });
   let result: HandlerResult;
-  try {
-    result = await invokeHandler(deps, handler, env, attempt, deadline);
-  } catch (err) {
+  if (invocation.ok) result = invocation.value;
+  else {
+    const err = invocation.error;
     const error = sanitizeError(err);
     if (deps.stop.aborted) {
       await finish("abandoned", {}, error).catch(() => undefined);
-      throw err;
+      throw err instanceof WorkerStoppingError ? err : new WorkerStoppingError();
+    }
+    if (!invocation.settled) {
+      await finish("abandoned", {}, error);
+      deps.logger.error({ ...log, err }, "handler ignored abort; abandoned without retry");
+      return { outcome: "abandoned", runId, attempt, metrics: {}, error };
     }
     const deferred = asDeferred(err, new Date(now()), random);
     if (deferred && env.deferrals < MAX_DEFERRALS) {
@@ -247,15 +291,18 @@ export async function executeJob(deps: ExecutorDeps, job: QueueJob): Promise<Exe
 
   const metrics = { ...result.metrics };
   if (contract.kind === "fanout" || result.children?.length) {
-    const spawned = await deps.ledger.spawnChildren(
-      family ?? env.type,
-      result.children ?? [],
-      lease,
-    );
+    const spawned = await deps.ledger.completeFanout({
+      ...finishInput("succeeded", metrics, null),
+      source: family ?? env.type,
+      children: result.children ?? [],
+      queueJobId: job.id,
+    });
     metrics.enqueued = spawned.enqueued;
     metrics.campaignId = spawned.campaignId;
-  }
-  await finish("succeeded", metrics, null);
+    if (spawned.replayed)
+      deps.logger.info({ ...log, ...metrics }, "fan-out replay reused campaign");
+    deps.metrics.count("jobs.succeeded");
+  } else await finish("succeeded", metrics, null);
   await settleRoot("succeeded", metrics, null);
   await invalidate();
   return { outcome: "succeeded", runId, attempt, metrics };

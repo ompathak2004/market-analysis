@@ -8,15 +8,13 @@ const optionalString = z
     return trimmed ? trimmed : undefined;
   });
 
-const schema = z.object({
+const serviceSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
   FIRECRAWL_API_KEY: z.string().min(1),
   FIRECRAWL_MONTHLY_CREDITS: z.coerce.number().int().positive().default(900),
-  API_KEY: z.string().min(16),
-  CRON_SECRET: z.string().min(16),
   CEREBRAS_API_KEY: z.string().min(1),
   CEREBRAS_MODEL: z.string().default("gpt-oss-120b"),
   CEREBRAS_FALLBACK_MODEL: z.string().default("qwen-3.8-27b"),
@@ -34,22 +32,37 @@ const schema = z.object({
   DATA_UNIVERSE: z.string().default("NIFTY500"),
   NSE_BASE_URL: z.string().url().default("https://www.nseindia.com"),
   SCRAPE_CONCURRENCY: z.coerce.number().int().positive().default(4),
-  ADMIN_API_KEY: optionalString,
   RESEND_API_KEY: optionalString,
   S3_ARCHIVE_BUCKET: optionalString,
 });
 
-export type Config = z.infer<typeof schema>;
+const webSchema = serviceSchema.extend({
+  API_KEY: z.string().min(16),
+  CRON_SECRET: z.string().min(16),
+  ADMIN_API_KEY: optionalString,
+});
 
-let cached: Config | undefined;
+export type ServiceConfig = z.infer<typeof serviceSchema>;
+export type Config = z.infer<typeof webSchema>;
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  if (cached) return cached;
+function parse<S extends z.ZodTypeAny>(schema: S, env: NodeJS.ProcessEnv): z.infer<S> {
   const parsed = schema.safeParse(env);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     throw new Error(`Invalid environment: ${issues}`);
   }
-  cached = parsed.data;
+  return parsed.data;
+}
+
+let cached: Config | undefined;
+let cachedService: ServiceConfig | undefined;
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  cached ??= parse(webSchema, env);
   return cached;
+}
+
+export function loadServiceConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig {
+  cachedService ??= parse(serviceSchema, env);
+  return cachedService;
 }

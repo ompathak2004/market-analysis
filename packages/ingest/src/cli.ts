@@ -1,5 +1,5 @@
 import { createRedis } from "@ma/cache";
-import { createLogger, loadConfig, mapLimit } from "@ma/core";
+import { createLogger, loadServiceConfig, mapLimit } from "@ma/core";
 import { closeDb, companies, createDb, eq, indexConstituents, indices } from "@ma/db";
 import { createIngestContext } from "./context.js";
 import { syncFundamentals } from "./pipelines/fundamentals.js";
@@ -7,7 +7,7 @@ import { syncAnnouncements, syncPrices } from "./pipelines/market.js";
 import { extractRelationshipsForCompany, loadAliasMatcher } from "./pipelines/relationships.js";
 import { syncUniverse } from "./pipelines/universe.js";
 
-const config = loadConfig();
+const config = loadServiceConfig();
 const logger = createLogger("ingest-cli", config.LOG_LEVEL);
 const db = createDb(config.DATABASE_URL, 4);
 const redis = createRedis(config.REDIS_URL);

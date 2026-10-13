@@ -1,4 +1,4 @@
-import { chunk, sha256 } from "@ma/core";
+import { chunk, sha256, throwIfAborted } from "@ma/core";
 import { announcements, companies, eq, pricesDaily, sql } from "@ma/db";
 import type { IngestContext } from "../context.js";
 import type { YahooRange } from "../sources/yahoo.js";
@@ -7,12 +7,14 @@ export async function syncPrices(
   ctx: IngestContext,
   companyId: number,
   range: YahooRange = "1y",
+  signal?: AbortSignal,
 ): Promise<number> {
   const company = await ctx.db.query.companies.findFirst({ where: eq(companies.id, companyId) });
   if (!company?.yahooSymbol) return 0;
   const bars = await ctx.yahoo.dailyBars(company.yahooSymbol, range);
   if (!bars.length) return 0;
   for (const batch of chunk(bars, 500)) {
+    throwIfAborted(signal);
     await ctx.db
       .insert(pricesDaily)
       .values(batch.map((b) => ({ companyId, ...b })))
@@ -31,7 +33,11 @@ export async function syncPrices(
   return bars.length;
 }
 
-export async function syncAnnouncements(ctx: IngestContext, companyId: number): Promise<number> {
+export async function syncAnnouncements(
+  ctx: IngestContext,
+  companyId: number,
+  signal?: AbortSignal,
+): Promise<number> {
   const company = await ctx.db.query.companies.findFirst({ where: eq(companies.id, companyId) });
   if (!company?.nseSymbol) return 0;
   const items = await ctx.nse.announcements(company.nseSymbol);
@@ -49,6 +55,7 @@ export async function syncAnnouncements(ctx: IngestContext, companyId: number): 
   }));
   let inserted = 0;
   for (const batch of chunk(rows, 500)) {
+    throwIfAborted(signal);
     const res = await ctx.db
       .insert(announcements)
       .values(batch)

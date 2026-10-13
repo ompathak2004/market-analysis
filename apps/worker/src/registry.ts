@@ -1,4 +1,4 @@
-import type { JobPayload, JobType } from "@ma/jobs";
+import type { Fence, JobPayload, JobType } from "@ma/jobs";
 import type { Metrics } from "./batch.js";
 import type { WorkerContext } from "./context.js";
 
@@ -10,6 +10,7 @@ export interface UnitRun<T extends JobType = JobType> {
   campaignId: number | null;
   deadline: number;
   signal: AbortSignal;
+  fence: Fence;
   expired(reserveMs?: number): boolean;
 }
 

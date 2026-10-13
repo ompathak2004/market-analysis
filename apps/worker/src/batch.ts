@@ -1,5 +1,6 @@
-import type { Db } from "@ma/db";
+import { throwIfAborted } from "@ma/core";
 import { markFailed, markSynced } from "@ma/jobs";
+import type { UnitRun } from "./registry.js";
 
 export type Metrics = Record<string, number>;
 
@@ -14,17 +15,19 @@ export function numericMetrics(value: unknown, prefix = ""): Metrics {
 }
 
 export async function trackCompany<T>(
-  db: Db,
+  run: Pick<UnitRun, "ctx" | "signal" | "fence">,
   job: string,
   companyId: number,
   fn: () => Promise<T>,
 ): Promise<T> {
+  const { ctx, signal, fence } = run;
   try {
     const result = await fn();
-    await markSynced(db, job, companyId);
+    throwIfAborted(signal);
+    await markSynced(ctx.db, job, companyId, fence);
     return result;
   } catch (err) {
-    await markFailed(db, job, companyId, err).catch(() => undefined);
+    if (!signal.aborted) await markFailed(ctx.db, job, companyId, err).catch(() => undefined);
     throw err;
   }
 }

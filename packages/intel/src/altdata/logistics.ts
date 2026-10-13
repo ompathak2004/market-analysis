@@ -1,4 +1,4 @@
-import { median } from "@ma/core";
+import { median, throwIfAborted } from "@ma/core";
 import { type Db, sql } from "@ma/db";
 import {
   type AltdataEventInput,
@@ -872,6 +872,7 @@ export async function refreshLogisticsSignals(
     events.push(...computed.events);
     result.companies++;
   }
+  throwIfAborted();
   result.events = await emitAltdataEvents(db, events);
   return result;
 }

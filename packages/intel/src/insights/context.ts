@@ -1,5 +1,5 @@
 import type { RedisClient } from "@ma/cache";
-import type { Config, Logger } from "@ma/core";
+import { type Logger, type ServiceConfig, throwIfAborted } from "@ma/core";
 import { and, type Db, eq, insights, isNull, sql } from "@ma/db";
 import type { LlmClient } from "@ma/llm";
 
@@ -8,7 +8,7 @@ export interface IntelContext {
   redis: RedisClient;
   llm: LlmClient;
   logger: Logger;
-  config: Config;
+  config: ServiceConfig;
 }
 
 export type InsightRow = typeof insights.$inferSelect;
@@ -31,6 +31,7 @@ export interface NewInsight {
 }
 
 export async function writeCurrentInsight(db: Db, row: NewInsight): Promise<InsightRow> {
+  throwIfAborted();
   return db.transaction(async (tx) => {
     await tx
       .update(insights)

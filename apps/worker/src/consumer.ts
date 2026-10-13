@@ -24,18 +24,18 @@ import {
 import { DEAD_QUEUE, ensureQueues } from "@ma/jobs/queue";
 import type { PgBoss } from "pg-boss";
 import { closeWorkerContext, type WorkerContext } from "./context.js";
+import { drainInOrder } from "./drain.js";
 import { executeJob } from "./execute.js";
 import { HANDLERS } from "./handlers/index.js";
 import { reconcile } from "./handlers/ops.js";
 import { DEAD_METRIC } from "./metrics.js";
-import { createBoss, createLedgerPort, createRetryPort } from "./queue.js";
+import { canCreateSchema, createBoss, createLedgerPort, createRetryPort } from "./queue.js";
 import { registerSchedules } from "./schedules.js";
 
 const MODE_POLL_MS = 30_000;
 const METRICS_FLUSH_MS = MINUTE;
 const POLLING_INTERVAL_SECONDS = 5;
 const HARD_EXIT_MS = 115_000;
-const ABORT_BEFORE_DRAIN_END_MS = 10_000;
 
 export class Consumer {
   private readonly ownerId = randomUUID();
@@ -76,6 +76,7 @@ export class Consumer {
 
     const boss = createBoss(this.ctx.config.DATABASE_URL, {
       schedule: this.ctx.env.WORKER_SCHEDULES,
+      createSchema: await canCreateSchema(this.ctx.db),
     });
     boss.on("error", (err: unknown) => log.error({ err }, "pg-boss error"));
     this.boss = boss;
@@ -213,19 +214,34 @@ export class Consumer {
     hardExit.unref();
     this.standby.abort();
     for (const t of this.timers) clearInterval(t);
-    const drainMs = this.ctx.env.WORKER_DRAIN_MS;
-    const abortTimer = setTimeout(
-      () => this.stopController.abort(),
-      Math.max(0, drainMs - ABORT_BEFORE_DRAIN_END_MS),
+    const boss = this.boss;
+    await drainInOrder(
+      {
+        stopClaims: async () => {
+          if (!boss || !this.consuming) return;
+          this.consuming = false;
+          for (const name of [...LANES, DEAD_QUEUE]) {
+            await boss
+              .offWork(name, { wait: false })
+              .catch((err: unknown) => log.warn({ err, name }, "offWork failed"));
+          }
+        },
+        waitForInFlight: async (timeout) => {
+          if (!boss) return;
+          await boss
+            .stop({ graceful: true, timeout, close: true })
+            .catch((err: unknown) => log.error({ err }, "pg-boss stop failed"));
+        },
+        renewLease: () => this.renew(),
+        abortInFlight: () => this.stopController.abort(),
+        releaseLease: async () => {
+          const lease = this.lease;
+          this.lease = null;
+          if (lease) await releaseLease(this.ctx.db, lease).catch(() => false);
+        },
+      },
+      this.ctx.env.WORKER_DRAIN_MS,
     );
-    try {
-      if (this.boss) await this.boss.stop({ graceful: true, timeout: drainMs, close: true });
-    } catch (err) {
-      log.error({ err }, "pg-boss stop failed");
-    } finally {
-      clearTimeout(abortTimer);
-    }
-    if (this.lease) await releaseLease(this.ctx.db, this.lease).catch(() => false);
     await this.ctx.metrics.flush().catch(() => undefined);
     await closeWorkerContext(this.ctx).catch(() => undefined);
     clearTimeout(hardExit);
