@@ -56,6 +56,50 @@ The same commands inside the running task (see `infra/aws/README.md`, "Exec into
 
 To stop the container entirely: `aws ecs update-service --cluster market-analysis --service market-analysis-worker --desired-count 0` (alarms `worker-not-running` and `worker-no-heartbeat` will fire; that is expected). Set it back to `1` to resume.
 
+## Price history
+
+Schedules (Asia/Kolkata): `prices.daily` at 18:30 and `prices.catchup` at 08:15 both run `prices.fanout`, which enqueues `index.daily` for the seven indices, `prices.daily` for every equity series (last ten sessions) and `prices.rebuild` for any series marked `rebuild_required`. `prices.repair` at 03:00 reconciles stored rows against the NSE calendar, then enqueues `prices.window` refetches (up to 500) for open gaps that are due, plus any pending rebuilds.
+
+One-off five-year backfill, after `pnpm db:migrate` and a `universe` run (which seeds the seven indices); the backfill creates any missing `price_series_state` rows itself:
+
+```bash
+pnpm --filter @ma/worker cli run prices.backfill --wait     # alias: prices-backfill
+```
+
+The fanout writes one `prices.window` unit per series per annual window: (companies + 7 indices) x 5, so about 2,675 units for the 528-company campaign universe (2,540 against the 501 companies in the local test database). Yahoo history calls share the `yahoo:history` bucket (5 per 10 s), so expect about 1.5 to 3 hours end to end. Index windows run first (priority 2) because they populate `trading_sessions`. Units are keyed by symbol, window, generation and parser version. Rerunning the backfill refetches every window, but unchanged rows are not rewritten (a replay reports `unchanged`). Listings without a usable Yahoo symbol are not enqueued; they are logged as `price backfill listing exception` and counted in the campaign's `exceptions` metric.
+
+Rebuilds are automatic: a window that sees a new or corrected split or dividend marks the series `rebuild_required` and the next fanout or repair enqueues `prices.rebuild`. To force one: `pnpm --filter @ma/worker cli run prices.rebuild '{"seriesId":72,"symbol":"RELIANCE.NS","generation":3,"parserVersion":1}'`, where `generation` is the current `price_series_state.adjustment_generation` + 1. A stale generation is refused with `stale_generation`.
+
+Acceptance checks (read-only transaction):
+
+```sql
+SELECT quality_status, count(*) FROM price_series_state GROUP BY 1;
+
+SELECT i.code, count(p.date) AS rows, min(p.date), max(p.date)
+FROM indices i LEFT JOIN index_prices_daily p ON p.index_id = i.id GROUP BY i.id ORDER BY i.code;
+
+SELECT c.nse_symbol, count(*) AS unexplained_missing_sessions
+FROM price_series_state s JOIN companies c ON c.id = s.company_id
+JOIN trading_sessions t ON t.exchange = 'NSE'
+ AND t.date BETWEEN greatest(s.desired_from, coalesce(c.listed_from, s.desired_from))
+                AND least(s.desired_to, coalesce(c.delisted_on, s.desired_to))
+LEFT JOIN prices_daily p ON p.company_id = c.id AND p.date = t.date
+WHERE p.date IS NULL AND NOT EXISTS (
+  SELECT 1 FROM price_gaps g WHERE g.series_id = s.id
+   AND t.date BETWEEN g.from_date AND g.to_date AND g.status = 'exempt')
+GROUP BY c.nse_symbol ORDER BY 2 DESC LIMIT 30;
+
+SELECT c.nse_symbol, p.date, p.adjustment_generation, s.adjustment_generation
+FROM prices_daily p JOIN price_series_state s ON s.company_id = p.company_id
+JOIN companies c ON c.id = p.company_id
+WHERE p.is_final AND (p.adjustment_generation <> s.adjustment_generation OR p.adj_close IS NULL)
+LIMIT 30;
+
+SELECT reason, status, count(*), sum(sessions) FROM price_gaps GROUP BY 1, 2 ORDER BY 3 DESC;
+```
+
+The last two queries should return no rows (mixed generations) and a short, explained gap list respectively.
+
 ## Reading the ledger
 
 `job_runs` has one row per logical unit (`job_type`, `unit_key`, `campaign_id`), `job_attempts` one row per delivery attempt, and `ingest_runs` rows with `kind = 'campaign'` summarise a fan-out (`children_total/done/failed`). Read-only queries:

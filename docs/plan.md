@@ -23,6 +23,7 @@ A Bloomberg-like terminal for Indian equities with a genuine intelligence layer:
 | Widen data: NIFTY500 prices/fundamentals/relationships | partial | run jobs repeatedly |
 | Job platform: `@ma/jobs` contracts/ledger/lease, migration `0003_jobs_platform`, pg-boss worker with per-unit handlers, schedules, CloudWatch metrics, CLI; web cron gated by `job_control` | done (not yet cut over; mode `legacy`) | `packages/jobs`, `apps/worker` |
 | AWS deploy: ECS Fargate Spot worker, SSM secrets, alarms | in progress | `Dockerfile`, `infra/aws`, `docs/ops.md` |
+| Five-year price history: series state, generations, gaps, corporate actions, NSE calendar, seven indices, worker backfill/daily/repair/rebuild jobs, finalized adjusted-close returns (momentum v2) | done (backfill not yet run in production) | `packages/ingest/src/pipelines/prices.ts`, `apps/worker/src/handlers/prices.ts`, `packages/intel/src/prices.ts` |
 
 ## Runbook
 
@@ -30,7 +31,7 @@ A Bloomberg-like terminal for Indian equities with a genuine intelligence layer:
 set -a && . ./.env && set +a
 pnpm db:migrate
 pnpm job universe           # indices + companies + aliases (daily)
-pnpm job prices             # stalest companies, 1mo bars (15 min in market hours)
+pnpm job prices             # stalest companies, one series window each; full history comes from the worker `prices.backfill`
 pnpm job fundamentals       # 40 stalest companies per run (hourly)
 pnpm job announcements      # NSE (10 min)
 pnpm job relationships      # 15 stalest non-financials: 2 ARs + 4 concalls
@@ -57,7 +58,14 @@ Worker equivalents (after `pnpm build:worker`): `pnpm worker:cli run prices --wa
 ## Next
 
 0. **Worker cutover**: deploy the ECS worker, run `pnpm worker:cli mode worker`, watch `pnpm worker:cli status`, `ops_alerts` and the CloudWatch alarms for 48 h, then remove the `vercel.json` crons.
-1. **Backfill**: run `prices`, `fundamentals`, `relationships` and `moneycontrol` repeatedly until `company_sync` is fresh for `DATA_UNIVERSE`; then `intel` and `insights`. `index_prices_daily` must be populated for the market brief breadth and sector sections.
+1. **Backfill**: run `pnpm --filter @ma/worker cli run prices.backfill --wait` once (see `docs/ops.md`, "Price history"), then `prices.repair` until the acceptance queries are clean; run `fundamentals`, `relationships` and `moneycontrol` repeatedly until `company_sync` is fresh for `DATA_UNIVERSE`; then `intel` and `insights`. `index_prices_daily` must be populated for the market brief breadth and sector sections.
+1a. **Price history follow-ups**:
+   - Import NSE holiday notices into `trading_sessions` so the calendar does not depend on ^NSEI having a bar for every session.
+   - Verify the NSE equity history fallback from an Indian egress; from the build host NSE answers with a 200 HTML region block, so only the index fallback is verified.
+   - Stage rebuilds in a side table and swap generations, instead of one transaction over ~1,250 rows per series.
+   - Monthly rotating full-source reconciliation of finalized history (today the daily repair reconciles stored rows against the calendar and refetches only open gaps; the daily job rereads the last ten sessions).
+   - Archive raw provider payloads; only the response hash is kept today.
+   - Model rights issues, demergers and other non-split/dividend actions as documented exceptions.
 2. **Alt-data coverage**: Indian port geofences see almost no AISStream traffic; measure `altdata_coverage` over 24–72 h and either widen the watched zones or gate the SHIP pane on a coverage threshold. Jets depend on `aircraft-registry` links, which are provisional until confirmed from filings.
 3. **Relationship recall**: add a sentence classifier behind `extractNamedMentions` to catch mentions without lexical cues; keep the regex path as a fast pre-filter.
 4. **BSE announcements** as a second filings source; **NSE corporate actions**.
