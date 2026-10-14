@@ -1,4 +1,4 @@
-import { median } from "@ma/core";
+import { isRoutineAnnouncement, median } from "@ma/core";
 import {
   analystCalls,
   analystRatings,
@@ -40,7 +40,6 @@ import {
   type RuleInsight,
   type VerdictLabel,
 } from "./schemas.js";
-import { isRoutineAnnouncement } from "./triage-rules.js";
 
 const DAY_MS = 86_400_000;
 

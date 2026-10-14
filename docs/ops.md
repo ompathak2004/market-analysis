@@ -37,7 +37,31 @@ Pass `-v owner_role=avnadmin` on the first run against a database whose migratio
 
 The script also creates schema `pgboss` owned by `ma_worker` and transfers any existing pg-boss tables to it, so pg-boss can run its own migrations at start without `CREATE` on the database. The worker only asks pg-boss to create the schema when it is missing and the role is allowed to, so run the script before the first worker start. Default privileges cover tables created later by the admin or by `ma_migrator`, so new tables get the worker and web grants without rerunning the script.
 
+The admin is granted `SET` and `INHERIT` membership in `ma_migrator` and `ma_worker` because a `CREATEROLE` admin (Aiven's `avnadmin`) only gets `ADMIN` on the roles it creates, which is not enough to create objects owned by them or to set their default privileges. `ma_migrator` keeps `CREATE` on the database because drizzle runs `CREATE SCHEMA IF NOT EXISTS drizzle` on every migrate. Ownership transfer is scoped to `public` and `drizzle` rather than `REASSIGN OWNED`, which would also hand over the database and every other schema the admin owns.
+
+`ma_web` writes nothing directly. Reviewer decisions go through the `SECURITY DEFINER` functions `review_relationship(bigint, review_decision, text, text)` and `review_influence_edge(bigint, text, text, text, integer)`; their migrations revoke `EXECUTE` from `PUBLIC` and the bootstrap script grants it to `ma_web` only. Each grant is skipped while its function does not exist yet, so rerun the script after the migration that adds one. Because `ma_web` defaults to read-only transactions, the web app calls these functions inside an explicit `read write` transaction.
+
 Cutover order: run `pnpm db:migrate` as the admin one last time (migrations through `0004_campaign_parent_job`), run the bootstrap script with `-v owner_role=avnadmin`, set the SSM `MIGRATION_DATABASE_URL` to the `ma_migrator` URL, set the SSM `DATABASE_URL` to the `ma_worker` URL (then force a new deployment), and set the Vercel `DATABASE_URL` to the `ma_web` URL. The worker reads only the shared variables; `API_KEY`, `CRON_SECRET` and `ADMIN_API_KEY` belong to the web app and are not stored for the worker.
+
+## SPLC review queue
+
+Set `ADMIN_API_KEY` (a long random string) in the Vercel project to enable review. Without it `/admin/*` and `/api/v1/admin/*` answer 404.
+
+- Sign in at `/admin/login` with the key. It sets the `ma_admin` cookie (expiry signed with HMAC-SHA256 keyed by `ADMIN_API_KEY`; `HttpOnly`, `SameSite=Strict`, `Secure` in production) for 12 hours. Login attempts are rate limited per IP (10 per 15 minutes). Rotating the key signs every session out.
+- `/admin/review` lists pending `relationship_observations` with confidence below 0.8 or a new counterparty, oldest first, 50 per page. Select a row with `j`/`k` and press `c` confirm, `r` reject or `b` twice to block the pair. The note field applies to the next decision.
+- Each decision runs `review_relationship()`, writes `relationship_reviews` and clears the `supply-chain:` cache for the companies on both sides.
+
+The same API accepts the key as a header for scripts:
+
+```bash
+curl -s -H "x-admin-key: $ADMIN_API_KEY" "$WEB_URL/api/v1/admin/relationships/reviews?limit=20"
+curl -s -H "x-admin-key: $ADMIN_API_KEY" "$WEB_URL/api/v1/admin/relationships/reviews?cursor=$NEXT_CURSOR"
+curl -s -X POST -H "x-admin-key: $ADMIN_API_KEY" -H "content-type: application/json" \
+  -d '{"observationId": 123, "decision": "reject", "note": "competitor mention"}' \
+  "$WEB_URL/api/v1/admin/relationships/reviews"
+```
+
+`GET` returns `{items, nextCursor}`; `POST` takes `decision` `confirm`, `reject` or `block` and returns `{reviewId, observationStatus, relationshipId}`. Errors use `{error: {code, message}}`: 400 for a bad body or cursor, 401 for a missing or wrong key, 404 for an unknown observation or when review is disabled.
 
 ## Pause, resume, enqueue
 
@@ -157,6 +181,77 @@ select name, owner_id, generation, leased_until, heartbeat_at from worker_leases
 ```
 
 A `running` row older than its `deadline_at` means the attempt was lost; the reconciler marks it `abandoned` and the unit retries. Gate after cutover: no `running` rows older than 15 minutes for 24 hours.
+
+## Retention
+
+`maintenance.prune` runs daily at 03:30 IST and deletes in batches of 1,000 rows per statement until a batch comes back short or the job is 30 s from its 10 min deadline (the next run continues). The windows live in `RETENTION` in `packages/jobs/src/maintenance.ts`.
+
+| Data | Kept | Notes |
+| --- | --- | --- |
+| `job_runs` succeeded / failed, dead, abandoned | 14 d / 90 d | |
+| `job_daily_stats` | 400 d | |
+| `ops_alerts` resolved | 30 d | |
+| `ingest_runs` succeeded / failed | 90 d / 180 d | Never `running` runs, never a campaign that still has queued, running or deferred `job_runs`, never the newest run per `(source, status)`. Deleting a campaign cascades to its `job_runs`. |
+| `chokepoint_transits` open | 30 d | Then closed: `left_at = entered_at + loiter_min`, `ended_by = 'abandoned'`. |
+| `chokepoint_transits` completed | 180 d | By `left_at`. |
+| `altdata_events` | 180 d | By `occurred_at`. |
+| `llm_usage` | 90 d | Whole UTC days, rolled into `llm_usage_daily` (calls, failures, token and latency sums per day, model and kind) in the same statement that deletes them. `llm_usage_daily` therefore holds only days whose raw rows are gone; recent days are read from `llm_usage`. |
+| `insights` superseded | 180 d | By `superseded_at`; current insights are never pruned. |
+| `consensus_history` | 5 y | By `month`. |
+| `aircraft_flights`, `vessel_calls`, `altdata_coverage` | 400 d | |
+| `aircraft_positions` / `vessel_positions` | 90 d / 30 d | Deleted by the separate `altdata.cleanup` job (08:20 IST), not by `maintenance.prune`. |
+| pg-boss jobs | completed 48 h, failed 14 d | Set per queue by `deleteAfterSeconds` and the dead-letter retention in `packages/jobs/src/enqueue.ts`; pg-boss 12 has no separate archive table. |
+
+None of the pruned tables is referenced by `evidence_spans` or `announcement_holds`.
+
+## Announcement policy and one-off cleanup
+
+Every announcement gets `category_key`, `retention_class` (`forever`, `five_years`, `noise`, `review_hold`), `retain_until` and `policy_version` from `packages/ingest/src/announcements/policy.ts` (`ANNOUNCEMENT_POLICY_VERSION`). The ingester drops `noise` rows at fetch time and rewrites the four columns of existing rows whose `policy_version` is older. An announcement is pinned while it has a row in `announcement_holds`, or while a document with `source` in (`announcement_metadata`, `order_filing`) and `url` equal to `nse://announcement/<id>` or to the announcement's `attachment_url` has evidence spans. Pinned rows are never deleted. Pins found by the cleanup are recorded as `announcement_holds` rows with `reason = 'evidence'`, and the announcement is set to `review_hold`.
+
+`maintenance.announcements` is a one-off chain with no schedule. Each step enqueues the next one only after it succeeds, so nothing is deleted until a verified backup exists:
+
+1. `maintenance.announcements` records `max(id)`. Rows inserted later are never touched.
+2. `.backup` writes every row up to that id as gzip NDJSON (`row_to_json`) to `s3://<ArchiveBucket>/backups/announcements-<YYYY-MM-DD>.ndjson.gz`, with `.enc` appended when it is encrypted. It then checks size and checksum with a `HEAD` request and records the object in `storage_objects` (`kind = 'backup'`; `documents.gc` never touches that kind).
+3. `.classify` applies the current policy in batches of 5,000 ids. When it nears its deadline it defers itself and resumes.
+4. `.delete` checks the S3 object against `storage_objects` again, and refuses to run if a single row up to the max id is still unclassified. It pins cited rows, then deletes `noise` rows, then rows whose `retain_until` has passed: 1,000 rows per transaction, a 10 s `statement_timeout`, and a 200 ms pause between batches. Every 10 batches it checks the table's dead tuples. When they are above twice the autovacuum trigger, it defers itself for 5 minutes so autovacuum can catch up. After deleting rows it invalidates the `announcements:` API cache.
+5. `.reindex` drops any invalid leftover index, then runs `REINDEX INDEX CONCURRENTLY` on every announcement index from a reserved connection (no statement timeout, 30 s lock timeout). REINDEX needs the table owner, so in production (the tables are owned by `ma_migrator`) this step reports `denied` and counts `maintenance.reindex.denied`. Run it once by hand:
+
+   ```bash
+   psql "$MIGRATION_DATABASE_URL" -c 'reindex table concurrently announcements'
+   ```
+
+Run it and follow it:
+
+```bash
+pnpm --filter @ma/worker cli run maintenance.announcements
+```
+
+```sql
+select job_type, status, attempt, metrics, left(error, 200) as error, finished_at
+from job_runs where job_type like 'maintenance.announcements%' order by id desc limit 10;
+```
+
+`--wait` returns as soon as the first step has enqueued the backup. Because the delete and classify steps defer themselves, their final `metrics` only cover the last slice; the worker logs every slice (`announcement delete slice`). `metrics.remaining` and `metrics.bytes` on the final delete row, and `bytesBefore` / `bytesAfter` on the reindex row, show the row count and `pg_total_relation_size` after the cleanup. Deleted heap space is reused by later inserts, but the table file is not returned to the OS without `VACUUM FULL`.
+
+`BACKUP_ENCRYPTION_KEY` (worker secret, 64 hex characters, `openssl rand -hex 32`) encrypts the backup with AES-256-GCM. The key is derived with HKDF-SHA256 (info `market-analysis/backup/v1`), and the file layout is `MABK1\n`, a 12-byte IV, a 16-byte tag, then the ciphertext. When the key is unset (SSM holds a single space), the backup is written unencrypted, the worker logs a warning and it counts `maintenance.backup.unencrypted`. Keep the key outside AWS as well; a lost key makes the backup unreadable.
+
+Decrypt and restore (the key in `BACKUP_ENCRYPTION_KEY`; skip the decrypt step and use `gunzip` for an unencrypted backup):
+
+```bash
+aws s3 cp s3://<ArchiveBucket>/backups/announcements-<day>.ndjson.gz.enc backup.enc
+node -e '
+const c=require("node:crypto"),fs=require("node:fs"),z=require("node:zlib");
+const b=fs.readFileSync(process.argv[1]),m=6;
+const k=Buffer.from(c.hkdfSync("sha256",Buffer.from(process.env.BACKUP_ENCRYPTION_KEY,"hex"),Buffer.alloc(0),"market-analysis/backup/v1",32));
+const d=c.createDecipheriv("aes-256-gcm",k,b.subarray(m,m+12));d.setAAD(b.subarray(0,m));d.setAuthTag(b.subarray(m+12,m+28));
+process.stdout.write(z.gunzipSync(Buffer.concat([d.update(b.subarray(m+28)),d.final()])))' backup.enc > announcements.ndjson
+psql "$MIGRATION_DATABASE_URL" <<'SQL'
+create temp table restore_lines (line jsonb);
+\copy restore_lines from 'announcements.ndjson' with (format csv, quote e'\x01', delimiter e'\x02')
+insert into announcements select (jsonb_populate_record(null::announcements, line)).*
+from restore_lines on conflict (id) do nothing;
+SQL
+```
 
 ## Alarms
 

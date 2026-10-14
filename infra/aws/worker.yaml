@@ -335,6 +335,8 @@ Resources:
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/NSE_BASE_URL
             - Name: SCRAPE_CONCURRENCY
               ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/SCRAPE_CONCURRENCY
+            - Name: BACKUP_ENCRYPTION_KEY
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/market-analysis/${EnvironmentName}/BACKUP_ENCRYPTION_KEY
 
   Service:
     Type: AWS::ECS::Service

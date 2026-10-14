@@ -53,9 +53,9 @@ export const marketHandlers: MarketHandlers = {
     ),
   "announcements.sync": async (run) => {
     const { ctx, payload, signal } = run;
-    const inserted = await trackCompany(run, "announcements", payload.companyId, () =>
+    const r = await trackCompany(run, "announcements", payload.companyId, () =>
       syncAnnouncements(ctx, payload.companyId, signal),
     );
-    return done({ announcements: inserted });
+    return done({ announcements: r.inserted, reclassified: r.reclassified, noise: r.noise });
   },
 };

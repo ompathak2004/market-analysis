@@ -7,6 +7,7 @@ import {
   invalidateAfterJob,
   markOrphansDead,
   pruneLedger,
+  pruneRetention,
   raiseAlert,
   resolveAlerts,
 } from "@ma/jobs";
@@ -19,6 +20,7 @@ const OVERDUE_GRACE_MS = 2 * MINUTE;
 const ORPHAN_AFTER_MS = 2 * DAY;
 const LEGACY_STALE_MS = 15 * MINUTE;
 const DEAD_ALERT = "jobs_dead";
+const PRUNE_RESERVE_MS = 30_000;
 
 export async function reconcile(db: Db): Promise<Metrics> {
   const abandoned = await abandonOverdueRuns(db, OVERDUE_GRACE_MS);
@@ -115,7 +117,11 @@ export const opsHandlers: OpsHandlers = {
     await invalidateAfterJob(ctx, payload.family);
     return done({ invalidated: 1 });
   },
-  "maintenance.prune": async ({ ctx }) => done({ ...(await pruneLedger(ctx.db)) }),
+  "maintenance.prune": async ({ ctx, signal, expired }) =>
+    done({
+      ...(await pruneLedger(ctx.db)),
+      ...(await pruneRetention(ctx.db, { signal, expired: () => expired(PRUNE_RESERVE_MS) })),
+    }),
   "ops.digest": async ({ ctx }) => {
     const digest = await buildDigest(ctx.db);
     ctx.logger.info({ subject: digest.subject, digest: digest.text }, "ops digest");

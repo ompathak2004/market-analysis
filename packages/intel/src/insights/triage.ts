@@ -1,4 +1,4 @@
-import { chunk, sha256, throwIfAborted } from "@ma/core";
+import { chunk, isRoutineAnnouncement, sha256, throwIfAborted } from "@ma/core";
 import {
   and,
   announcements,
@@ -13,7 +13,6 @@ import {
 import type { IntelContext } from "./context.js";
 import { inputMessage, TRIAGE_SYSTEM } from "./prompts.js";
 import { INSIGHT_MODEL_VERSION, type TriageItem, triageBatchSchema } from "./schemas.js";
-import { isRoutineAnnouncement } from "./triage-rules.js";
 import { NO_EVIDENCE, validateClaims } from "./validate.js";
 
 export const TRIAGE_MODEL_VERSION = INSIGHT_MODEL_VERSION;
