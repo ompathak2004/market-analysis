@@ -24,22 +24,20 @@ export async function canCreateSchema(db: Db): Promise<boolean> {
   return rows[0]?.allowed === true;
 }
 
-export async function sessionLimits(
-  db: Db,
-): Promise<{ role: string; statementTimeout: string; lockTimeout: string; unbounded: boolean }> {
-  const rows = await db.execute<{ role: string; statement_timeout: string; lock_timeout: string }>(
-    sql`select current_user as role,
-      current_setting('statement_timeout') as statement_timeout,
-      current_setting('lock_timeout') as lock_timeout`,
-  );
-  const row = rows[0];
-  const statementTimeout = row?.statement_timeout ?? "0";
-  return {
-    role: row?.role ?? "",
-    statementTimeout,
-    lockTimeout: row?.lock_timeout ?? "0",
-    unbounded: statementTimeout === "0",
-  };
+export type SessionLimits = {
+  role: string;
+  statementTimeout: string;
+  lockTimeout: string;
+  unbounded: boolean;
+};
+
+export async function sessionLimits(db: Db): Promise<SessionLimits> {
+  const [row] = await db.execute<SessionLimits>(sql`
+    select current_user as role,
+      current_setting('statement_timeout') as "statementTimeout",
+      current_setting('lock_timeout') as "lockTimeout",
+      current_setting('statement_timeout') = '0' as unbounded`);
+  return row as SessionLimits;
 }
 
 export function createBoss(
