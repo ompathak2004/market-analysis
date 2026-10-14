@@ -217,11 +217,13 @@ export function ReviewPane({
   noteLabel,
   idle,
   cursorParam,
+  scope,
   queue,
   nextCursor,
   paged,
   pending,
   actions,
+  banner,
   empty,
   children,
 }: {
@@ -231,22 +233,26 @@ export function ReviewPane({
   noteLabel: string;
   idle: string;
   cursorParam: string;
+  scope?: string | null;
   queue: Pick<ReturnType<typeof useReviewQueue>, "done" | "note" | "setNote" | "status">;
   nextCursor: string | null;
   paged: boolean;
   pending: number;
   actions?: ReactNode;
+  banner?: ReactNode;
   empty: { hint: string; text: string };
   children: ReactNode;
 }) {
   const reviewed = queue.done.size;
   const meta = `${pending} pending${nextCursor ? "+" : ""}${reviewed ? ` · ${reviewed} reviewed` : ""}`;
+  const base = scope ? `/admin/review?${scope}` : "/admin/review";
   return (
     <Pane
       id={id}
       title={title}
       meta={meta}
       hints={hints}
+      tabs={banner}
       actions={
         <div className="review-toolbar">
           <input
@@ -269,9 +275,11 @@ export function ReviewPane({
             {queue.status?.text ?? idle}
           </output>
           <span className="grow" />
-          {paged ? <Link href="/admin/review">⇤ first page</Link> : null}
+          {paged ? <Link href={base}>⇤ first page</Link> : null}
           {nextCursor ? (
-            <Link href={`/admin/review?${cursorParam}=${encodeURIComponent(nextCursor)}`}>
+            <Link
+              href={`${base}${scope ? "&" : "?"}${cursorParam}=${encodeURIComponent(nextCursor)}`}
+            >
               next page →
             </Link>
           ) : null}

@@ -115,31 +115,48 @@ export function ReviewQueue({
   nextCursor,
   paged,
   logout,
+  sample,
+  banner,
 }: {
   items: ReviewQueueItem[];
   nextCursor: string | null;
   paged: boolean;
   logout: ReactNode;
+  sample: string | null;
+  banner: ReactNode;
 }) {
   const queue = useReviewQueue(QUEUE);
   const visible = items.filter((i) => !queue.done.has(i.observationId));
   return (
     <ReviewPane
       id={PANE}
-      title="REVIEW · SPLC OBSERVATIONS"
+      title={sample ? "REVIEW · SPLC PRECISION SAMPLE" : "REVIEW · SPLC OBSERVATIONS"}
       hints="j/k rows · c confirm · r reject · b b block pair · ⇧↵ source · z zoom"
       noteLabel="Review note"
-      idle="confidence < 80% or new counterparty · oldest first"
+      idle={
+        sample
+          ? `sample ${sample} · unreviewed items in draw order`
+          : "confidence < 80% or new counterparty · oldest first"
+      }
       cursorParam="cursor"
+      scope={sample ? `sample=${encodeURIComponent(sample)}` : null}
       queue={queue}
       nextCursor={nextCursor}
       paged={paged}
       pending={visible.length}
       actions={logout}
-      empty={{
-        hint: "new observations land after each extraction run",
-        text: "No pending observations below 80% confidence or with a new counterparty.",
-      }}
+      banner={banner}
+      empty={
+        sample
+          ? {
+              hint: "the gate line above holds the verdict",
+              text: `Every observation in sample ${sample} has a decision.`,
+            }
+          : {
+              hint: "new observations land after each extraction run",
+              text: "No pending observations below 80% confidence or with a new counterparty.",
+            }
+      }
     >
       {visible.map((item) => (
         <ReviewItem
