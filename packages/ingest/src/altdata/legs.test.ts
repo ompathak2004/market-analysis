@@ -5,6 +5,7 @@ import {
   endpointAirport,
   legDedupeKey,
   replayFrom,
+  replayStart,
   type StoredFlight,
   segmentLegs,
   summarizeLeg,
@@ -115,6 +116,30 @@ describe("segmentLegs", () => {
     expect(legs).toHaveLength(1);
     expect(legs[0]?.open).toBe(true);
     expect(segmentLegs([sample(0, 20, 75, false)], { now: new Date(T0 + 500 * MIN) })).toEqual([]);
+  });
+
+  it("rewinds a replay to the start of the stored flight it cuts through", () => {
+    const now = new Date(T0 + 600 * MIN);
+    const stored = [
+      { id: 1, dedupeKey: "a", departedAt: new Date(T0), arrivedAt: new Date(T0 + 120 * MIN) },
+      {
+        id: 2,
+        dedupeKey: "b",
+        departedAt: new Date(T0 + 300 * MIN),
+        arrivedAt: new Date(T0 + 420 * MIN),
+      },
+    ];
+    const maxMs = 48 * 60 * MIN;
+    expect(replayStart(stored, null, now, maxMs)).toEqual(new Date(T0 + 420 * MIN));
+    expect(replayStart(stored, new Date(T0 + 360 * MIN), now, maxMs)).toEqual(
+      new Date(T0 + 300 * MIN),
+    );
+    expect(replayStart(stored, new Date(T0 + 200 * MIN), now, maxMs)).toEqual(
+      new Date(T0 + 200 * MIN),
+    );
+    expect(replayStart(stored, new Date(T0 - 5_000 * MIN), now, maxMs)).toEqual(
+      new Date(now.getTime() - maxMs),
+    );
   });
 
   it("buckets dedupe keys by half hour", () => {

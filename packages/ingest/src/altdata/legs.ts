@@ -174,6 +174,22 @@ export function replayFrom(flights: readonly StoredFlight[], now: Date, maxMs: n
   return new Date(Math.max(floor, start));
 }
 
+export function replayStart(
+  flights: readonly StoredFlight[],
+  requested: Date | null,
+  now: Date,
+  maxMs: number,
+): Date {
+  const floor = now.getTime() - maxMs;
+  let start = replayFrom(flights, now, maxMs).getTime();
+  if (requested && requested.getTime() < start) start = Math.max(floor, requested.getTime());
+  for (const f of flights) {
+    if (!f.departedAt || f.departedAt.getTime() >= start) continue;
+    if ((f.arrivedAt ?? now).getTime() > start) start = Math.max(floor, f.departedAt.getTime());
+  }
+  return new Date(start);
+}
+
 export function supersededFlights(
   stored: readonly StoredFlight[],
   legs: readonly DerivedLeg[],

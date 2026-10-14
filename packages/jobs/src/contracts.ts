@@ -260,7 +260,7 @@ export const JOB_CONTRACTS = {
   "triage.batch": job("triage", "llm", "unit", empty, 5 * MINUTE),
   "aircraft.registry": job("aircraft-registry", "io", "unit", empty, 5 * MINUTE),
   "aircraft.sample": job("aircraft-sample", "io", "unit", empty, MINUTE, () => "", 1),
-  "aircraft.trace": job("aircraft-trace", "io", "unit", traceDay, 5 * MINUTE, (p) => p.day, 1),
+  "aircraft.trace": job("aircraft-trace", "io", "unit", traceDay, 10 * MINUTE, (p) => p.day, 1),
   "ais.collect": job("ais-collect", "io", "unit", empty, 2 * MINUTE, () => "", 1),
   "altdata.derive": job("altdata-derive", "compute", "unit", empty, 5 * MINUTE),
   "altdata.signals": job("altdata-signals", "compute", "unit", empty, 5 * MINUTE),

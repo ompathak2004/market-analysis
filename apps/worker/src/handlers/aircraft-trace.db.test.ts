@@ -17,7 +17,6 @@ const VABB = airportByIcao("VABB");
 
 class FakeRedis {
   strings = new Map<string, string>();
-  hashes = new Map<string, Map<string, string>>();
   async get(k: string) {
     return this.strings.get(k) ?? null;
   }
@@ -28,22 +27,6 @@ class FakeRedis {
   async del(...keys: string[]) {
     for (const k of keys) this.strings.delete(k);
     return keys.length;
-  }
-  async hget(k: string, f: string) {
-    return this.hashes.get(k)?.get(f) ?? null;
-  }
-  async hset(k: string, f: string | Record<string, string>, v?: string) {
-    const h = this.hashes.get(k) ?? new Map<string, string>();
-    if (typeof f === "string") h.set(f, v as string);
-    else for (const [a, b] of Object.entries(f)) h.set(a, b);
-    this.hashes.set(k, h);
-    return 1;
-  }
-  async hdel(k: string, f: string) {
-    return this.hashes.get(k)?.delete(f) ? 1 : 0;
-  }
-  async hgetall(k: string) {
-    return Object.fromEntries(this.hashes.get(k) ?? []);
   }
 }
 
@@ -81,9 +64,9 @@ describe.skipIf(!url)("aircraft.trace pipeline (DATABASE_URL_TEST)", () => {
       insert into corporate_aircraft (registration, icao_hex, tier, confidence, active, last_seen_at)
       values (${registration}, ${hex}, 'registry', 0.9, true, ${NOW.toISOString()}::timestamptz)`);
     const sparse = [
-      [T0 + 15 * 60_000, 22.1, 88.0, 41_000],
-      [T0 + 20 * 60_000, 22.0, 87.3, 41_000],
-      [T0 + 25 * 60_000, 21.9, 86.6, 41_000],
+      [T0 + 25 * 60_000, 22.1, 88.0, 41_000],
+      [T0 + 30 * 60_000, 22.0, 87.3, 41_000],
+      [T0 + 35 * 60_000, 21.9, 86.6, 41_000],
       [T0 + 70 * 60_000, 20.5, 76.5, 41_000],
       [T0 + 75 * 60_000, 20.3, 75.8, 41_000],
       [T0 + 80 * 60_000, 20.1, 75.1, 41_000],
@@ -125,7 +108,7 @@ describe.skipIf(!url)("aircraft.trace pipeline (DATABASE_URL_TEST)", () => {
     ]);
   });
 
-  it("stores the full trace and replays the window so both airports resolve", async () => {
+  it("stores the full trace and re-derives the leg so both airports resolve", async () => {
     if (!VECC || !VABB) throw new Error("airports missing");
     trace = [
       point(0, VECC.lat, VECC.lon, "ground", 5),
@@ -140,23 +123,21 @@ describe.skipIf(!url)("aircraft.trace pipeline (DATABASE_URL_TEST)", () => {
     ];
     const collected = await collectAircraftTraces(ctx(), { now: NOW });
     expect(collected).toMatchObject({ requests: 1, failures: 0, traced: 1 });
-    expect(collected.positions).toBe(7);
+    expect(collected.positions).toBe(8);
     expect(requests.at(-1)).toBe(
       `https://adsb.lol/data/traces/${hex.slice(-2)}/trace_full_${hex}.json`,
     );
-    expect(await redis.hget("altdata:air:replay", hex)).toBe(String(T0));
-
-    await deriveAircraftFlights(ctx(), { now: NOW });
+    expect(collected).toMatchObject({ legs: 1, full: 1, removed: 1 });
     const rows = await flights();
     expect(rows.map((r) => [r.depIcao, r.arrIcao, r.completeness])).toEqual([
       ["VECC", "VABB", "full"],
     ]);
     expect(Date.parse(rows[0]?.departedAt ?? "")).toBe(T0);
     expect(Date.parse(rows[0]?.arrivedAt ?? "")).toBe(T0 + 104 * 60_000);
-    expect(await redis.hget("altdata:air:replay", hex)).toBeNull();
+    await deriveAircraftFlights(ctx(), { now: NOW });
     const collectedAgain = await collectAircraftTraces(ctx(), { now: NOW });
-    expect(collectedAgain.positions).toBe(0);
-    expect(await redis.hget("altdata:air:replay", hex)).toBeNull();
+    expect(collectedAgain).toMatchObject({ positions: 0, legs: 1, removed: 0 });
+    expect(await flights()).toEqual(rows);
   });
 
   it("asks for yesterday's history file", async () => {

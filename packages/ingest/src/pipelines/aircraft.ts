@@ -23,7 +23,7 @@ import {
 import {
   type DerivedLeg,
   legDedupeKey,
-  replayFrom,
+  replayStart,
   segmentLegs,
   summarizeLeg,
   supersededFlights,
@@ -49,7 +49,6 @@ const TRIED_KEY = "altdata:adsbdb:tried";
 const MISMATCH_KEY = "altdata:adsbdb:mismatch";
 const DERIVE_CURSOR = "altdata:air:derive_from";
 const DERIVE_RESUME = "altdata:air:derive_resume";
-const REPLAY_KEY = "altdata:air:replay";
 const TRACE_CONCURRENCY = 2;
 const REPLAY_MAX_MS = 48 * HOUR;
 const HEX_BATCH = 100;
@@ -393,9 +392,20 @@ export async function collectAircraftTraces(
   const day = opts.day === "yesterday" ? traceDay(now, 1) : null;
   const fleet = await loadActiveAircraft(ctx);
   const adsb = new AdsbSource(ctx.http);
-  const stats = { aircraft: fleet.length, requests: 0, failures: 0, traced: 0, positions: 0 };
+  const stats = {
+    aircraft: fleet.length,
+    requests: 0,
+    failures: 0,
+    skipped: 0,
+    traced: 0,
+    positions: 0,
+    ...emptyLegStats(),
+  };
   await mapLimit(fleet, TRACE_CONCURRENCY, async (a) => {
-    if (expired(opts, 15_000)) return;
+    if (expired(opts, 15_000)) {
+      stats.skipped++;
+      return;
+    }
     stats.requests++;
     let samples: PositionSample[];
     try {
@@ -407,10 +417,10 @@ export async function collectAircraftTraces(
     }
     if (!samples.length) return;
     throwIfAborted(opts.signal);
-    const inserted = await storeTrace(ctx, a.hex, samples, opts.signal);
+    stats.positions += await storeTrace(ctx, a, samples, now, stats, opts.signal);
     stats.traced++;
-    stats.positions += inserted;
   });
+  if (stats.skipped) ctx.logger.warn({ skipped: stats.skipped, day }, "trace deadline reached");
   await fencedTransaction(
     ctx.db,
     (tx) =>
@@ -429,15 +439,18 @@ export async function collectAircraftTraces(
 
 async function storeTrace(
   ctx: IngestContext,
-  hex: string,
+  a: FleetAircraft,
   samples: PositionSample[],
+  now: Date,
+  stats: LegStats,
   signal: AbortSignal | undefined,
 ): Promise<number> {
   const first = samples[0] as PositionSample;
   const last = samples.at(-1) as PositionSample;
-  const inserted = await fencedTransaction(
+  return fencedTransaction(
     ctx.db,
     async (tx) => {
+      await lockAircraft(tx, a.hex);
       let count = 0;
       for (const batch of chunk(samples, 500)) {
         const res = await tx
@@ -452,13 +465,12 @@ async function storeTrace(
           last_seen_at = greatest(a.last_seen_at, ${last.ts.toISOString()}::timestamptz),
           first_seen_at = least(a.first_seen_at, ${first.ts.toISOString()}::timestamptz),
           updated_at = now()
-        where a.icao_hex = ${hex}`);
+        where a.icao_hex = ${a.hex}`);
+      await deriveAircraft(tx, a, now, first.ts, stats);
       return count;
     },
     signal,
   );
-  if (inserted) await markReplay(ctx, hex, first.ts);
-  return inserted;
 }
 
 function positionRow(
@@ -477,13 +489,6 @@ function positionRow(
     squawk: s.squawk,
     source,
   };
-}
-
-async function markReplay(ctx: IngestContext, hex: string, from: Date): Promise<void> {
-  const current = await ctx.redis.hget(REPLAY_KEY, hex);
-  if (current === null || Number(current) > from.getTime()) {
-    await ctx.redis.hset(REPLAY_KEY, hex, String(from.getTime()));
-  }
 }
 
 type ActiveAircraft = {
@@ -704,8 +709,6 @@ export async function deriveAircraftFlights(
     floor,
   );
   const seenFrom = new Date(pass.cursor.getTime() - 3 * HOUR);
-  const replay = await ctx.redis.hgetall(REPLAY_KEY);
-  const replayHexes = Object.keys(replay);
   const fleet = await ctx.db
     .select({ id: corporateAircraft.id, hex: corporateAircraft.icaoHex })
     .from(corporateAircraft)
@@ -716,7 +719,6 @@ export async function deriveAircraftFlights(
           gte(corporateAircraft.lastSeenAt, seenFrom),
           sql`exists (select 1 from ${aircraftFlights} f where f.aircraft_id = ${corporateAircraft.id}
             and f.arrived_at is null and f.source in ('sampled', 'merged'))`,
-          ...(replayHexes.length ? [inArray(corporateAircraft.icaoHex, replayHexes)] : []),
         ),
       ),
     )
@@ -725,100 +727,20 @@ export async function deriveAircraftFlights(
     aircraft: fleet.length,
     processed: 0,
     resumed: pass.resumed ? 1 : 0,
-    samples: 0,
-    legs: 0,
-    open: 0,
-    full: 0,
-    removed: 0,
+    ...emptyLegStats(),
     opensky: 0,
   };
   let lastId = pass.afterId;
   for (const a of fleet) {
     if (expired(opts, 30_000)) break;
-    const stored = await ctx.db
-      .select({
-        id: aircraftFlights.id,
-        dedupeKey: aircraftFlights.dedupeKey,
-        departedAt: aircraftFlights.departedAt,
-        arrivedAt: aircraftFlights.arrivedAt,
-      })
-      .from(aircraftFlights)
-      .where(
-        and(
-          eq(aircraftFlights.aircraftId, a.id),
-          inArray(aircraftFlights.source, ["sampled", "merged"]),
-          sql`coalesce(${aircraftFlights.arrivedAt}, ${aircraftFlights.departedAt}) >= ${floor.toISOString()}`,
-        ),
-      );
-    const requested = replay[a.hex] ? new Date(Number(replay[a.hex])) : null;
-    const from = earliest(replayFrom(stored, now, REPLAY_MAX_MS), requested, floor);
-    const rows = await ctx.db
-      .select()
-      .from(aircraftPositions)
-      .where(and(eq(aircraftPositions.hex, a.hex), gte(aircraftPositions.ts, from)))
-      .orderBy(aircraftPositions.ts);
-    stats.samples += rows.length;
-    throwIfAborted(opts.signal);
     await fencedTransaction(
       ctx.db,
       async (tx) => {
-        const derived: DerivedLeg[] = [];
-        for (const leg of segmentLegs(rows, { now })) {
-          const sum = summarizeLeg(leg);
-          const key = legDedupeKey(a.hex, sum.firstTs);
-          derived.push({ key, departedAt: sum.departedAt, endAt: sum.arrivedAt ?? sum.lastTs });
-          const values = {
-            aircraftId: a.id,
-            hex: a.hex,
-            departedAt: sum.departedAt,
-            arrivedAt: sum.arrivedAt,
-            durationMin: sum.durationMin,
-            depIcao: sum.dep?.icao ?? null,
-            depCity: sum.dep?.city ?? null,
-            depCountry: sum.dep?.country ?? null,
-            arrIcao: sum.arr?.icao ?? null,
-            arrCity: sum.arr?.city ?? null,
-            arrCountry: sum.arr?.country ?? null,
-            completeness: sum.completeness,
-            source: "sampled",
-            samples: sum.samples,
-            maxAltFt: sum.maxAltFt,
-            dedupeKey: key,
-          };
-          await tx
-            .insert(aircraftFlights)
-            .values(values)
-            .onConflictDoUpdate({
-              target: aircraftFlights.dedupeKey,
-              set: {
-                departedAt: values.departedAt,
-                arrivedAt: values.arrivedAt,
-                durationMin: values.durationMin,
-                depIcao: sql`coalesce(excluded.dep_icao, ${aircraftFlights.depIcao})`,
-                depCity: sql`coalesce(excluded.dep_city, ${aircraftFlights.depCity})`,
-                depCountry: sql`coalesce(excluded.dep_country, ${aircraftFlights.depCountry})`,
-                arrIcao: sql`coalesce(excluded.arr_icao, ${aircraftFlights.arrIcao})`,
-                arrCity: sql`coalesce(excluded.arr_city, ${aircraftFlights.arrCity})`,
-                arrCountry: sql`coalesce(excluded.arr_country, ${aircraftFlights.arrCountry})`,
-                completeness: values.completeness,
-                samples: values.samples,
-                maxAltFt: values.maxAltFt,
-                updatedAt: new Date(),
-              },
-            });
-          stats.legs++;
-          if (leg.open) stats.open++;
-          if (sum.completeness === "full") stats.full++;
-        }
-        const superseded = supersededFlights(stored, derived, from);
-        if (superseded.length) {
-          await tx.delete(aircraftFlights).where(inArray(aircraftFlights.id, superseded));
-          stats.removed += superseded.length;
-        }
+        await lockAircraft(tx, a.hex);
+        await deriveAircraft(tx, a, now, null, stats);
       },
       opts.signal,
     );
-    if (requested) await ctx.redis.hdel(REPLAY_KEY, a.hex);
     lastId = a.id;
     stats.processed++;
   }
@@ -830,9 +752,110 @@ export async function deriveAircraftFlights(
   return stats;
 }
 
-function earliest(derived: Date, requested: Date | null, floor: Date): Date {
-  if (!requested || requested >= derived) return derived;
-  return requested > floor ? requested : floor;
+interface FleetAircraft {
+  id: number;
+  hex: string;
+}
+
+interface LegStats {
+  samples: number;
+  legs: number;
+  open: number;
+  full: number;
+  removed: number;
+}
+
+function emptyLegStats(): LegStats {
+  return { samples: 0, legs: 0, open: 0, full: 0, removed: 0 };
+}
+
+function lockAircraft(tx: Tx, hex: string): Promise<unknown> {
+  return tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`air:${hex}`}))`);
+}
+
+async function deriveAircraft(
+  tx: Tx,
+  a: FleetAircraft,
+  now: Date,
+  requested: Date | null,
+  stats: LegStats,
+): Promise<void> {
+  const floor = new Date(now.getTime() - REPLAY_MAX_MS);
+  const stored = await tx
+    .select({
+      id: aircraftFlights.id,
+      dedupeKey: aircraftFlights.dedupeKey,
+      departedAt: aircraftFlights.departedAt,
+      arrivedAt: aircraftFlights.arrivedAt,
+    })
+    .from(aircraftFlights)
+    .where(
+      and(
+        eq(aircraftFlights.aircraftId, a.id),
+        inArray(aircraftFlights.source, ["sampled", "merged"]),
+        sql`coalesce(${aircraftFlights.arrivedAt}, ${aircraftFlights.departedAt}) >= ${floor.toISOString()}`,
+      ),
+    );
+  const from = replayStart(stored, requested, now, REPLAY_MAX_MS);
+  const rows = await tx
+    .select()
+    .from(aircraftPositions)
+    .where(and(eq(aircraftPositions.hex, a.hex), gte(aircraftPositions.ts, from)))
+    .orderBy(aircraftPositions.ts);
+  stats.samples += rows.length;
+  const derived: DerivedLeg[] = [];
+  for (const leg of segmentLegs(rows, { now })) {
+    const sum = summarizeLeg(leg);
+    const key = legDedupeKey(a.hex, sum.firstTs);
+    derived.push({ key, departedAt: sum.departedAt, endAt: sum.arrivedAt ?? sum.lastTs });
+    const values = {
+      aircraftId: a.id,
+      hex: a.hex,
+      departedAt: sum.departedAt,
+      arrivedAt: sum.arrivedAt,
+      durationMin: sum.durationMin,
+      depIcao: sum.dep?.icao ?? null,
+      depCity: sum.dep?.city ?? null,
+      depCountry: sum.dep?.country ?? null,
+      arrIcao: sum.arr?.icao ?? null,
+      arrCity: sum.arr?.city ?? null,
+      arrCountry: sum.arr?.country ?? null,
+      completeness: sum.completeness,
+      source: "sampled",
+      samples: sum.samples,
+      maxAltFt: sum.maxAltFt,
+      dedupeKey: key,
+    };
+    await tx
+      .insert(aircraftFlights)
+      .values(values)
+      .onConflictDoUpdate({
+        target: aircraftFlights.dedupeKey,
+        set: {
+          departedAt: values.departedAt,
+          arrivedAt: values.arrivedAt,
+          durationMin: values.durationMin,
+          depIcao: sql`coalesce(excluded.dep_icao, ${aircraftFlights.depIcao})`,
+          depCity: sql`coalesce(excluded.dep_city, ${aircraftFlights.depCity})`,
+          depCountry: sql`coalesce(excluded.dep_country, ${aircraftFlights.depCountry})`,
+          arrIcao: sql`coalesce(excluded.arr_icao, ${aircraftFlights.arrIcao})`,
+          arrCity: sql`coalesce(excluded.arr_city, ${aircraftFlights.arrCity})`,
+          arrCountry: sql`coalesce(excluded.arr_country, ${aircraftFlights.arrCountry})`,
+          completeness: values.completeness,
+          samples: values.samples,
+          maxAltFt: values.maxAltFt,
+          updatedAt: new Date(),
+        },
+      });
+    stats.legs++;
+    if (leg.open) stats.open++;
+    if (sum.completeness === "full") stats.full++;
+  }
+  const superseded = supersededFlights(stored, derived, from);
+  if (superseded.length) {
+    await tx.delete(aircraftFlights).where(inArray(aircraftFlights.id, superseded));
+    stats.removed += superseded.length;
+  }
 }
 
 async function mergeOpenSky(
