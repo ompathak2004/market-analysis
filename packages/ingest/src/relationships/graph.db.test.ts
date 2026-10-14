@@ -30,6 +30,7 @@ describe.skipIf(!url)("order filings to graph edges (DATABASE_URL_TEST)", () => 
   const unlistedName = `Zorvex ${tag} Engineering`;
   let supplierId = 0;
   let customerId = 0;
+  let groupedId = 0;
   const announcementIds: number[] = [];
 
   async function announce(subject: string, details: string): Promise<number> {
@@ -62,21 +63,28 @@ describe.skipIf(!url)("order filings to graph edges (DATABASE_URL_TEST)", () => 
       .values([
         { name: supplierName, normalizedName: supplierName.toLowerCase(), listed: true },
         { name: customerName, normalizedName: customerName.toLowerCase(), listed: true },
+        {
+          name: "Reliance Industries Ltd.",
+          normalizedName: "reliance industries",
+          nseSymbol: "RELIANCE",
+          listed: true,
+        },
       ])
       .returning({ id: companies.id });
     supplierId = rows[0]?.id ?? 0;
     customerId = rows[1]?.id ?? 0;
+    groupedId = rows[2]?.id ?? 0;
   });
 
   afterAll(async () => {
-    const ids = [supplierId, customerId];
+    const ids = [supplierId, customerId, groupedId];
     await db.execute(sql`
       delete from relationships
       where supplier_company_id in (${supplierId}, ${customerId})
         or customer_company_id in (${supplierId}, ${customerId})`);
     await db.execute(sql`
       delete from counterparties
-      where company_id in (${supplierId}, ${customerId}) or normalized_name like ${`%${tag.toLowerCase()}%`}`);
+      where company_id in (${supplierId}, ${customerId}, ${groupedId}) or normalized_name like ${`%${tag.toLowerCase()}%`}`);
     await db.execute(sql`delete from documents where company_id in (${supplierId}, ${customerId})`);
     await db.execute(sql`delete from announcements where company_id = ${supplierId}`);
     await db.delete(companies).where(inArray(companies.id, ids));
@@ -88,6 +96,11 @@ describe.skipIf(!url)("order filings to graph edges (DATABASE_URL_TEST)", () => 
     const matcher = await loadCounterpartyMatcher(db);
     expect(matcher.byCompany.get(supplierId)?.kind).toBe("listed");
     expect(matcher.byCompany.get(customerId)?.kind).toBe("listed");
+    const [grouped] = await db.execute<{ aliases: number }>(sql`
+      select count(*)::int as aliases from counterparty_aliases a
+      join counterparties c on c.id = a.counterparty_id
+      where c.company_id = ${groupedId} and a.normalized_alias = 'reliance industries'`);
+    expect(grouped?.aliases).toBe(1);
   });
 
   it("turns an order-win announcement into an observation, evidence and an active edge", async () => {

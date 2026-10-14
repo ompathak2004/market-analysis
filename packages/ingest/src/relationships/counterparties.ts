@@ -1,4 +1,4 @@
-import { throwIfAborted } from "@ma/core";
+import { throwIfAborted, uniqueBy } from "@ma/core";
 import {
   companies,
   companyGroupMemberships,
@@ -145,10 +145,11 @@ export async function syncCounterparties(
         }
       }
 
-      for (let i = 0; i < aliases.length; i += BATCH) {
+      const aliasRows = uniqueBy(aliases, (a) => `${a.counterpartyId}:${a.normalizedAlias}`);
+      for (let i = 0; i < aliasRows.length; i += BATCH) {
         await tx
           .insert(counterpartyAliases)
-          .values(aliases.slice(i, i + BATCH))
+          .values(aliasRows.slice(i, i + BATCH))
           .onConflictDoUpdate({
             target: [counterpartyAliases.counterpartyId, counterpartyAliases.normalizedAlias],
             set: {
@@ -182,7 +183,7 @@ export async function syncCounterparties(
       return {
         listed: rows.length,
         curated,
-        aliases: aliases.length,
+        aliases: aliasRows.length,
         identifiers: identifiers.length,
         memberships: memberships.length,
       };
