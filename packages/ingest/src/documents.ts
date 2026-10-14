@@ -36,7 +36,7 @@ export interface FetchDocumentOptions {
   companyId?: number | null;
   maxAgeMs?: number;
   headers?: Record<string, string>;
-  via?: "direct" | "firecrawl";
+  via?: "direct" | "direct_only" | "firecrawl";
   extract?: (content: string) => string;
   pdfMaxPages?: number;
   publishedAt?: Date | null;
@@ -92,7 +92,9 @@ export class DocumentStore {
     const fetched =
       opts.via === "firecrawl"
         ? await this.viaFirecrawl(url)
-        : await this.viaDirect(url, existing, opts.headers, opts.pdfMaxPages, opts.signal);
+        : await this.viaDirect(url, existing, opts.headers, opts.pdfMaxPages, opts.signal, {
+            fallback: opts.via !== "direct_only",
+          });
     throwIfAborted(opts.signal);
 
     if (fetched.notModified && existing) {
@@ -401,6 +403,7 @@ export class DocumentStore {
     headers?: Record<string, string>,
     pdfMaxPages?: number,
     signal?: AbortSignal,
+    mode: { fallback: boolean } = { fallback: true },
   ): Promise<Fetched> {
     const res = await this.http.get(url, {
       ...(signal ? { signal } : {}),
@@ -417,7 +420,7 @@ export class DocumentStore {
         etag: null,
         lastModified: null,
       };
-    if (BLOCKED.has(res.status)) {
+    if (mode.fallback && BLOCKED.has(res.status)) {
       this.logger.warn(
         { url, status: res.status },
         "direct fetch blocked, falling back to firecrawl",

@@ -27,6 +27,7 @@ import {
 
 export const AUTO_CONFIDENCE = 0.8;
 export const EDGE_LIFETIME_YEARS = 4;
+export const LLM_EXTRACTOR_VERSION_BASE = 100;
 const QUOTE_MAX = 2000;
 const EVIDENCE_MAX = 1000;
 const LIVE = ["pending", "auto", "confirmed"] as const;
@@ -61,6 +62,11 @@ export interface ExtractionUnit {
   revisionId: number;
   pageMap: readonly PageSpan[] | null;
   graphRevision: number;
+}
+
+export interface ExtractionWriteOptions {
+  tokens?: number;
+  markRead?: boolean;
 }
 
 export interface ExtractionWrite {
@@ -125,12 +131,16 @@ export async function writeExtraction(
   tx: Tx,
   unit: ExtractionUnit,
   found: { observations: readonly Observation[]; dropped: number },
+  opts: ExtractionWriteOptions = {},
 ): Promise<ExtractionWrite> {
+  const llm = unit.extractorVersion >= LLM_EXTRACTOR_VERSION_BASE;
+  const tokens = opts.tokens ?? 0;
   const removed = await tx.execute<{ supplier: number; customer: number }>(sql`
     delete from relationship_observations o
     using relationship_extractions e, document_revisions r
     where o.extraction_id = e.id and e.document_revision_id = r.id
       and r.document_id = ${unit.documentId} and e.extractor_family = ${unit.family}
+      and (e.extractor_version >= ${LLM_EXTRACTOR_VERSION_BASE}) = ${llm}
       and o.focal_company_id = ${unit.companyId} and o.status in ('pending', 'auto')
     returning o.supplier_counterparty_id as supplier, o.customer_counterparty_id as customer`);
 
@@ -173,6 +183,7 @@ export async function writeExtraction(
       status: "succeeded",
       observations: fresh.length,
       dropped,
+      tokens,
       finishedAt: new Date(),
     })
     .onConflictDoUpdate({
@@ -186,6 +197,7 @@ export async function writeExtraction(
         status: "succeeded",
         observations: fresh.length,
         dropped,
+        tokens,
         error: null,
         startedAt: new Date(),
         finishedAt: new Date(),
@@ -274,7 +286,7 @@ export async function writeExtraction(
     ]);
   }
   const edges = await materializeEdges(tx, [...pairs.values()], unit.graphRevision);
-  await markSourceRead(tx, unit);
+  if (opts.markRead ?? true) await markSourceRead(tx, unit);
   return { extractionId: extraction.id, observations: fresh.length, dropped, edges };
 }
 

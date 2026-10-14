@@ -40,6 +40,19 @@ export const HOST_LIMITS = {
   "github.com": { capacity: 10, perMs: 60_000 },
   "raw.githubusercontent.com": { capacity: 10, perMs: 60_000 },
   "davidmegginson.github.io": { capacity: 5, perMs: 60_000 },
+  "sansad.in": { capacity: 5, perMs: 10_000 },
+  "myneta.info": { capacity: 10, perMs: 60_000 },
+  "www.pib.gov.in": { capacity: 10, perMs: 60_000 },
+  "pib.gov.in": { capacity: 10, perMs: 60_000 },
+  "prsindia.org": { capacity: 10, perMs: 60_000 },
+  "egazette.gov.in": { capacity: 5, perMs: 60_000 },
+  "www.eci.gov.in": { capacity: 3, perMs: 60_000 },
+  "www.icra.in": { capacity: 5, perMs: 60_000 },
+  "www.crisilratings.com": { capacity: 5, perMs: 60_000 },
+  "www.crisil.com": { capacity: 5, perMs: 60_000 },
+  "www.careratings.com": { capacity: 5, perMs: 60_000 },
+  "www.careedge.in": { capacity: 5, perMs: 60_000 },
+  "www.indiaratings.co.in": { capacity: 5, perMs: 60_000 },
 } satisfies Record<string, { capacity: number; perMs: number }>;
 
 export function createIngestContext(deps: {

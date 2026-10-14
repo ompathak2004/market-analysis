@@ -8,10 +8,7 @@ const optionalString = z
     return trimmed ? trimmed : undefined;
   });
 
-const optionalPositiveInt = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
-  z.coerce.number().int().positive().optional(),
-);
+const optionalPositiveInt = z.coerce.number().int().positive().optional();
 
 const serviceSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
