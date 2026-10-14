@@ -10,7 +10,12 @@ import {
   syncUniverse,
   windowOutcome,
 } from "@ma/ingest";
-import { refreshEstimates, refreshMomentumSignals, refreshRiskSignals } from "@ma/intel";
+import {
+  refreshConcentrationSignals,
+  refreshEstimates,
+  refreshMomentumSignals,
+  refreshRiskSignals,
+} from "@ma/intel";
 import { pickBatch } from "@ma/jobs";
 import { forEachCompany, sumStats } from "./batch";
 import type { JobDef } from "./run";
@@ -106,10 +111,11 @@ export const coreJobs: JobDef[] = [
     run: async ({ ctx }) => {
       const asOf = isoDate(new Date());
       const ids = (await ctx.db.select({ id: companies.id }).from(companies)).map((c) => c.id);
-      const estimates = await refreshEstimates(ctx.db, asOf);
+      const estimates = await refreshEstimates(ctx.db, asOf, ctx.config.INTEL_UNIVERSE);
       const momentum = await refreshMomentumSignals(ctx.db, asOf);
+      const concentration = await refreshConcentrationSignals(ctx.db, asOf);
       const risk = await refreshRiskSignals(ctx.db, ids, asOf);
-      return { estimates, momentum, risk };
+      return { estimates, momentum, concentration, risk };
     },
   },
 ];

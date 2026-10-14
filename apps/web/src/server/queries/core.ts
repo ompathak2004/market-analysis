@@ -1,6 +1,7 @@
 import { NotFoundError } from "@ma/core";
 import {
   analystCalls,
+  and,
   announcements,
   companies,
   type counterparties,
@@ -15,7 +16,7 @@ import {
   sql,
 } from "@ma/db";
 import type { YahooRange } from "@ma/ingest";
-import { ESTIMATE_MODEL_VERSION } from "@ma/intel";
+import { activeSignalVersionClause, ESTIMATE_MODEL_VERSION } from "@ma/intel";
 import type { AppContext } from "../context";
 
 const MINUTE = 60_000;
@@ -99,7 +100,12 @@ export async function latestSignals(ctx: AppContext, companyId: number) {
       ctx.db
         .selectDistinctOn([signals.kind])
         .from(signals)
-        .where(eq(signals.companyId, companyId))
+        .where(
+          and(
+            eq(signals.companyId, companyId),
+            activeSignalVersionClause(sql`${signals.kind}`, sql`${signals.modelVersion}`),
+          ),
+        )
         .orderBy(signals.kind, desc(signals.asOf), desc(signals.modelVersion)),
     { ttlMs: 15 * MINUTE, staleMs: HOUR },
   );
@@ -698,7 +704,7 @@ export async function signalLeaderboard(
         .from(signals)
         .innerJoin(companies, eq(companies.id, signals.companyId))
         .where(
-          sql`${signals.kind} = ${kind} and (${signals.asOf}, ${signals.modelVersion}) = (select as_of, model_version from signals s2 where s2.company_id = ${signals.companyId} and s2.kind = ${kind} order by as_of desc, model_version desc limit 1)`,
+          sql`${signals.kind} = ${kind} and (${signals.asOf}, ${signals.modelVersion}) = (select as_of, model_version from signals s2 where s2.company_id = ${signals.companyId} and s2.kind = ${kind} and ${activeSignalVersionClause(sql`s2.kind`, sql`s2.model_version`)} order by as_of desc, model_version desc limit 1)`,
         )
         .orderBy(order === "desc" ? desc(signals.value) : signals.value)
         .limit(limit),

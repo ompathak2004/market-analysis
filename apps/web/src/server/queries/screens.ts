@@ -1,6 +1,6 @@
 import { type analystCalls, and, announcements, companies, desc, eq, gte, sql } from "@ma/db";
 import type { BrokerThesis } from "@ma/intel";
-import { brokerThesisSchema } from "@ma/intel";
+import { activeSignalVersionClause, brokerThesisSchema } from "@ma/intel";
 import { toNum } from "../../lib/format";
 import type { AppContext } from "../context";
 import {
@@ -317,7 +317,8 @@ export async function peers(ctx: AppContext, symbol: string, limit = 12): Promis
           order by date desc limit 1
         ) p on true
         left join lateral (
-          select value from signals where company_id = c.id and kind = 'distress_score'
+          select value from signals sg where sg.company_id = c.id and sg.kind = 'distress_score'
+            and ${activeSignalVersionClause(sql`sg.kind`, sql`sg.model_version`)}
           order by as_of desc, model_version desc limit 1
         ) s on true
         where c.sector = ${company.sector} and c.nse_symbol is not null

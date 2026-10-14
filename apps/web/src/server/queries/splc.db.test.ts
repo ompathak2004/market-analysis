@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { closeDb, createDb, type Db, sql } from "@ma/db";
+import { ESTIMATE_MODEL_VERSION } from "@ma/intel";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AppContext } from "../context";
 import { supplyChain, supplyChainKey } from "./core";
@@ -252,10 +253,10 @@ describe.skipIf(!url)("SPLC v2 read model and review queue (DATABASE_URL_TEST)",
       insert into relationship_estimates (relationship_id, as_of, method, value_cr, value_low_cr,
                                           value_high_cr, supplier_revenue_pct, inputs,
                                           model_version, value_basis)
-      values (${seed.rels.listed}, '2025-01-01', 'disclosed', 100, 90, 110, 12.5, '{}'::jsonb, 1,
-              'revenue_share'),
-             (${seed.rels.listed}, '2025-06-01', 'disclosed', 120, 110, 130, 12.5, '{}'::jsonb, 1,
-              'revenue_share'),
+      values (${seed.rels.listed}, '2025-01-01', 'disclosed', 100, 90, 110, 12.5, '{}'::jsonb,
+              ${ESTIMATE_MODEL_VERSION}, 'revenue_share'),
+             (${seed.rels.listed}, '2025-06-01', 'disclosed', 120, 110, 130, 12.5, '{}'::jsonb,
+              ${ESTIMATE_MODEL_VERSION}, 'revenue_share'),
              (${seed.rels.listed}, '2025-07-01', 'estimated', 999, 900, 1100, 50, '{}'::jsonb, 0,
               'revenue_share'),
              (${seed.rels.contract}, '2025-06-01', 'disclosed', 500, 500, 500, null, '{}'::jsonb,
@@ -342,7 +343,7 @@ describe.skipIf(!url)("SPLC v2 read model and review queue (DATABASE_URL_TEST)",
       lowCr: 110,
       highCr: 130,
       asOf: "2025-06-01",
-      modelVersion: 1,
+      modelVersion: ESTIMATE_MODEL_VERSION,
     });
     expect(listed?.contractTotalCr).toBeNull();
     expect(listed?.evidence).toHaveLength(1);
