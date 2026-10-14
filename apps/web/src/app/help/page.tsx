@@ -17,6 +17,10 @@ const SOURCES = [
   { label: "Travel", value: "ADS-B · OpenSky · adsb.lol · DGCA registry" },
   { label: "Logistics", value: "AISStream positions · facility geofences" },
   { label: "Intelligence", value: "gpt-oss-120b on Cerebras, evidence-cited" },
+  {
+    label: "Influence",
+    value: "NSE governance XBRL (DIN) · NSE related-party XBRL · shareholding pattern",
+  },
 ];
 
 export default function HelpPage() {
@@ -40,6 +44,13 @@ export default function HelpPage() {
           three source quotes. Contract totals are never summed into annual flow, legacy and expired
           edges are hidden, and the coverage pane shows filings read per source. Low-confidence or
           new-counterparty observations wait in the operator queue at /admin/review.
+        </p>
+        <p className="pane-section dim sm">
+          INFL maps who sits on the board, who controls the company and which entities it transacts
+          with. Directors are keyed by DIN, never by name; name-only matches stay pending until an
+          operator confirms them. Every confirmed link cites a filing span, the change feed starts
+          after the first read of each filing, and related-party transactions are flagged as
+          material from ₹10 Cr or 1% of revenue, whichever is lower.
         </p>
       </Pane>
     </div>

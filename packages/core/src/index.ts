@@ -1,3 +1,4 @@
+export * from "./announcements.js";
 export * from "./config.js";
 export * from "./deadline.js";
 export * from "./errors.js";

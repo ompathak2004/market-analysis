@@ -141,12 +141,12 @@ export function TabStrip({ symbol, tab }: { symbol: string; tab: Tab }) {
           data-tab-index={i + 1}
           title={TAB_TITLE[t]}
         >
-          <kbd>{i + 1}</kbd>
+          <kbd>{(i + 1) % 10}</kbd>
           {t.toUpperCase()}
         </Link>
       ))}
       <span className="tab-desc">/ {TAB_TITLE[tab]}</span>
-      <span className="tab-hint">{symbol} · NSE · [1-9] switch</span>
+      <span className="tab-hint">{symbol} · NSE · [1-9,0] switch</span>
     </nav>
   );
 }

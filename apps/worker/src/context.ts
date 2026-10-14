@@ -27,6 +27,11 @@ const workerEnvSchema = z.object({
     .optional()
     .transform((v) => v?.trim() || undefined),
   OPS_DIGEST_FROM: z.string().default("Market Analysis <onboarding@resend.dev>"),
+  BACKUP_ENCRYPTION_KEY: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined)
+    .refine((v) => v === undefined || /^[0-9a-f]{64}$/i.test(v), "must be 64 hex characters"),
 });
 
 export type WorkerEnv = z.infer<typeof workerEnvSchema>;

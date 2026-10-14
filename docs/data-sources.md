@@ -11,6 +11,8 @@
 | Annual reports (BSE/NSE PDFs) | Ind AS 108 concentration, customer mentions | `DocumentStore` (unpdf) | host-based | stored text, `RELATIONSHIP_EXTRACTOR_VERSION` |
 | Concall transcripts (PDF) | Customer/supplier mentions, top-N statements | `DocumentStore` | host-based | same |
 | Firecrawl | Fallback for JS-heavy or blocked pages | API key | provider | `documents` |
+| NSE corporate governance (`/api/integrated-filing-results?index=equities&symbol=&type=Integrated Filing- Governance`, legacy `/api/corporate-governance-master?index=equities&symbol=`) | Board composition for INFL: director name, DIN, category, appointment and cessation dates | HTTP JSON listing → XBRL instance on `nsearchives.nseindia.com`, snapshotted with `DocumentStore.putInline` as `nse_governance` (no Firecrawl fallback) | 3/10s, 5/10s | weekly; re-resolved only when the content hash or a parser, normalizer, resolver or event-rule version changes |
+| NSE related-party transactions (`/api/integrated-filing-results?index=equities&symbol=&type=Integrated Filing- Financials`, legacy `/api/related-party-transactions-master?index=equities&symbol=`) | Half-yearly related-party transactions for INFL: counterparty, relationship, transaction type, value | same, stored as `nse_rpt`; the latest two filings are tried | 3/10s, 5/10s | same |
 
 ## Storage policy
 

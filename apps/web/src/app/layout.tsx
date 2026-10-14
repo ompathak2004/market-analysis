@@ -20,6 +20,7 @@ import "@/styles/controls.css";
 import "@/styles/charts.css";
 import "@/styles/utilities.css";
 import "@/styles/admin.css";
+import "@/styles/infl.css";
 
 export const metadata: Metadata = {
   title: "MA Terminal",

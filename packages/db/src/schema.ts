@@ -464,12 +464,17 @@ export const announcements = pgTable(
     triageCategory: text("triage_category"),
     soWhat: text("so_what"),
     triageModelVersion: smallint("triage_model_version"),
+    categoryKey: text("category_key"),
+    retentionClass: text("retention_class"),
+    retainUntil: date("retain_until"),
+    policyVersion: smallint("policy_version").notNull().default(0),
     createdAt: timestamps.createdAt,
   },
   (t) => [
     uniqueIndex("announcements_dedupe_uq").on(t.dedupeKey),
     index("announcements_published_idx").on(t.publishedAt),
     index("announcements_company_date_idx").on(t.companyId, t.publishedAt),
+    index("announcements_retention_idx").on(t.retentionClass, t.retainUntil),
   ],
 );
 
@@ -972,6 +977,7 @@ export const chokepointTransits = pgTable(
       onDelete: "set null",
     }),
     direction: text("direction"),
+    endedBy: text("ended_by"),
   },
   (t) => [
     uniqueIndex("chokepoint_transits_uq").on(t.mmsi, t.chokepoint, t.enteredAt),

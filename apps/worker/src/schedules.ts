@@ -19,6 +19,8 @@ export const SCHEDULES: readonly ScheduleEntry[] = [
   { type: "fundamentals.fanout", cron: "10 * * * *" },
   { type: "announcements.fanout", cron: "*/10 * * * *" },
   { type: "relationships.fanout", cron: "20,50 * * * *" },
+  { type: "relationships.counterparties", cron: "30 2 * * *" },
+  { type: "orders.fanout", cron: "30 7 * * *" },
   { type: "intel.fanout", cron: "30 2,14 * * *" },
   { type: "research.fanout", cron: "5,35 * * * *" },
   { type: "broker.fetch", cron: "*/15 * * * *" },
@@ -45,6 +47,9 @@ export const SCHEDULES: readonly ScheduleEntry[] = [
   { type: "documents.snapshot", cron: "45 * * * *" },
   { type: "documents.release", cron: "40 4 * * *" },
   { type: "documents.gc", cron: "50 4 * * *" },
+  { type: "influence.governance.fanout", cron: "0 3 * * 0" },
+  { type: "influence.rpt.fanout", cron: "30 3 * * 0" },
+  { type: "influence.perimeter.fanout", cron: "0 4 * * 0" },
 ];
 
 export function scheduleId(entry: ScheduleEntry): string {

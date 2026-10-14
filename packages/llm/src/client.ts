@@ -1,6 +1,6 @@
 import { deadlineSignal, type Logger, remainingMs, sleep, UpstreamError } from "@ma/core";
 import type { z } from "zod";
-import type { LlmBudget, LlmReservation } from "./budget.js";
+import type { LlmBudget, LlmBudgetClass, LlmReservation } from "./budget.js";
 import { LlmInvalidOutput, LlmPromptTooLarge } from "./errors.js";
 import { type JsonSchema, toStrictJsonSchema } from "./schema.js";
 
@@ -19,6 +19,7 @@ export interface JsonRequest<T> {
   maxOutputTokens?: number;
   temperature?: number;
   model?: "primary" | "fallback";
+  budgetClass?: LlmBudgetClass;
 }
 
 export interface JsonResult<T> {
@@ -155,7 +156,7 @@ export class LlmClient {
     const estimated = estimateTokens(req.system + user) + maxOutputTokens;
     let lastError = "";
     for (let attempt = 1; attempt <= HTTP_ATTEMPTS; attempt++) {
-      const reservation = await this.opts.budget?.reserve(estimated);
+      const reservation = await this.opts.budget?.reserve(estimated, req.budgetClass ?? "insights");
       const started = Date.now();
       let res: Response;
       try {

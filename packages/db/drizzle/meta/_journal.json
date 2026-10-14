@@ -64,6 +64,20 @@
       "when": 1791968946316,
       "tag": "0008_splc_v3",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791969330270,
+      "tag": "0009_announcement_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791969810331,
+      "tag": "0010_influence",
+      "breakpoints": true
     }
   ]
 }

@@ -54,6 +54,10 @@ const dailyPrice = z
   .strict();
 const byDay = (p: { symbol: string; date: string }) => `${p.symbol}:${p.date}`;
 
+const announcementStep = z.object({ day: isoDay, maxId: z.number().int().nonnegative() }).strict();
+const backedUpStep = announcementStep.extend({ backupKey: z.string().min(1).max(200) }).strict();
+const byStep = (p: { day: string; maxId: number }) => `${p.day}:${p.maxId}`;
+
 export const JOB_CONTRACTS = {
   "universe.fanout": job("universe", "control", "fanout", empty, MINUTE),
   "universe.sync": job(
@@ -112,10 +116,14 @@ export const JOB_CONTRACTS = {
     "relationships",
     "parse",
     "unit",
-    companyUnit,
+    z.object({ companyId: z.number().int().positive(), force: z.boolean().optional() }).strict(),
     5 * MINUTE,
-    byCompany,
+    (p) => (p.force ? `${p.companyId}:force` : String(p.companyId)),
   ),
+  "relationships.counterparties": job("relationships", "compute", "unit", empty, 5 * MINUTE),
+  "relationships.rebuild": job("relationships", "control", "fanout", empty, MINUTE, () => "", 1),
+  "orders.fanout": job("relationships", "control", "fanout", empty, MINUTE),
+  "orders.extract": job("relationships", "io", "unit", companyUnit, 5 * MINUTE, byCompany),
   "intel.fanout": job("intel", "control", "fanout", empty, MINUTE),
   "intel.network": job(
     "intel",
@@ -145,6 +153,12 @@ export const JOB_CONTRACTS = {
     3 * MINUTE,
     (p) => String(p.callId),
   ),
+  "influence.governance.fanout": job("influence", "control", "fanout", empty, MINUTE),
+  "influence.governance": job("influence", "io", "unit", companyUnit, 3 * MINUTE, byCompany),
+  "influence.rpt.fanout": job("influence", "control", "fanout", empty, MINUTE),
+  "influence.rpt": job("influence", "io", "unit", companyUnit, 3 * MINUTE, byCompany),
+  "influence.perimeter.fanout": job("influence", "control", "fanout", empty, MINUTE),
+  "influence.perimeter": job("influence", "compute", "unit", companyUnit, 2 * MINUTE, byCompany),
   "insights.fanout": job("insights", "control", "fanout", empty, MINUTE),
   "insights.company": job("insights", "llm", "unit", companyUnit, 4 * MINUTE, byCompany),
   "insights.digest": job("insights", "llm", "unit", companyUnit, 4 * MINUTE, byCompany),
@@ -173,7 +187,42 @@ export const JOB_CONTRACTS = {
     MINUTE,
     (p) => p.family,
   ),
-  "maintenance.prune": job(null, "compute", "unit", empty, 5 * MINUTE),
+  "maintenance.prune": job(null, "compute", "unit", empty, 10 * MINUTE),
+  "maintenance.announcements": job(null, "control", "fanout", empty, MINUTE, () => "", 1),
+  "maintenance.announcements.backup": job(
+    null,
+    "compute",
+    "unit",
+    announcementStep,
+    10 * MINUTE,
+    byStep,
+    2,
+  ),
+  "maintenance.announcements.classify": job(
+    null,
+    "compute",
+    "unit",
+    backedUpStep,
+    5 * MINUTE,
+    byStep,
+  ),
+  "maintenance.announcements.delete": job(
+    null,
+    "compute",
+    "unit",
+    backedUpStep,
+    5 * MINUTE,
+    byStep,
+  ),
+  "maintenance.announcements.reindex": job(
+    null,
+    "compute",
+    "unit",
+    announcementStep,
+    15 * MINUTE,
+    byStep,
+    1,
+  ),
   "ops.digest": job(null, "control", "unit", empty, MINUTE),
   "documents.snapshot": job("documents", "control", "fanout", empty, 2 * MINUTE),
   "documents.revision": job(

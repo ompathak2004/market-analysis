@@ -1,0 +1,51 @@
+{
+  "data": [
+    {
+      "attFileSize": "0 Bytes",
+      "audited": null,
+      "broadcast_Date": "30-Jul-2026 10:38:24",
+      "cmName": "Tata Consultancy Services Limited",
+      "consolidated": null,
+      "creation_Date": "30-Jul-2026 10:38:26",
+      "diff": "00:00:02",
+      "ixbrl": "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_GOVERNANCE_180283_30072026103826_iXBRL_WEB.html",
+      "ixbrlFileSize": "59.89 KB",
+      "pdf_attach": "https://nsearchives.nseindia.com/corporate/null",
+      "qe_Date": "30-JUN-2026",
+      "revised_Date": null,
+      "revision_Remark": null,
+      "seq_Id": "180283",
+      "smName": "Tata Consultancy Services Limited",
+      "symbol": "TCS",
+      "type": "Integrated Filing- Governance",
+      "type_Sub": "New",
+      "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_GOVERNANCE_1704700_30072026103826_WEB.xml",
+      "xbrlFileSize": "88.81 KB"
+    },
+    {
+      "attFileSize": "0 Bytes",
+      "audited": null,
+      "broadcast_Date": "23-Apr-2026 19:48:11",
+      "cmName": "Tata Consultancy Services Limited",
+      "consolidated": null,
+      "creation_Date": "23-Apr-2026 19:48:15",
+      "diff": "00:00:04",
+      "ixbrl": "https://nsearchives.nseindia.com/corporate/ixbrl/INTEGRATED_FILING_GOVERNANCE_152446_23042026194814_iXBRL_WEB.html",
+      "ixbrlFileSize": "91.95 KB",
+      "pdf_attach": "https://nsearchives.nseindia.com/corporate/null",
+      "qe_Date": "31-MAR-2026",
+      "revised_Date": null,
+      "revision_Remark": null,
+      "seq_Id": "152446",
+      "smName": "Tata Consultancy Services Limited",
+      "symbol": "TCS",
+      "type": "Integrated Filing- Governance",
+      "type_Sub": "New",
+      "xbrl": "https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_GOVERNANCE_1657992_23042026074814_WEB.xml",
+      "xbrlFileSize": "140.80 KB"
+    }
+  ],
+  "size": 20,
+  "page": -1,
+  "totalCount": 2
+}

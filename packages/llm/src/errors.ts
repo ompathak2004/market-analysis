@@ -1,8 +1,13 @@
 import { AppError } from "@ma/core";
+import type { LlmBudgetClass } from "./budget.js";
 
 export class LlmBudgetExceeded extends AppError {
-  constructor(used: number, budget: number) {
-    super("llm daily token budget exhausted", "llm_budget_exceeded", 429, { used, budget });
+  constructor(used: number, budget: number, budgetClass: LlmBudgetClass | "total") {
+    super(`llm daily token budget exhausted (${budgetClass})`, "llm_budget_exceeded", 429, {
+      used,
+      budget,
+      budgetClass,
+    });
   }
 }
 

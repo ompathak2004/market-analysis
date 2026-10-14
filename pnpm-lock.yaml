@@ -197,6 +197,9 @@ importers:
       '@ma/db':
         specifier: workspace:*
         version: link:../db
+      '@ma/ingest':
+        specifier: workspace:*
+        version: link:../ingest
       '@ma/llm':
         specifier: workspace:*
         version: link:../llm

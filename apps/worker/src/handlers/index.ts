@@ -1,8 +1,10 @@
 import type { HandlerMap } from "../registry.js";
 import { altdataHandlers } from "./altdata.js";
 import { documentHandlers } from "./documents.js";
+import { influenceHandlers } from "./influence.js";
 import { insightHandlers } from "./insights.js";
 import { intelHandlers } from "./intel.js";
+import { maintenanceHandlers } from "./maintenance.js";
 import { marketHandlers } from "./market.js";
 import { opsHandlers } from "./ops.js";
 import { priceHandlers } from "./prices.js";
@@ -15,8 +17,10 @@ export const HANDLERS: HandlerMap = {
   ...relationshipHandlers,
   ...intelHandlers,
   ...researchHandlers,
+  ...influenceHandlers,
   ...insightHandlers,
   ...altdataHandlers,
   ...documentHandlers,
   ...opsHandlers,
+  ...maintenanceHandlers,
 };

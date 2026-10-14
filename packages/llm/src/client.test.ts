@@ -15,7 +15,7 @@ function fakeBudget() {
   const budget = {
     async reserve(tokens: number): Promise<LlmReservation> {
       log.push(["reserve", tokens]);
-      return { key: "k", tokens };
+      return { key: "k", classKey: "c", tokens };
     },
     async settle(r: LlmReservation, actual: number): Promise<number> {
       log.push(["settle", actual - r.tokens]);
