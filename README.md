@@ -10,7 +10,7 @@ Bloomberg-like intelligence terminal for Indian equities: supply-chain relations
 ## Quick start
 
 ```
-cp .env.example .env      # fill DATABASE_URL, REDIS_URL, API_KEY, CRON_SECRET, FIRECRAWL_API_KEY, CEREBRAS_API_KEY
+cp .env.example .env      # fill DATABASE_URL, REDIS_URL, API_KEY, FIRECRAWL_API_KEY, CEREBRAS_API_KEY
 pnpm install
 pnpm db:migrate
 pnpm dev:web              # terminal UI, /api/v1 and /api/cron on :3000

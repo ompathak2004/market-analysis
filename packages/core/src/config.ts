@@ -47,7 +47,6 @@ const serviceSchema = z.object({
 
 const webSchema = serviceSchema.extend({
   API_KEY: z.string().min(16),
-  CRON_SECRET: z.string().min(16),
   ADMIN_API_KEY: optionalString,
 });
 

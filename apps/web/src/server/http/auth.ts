@@ -21,14 +21,6 @@ export function requireApiKey(ctx: AppContext, req: Request): void {
   throw new UnauthorizedError("missing or invalid x-api-key");
 }
 
-export function requireCronSecret(ctx: AppContext, req: Request): void {
-  const auth = req.headers.get("authorization") ?? "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (!token || !safeEqual(token, ctx.config.CRON_SECRET)) {
-    throw new UnauthorizedError("missing or invalid cron secret");
-  }
-}
-
 export const ADMIN_COOKIE = "ma_admin";
 export const ADMIN_TTL_MS = 12 * 60 * 60 * 1000;
 export const ADMIN_REVIEWER = "operator";

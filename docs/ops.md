@@ -41,7 +41,7 @@ The admin is granted `SET` and `INHERIT` membership in `ma_migrator` and `ma_wor
 
 `ma_web` writes nothing directly. Reviewer decisions go through the `SECURITY DEFINER` functions `review_relationship(bigint, review_decision, text, text)` and `review_influence_edge(bigint, text, text, text, integer)`; their migrations revoke `EXECUTE` from `PUBLIC` and the bootstrap script grants it to `ma_web` only. Each grant is skipped while its function does not exist yet, so rerun the script after the migration that adds one. Because `ma_web` defaults to read-only transactions, the web app calls these functions inside an explicit `read write` transaction.
 
-Cutover order: run `pnpm db:migrate` as the admin one last time (migrations through `0004_campaign_parent_job`), run the bootstrap script with `-v owner_role=avnadmin`, set the SSM `MIGRATION_DATABASE_URL` to the `ma_migrator` URL, set the SSM `DATABASE_URL` to the `ma_worker` URL (then force a new deployment), and set the Vercel `DATABASE_URL` to the `ma_web` URL. The worker reads only the shared variables; `API_KEY`, `CRON_SECRET` and `ADMIN_API_KEY` belong to the web app and are not stored for the worker.
+Cutover order: run `pnpm db:migrate` as the admin one last time (migrations through `0004_campaign_parent_job`), run the bootstrap script with `-v owner_role=avnadmin`, set the SSM `MIGRATION_DATABASE_URL` to the `ma_migrator` URL, set the SSM `DATABASE_URL` to the `ma_worker` URL (then force a new deployment), and set the Vercel `DATABASE_URL` to the `ma_web` URL. The worker reads only the shared variables; `API_KEY` and `ADMIN_API_KEY` belong to the web app and are not stored for the worker.
 
 ## SPLC review queue
 
