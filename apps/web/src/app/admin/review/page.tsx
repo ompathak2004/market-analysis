@@ -2,11 +2,19 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { logout } from "@/app/admin/actions";
 import { InfluenceReviewQueue } from "@/components/admin/influence-review-queue";
+import { PrecisionGate } from "@/components/admin/precision-gate";
 import { ReviewQueue } from "@/components/admin/review-queue";
 import { attempt, PaneError } from "@/components/panes/shared";
-import { getContext } from "@/server/context";
+import { type AppContext, getContext } from "@/server/context";
 import { hasAdminSession } from "@/server/http/admin-session";
-import { decodeCursor, influenceReviewQueue, reviewQueue } from "@/server/queries";
+import {
+  decodeCursor,
+  decodeSampleCursor,
+  influenceReviewQueue,
+  precisionSummary,
+  reviewQueue,
+  sampleQueue,
+} from "@/server/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +22,15 @@ export const metadata: Metadata = {
   title: "Review · MA Terminal",
   robots: { index: false, follow: false },
 };
+
+async function splcQueue(ctx: AppContext, sample: string | null, cursor: string | null) {
+  if (!sample) return { page: await reviewQueue(ctx, { cursor }), summary: null };
+  const [page, summary] = await Promise.all([
+    sampleQueue(ctx, { name: sample, cursor }),
+    precisionSummary(ctx, sample),
+  ]);
+  return { page, summary };
+}
 
 export default async function AdminReviewPage({
   searchParams,
@@ -24,21 +41,26 @@ export default async function AdminReviewPage({
   if (!ctx.config.ADMIN_API_KEY) notFound();
   if (!(await hasAdminSession(ctx))) redirect("/admin/login");
   const params = await searchParams;
+  const sample = typeof params.sample === "string" ? params.sample : null;
+  const scope = sample ? `sample=${encodeURIComponent(sample)}` : null;
   const raw = params.cursor;
-  const cursor = typeof raw === "string" && decodeCursor(raw) ? raw : null;
+  const cursor =
+    typeof raw === "string" && (sample ? decodeSampleCursor(raw) : decodeCursor(raw)) ? raw : null;
   const rawInfl = params.infl;
   const inflCursor = typeof rawInfl === "string" && decodeCursor(rawInfl) ? rawInfl : null;
   const [res, infl] = await Promise.all([
-    attempt(reviewQueue(ctx, { cursor })),
+    attempt(splcQueue(ctx, sample, cursor)),
     attempt(influenceReviewQueue(ctx, { cursor: inflCursor })),
   ]);
   return (
     <div className="grid grid-review admin-screen">
       {res.ok ? (
         <ReviewQueue
-          items={res.data.items}
-          nextCursor={res.data.nextCursor}
+          items={res.data.page.items}
+          nextCursor={res.data.page.nextCursor}
           paged={cursor != null}
+          sample={sample}
+          banner={res.data.summary ? <PrecisionGate summary={res.data.summary} /> : null}
           logout={
             <form action={logout}>
               <button type="submit" className="admin-button">
@@ -50,9 +72,9 @@ export default async function AdminReviewPage({
       ) : (
         <PaneError
           id="review"
-          title="REVIEW · SPLC OBSERVATIONS"
+          title={sample ? "REVIEW · SPLC PRECISION SAMPLE" : "REVIEW · SPLC OBSERVATIONS"}
           code={res.code}
-          source="relationship_observations"
+          source={sample ? "relationship_precision_samples" : "relationship_observations"}
         />
       )}
       {infl.ok ? (
@@ -60,6 +82,7 @@ export default async function AdminReviewPage({
           items={infl.data.items}
           nextCursor={infl.data.nextCursor}
           paged={inflCursor != null}
+          scope={scope}
         />
       ) : (
         <PaneError

@@ -63,6 +63,25 @@ curl -s -X POST -H "x-admin-key: $ADMIN_API_KEY" -H "content-type: application/j
 
 `GET` returns `{items, nextCursor}`; `POST` takes `decision` `confirm`, `reject` or `block` and returns `{reviewId, observationStatus, relationshipId}`. Errors use `{error: {code, message}}`: 400 for a bad body or cursor, 401 for a missing or wrong key, 404 for an unknown observation or when review is disabled.
 
+## SPLC precision gate
+
+Legacy SPLC rows are deleted only after a labelled sample of the rebuilt graph shows at least 90 % precision. A sample is a frozen, seeded draw of `relationship_observations` in status `auto`, `confirmed` or `rejected` whose supplier, customer and cost bucket match an `active` edge.
+
+```bash
+pnpm --filter @ma/worker cli run relationships.sample '{"name":"gate-2026-10","size":100}' --wait
+pnpm --filter @ma/worker cli run relationships.sample '{"name":"gate-2026-10-ar","size":100,"family":"annual_report"}' --wait
+```
+
+`name` (`[a-z0-9_-]`, up to 64 characters) is required and unique; rerunning with an existing name returns the stored sample (`created: 0`) without drawing again. `size` defaults to 100 (max 500), `family` limits the draw to one extractor family, and `seed` (default: the name) fixes the order. The job fails without retry when no observation qualifies.
+
+Review the sample at `/admin/review?sample=gate-2026-10`. The SPLC pane lists only the sample's undecided items in draw order, with the same keys as the normal queue, and a gate line above them shows the counts, the precision, the Wilson 95 % lower bound and PASS or FAIL. An item counts as decided by its latest review; items blocked through another observation's pair block count as blocked. Rejected and blocked items count against precision.
+
+```bash
+curl -s -H "x-admin-key: $ADMIN_API_KEY" "$WEB_URL/api/v1/admin/relationships/precision?sample=gate-2026-10"
+```
+
+It returns `{sample, counts: {items, reviewed, confirmed, rejected, blocked, unreviewed}, precision, lowerBound, gate, passes}` and 404 for an unknown sample. `passes` is true only when every one of the `size` drawn items has a decision and `lowerBound` ≥ 0.9; with 100 items that needs 96 confirmations (95 gives 0.888). If observations are deleted after the draw (`counts.items` < `sample.size`), the sample can no longer pass; draw a new one under a new name.
+
 ## Pause, resume, enqueue
 
 The authoritative switch is the `job_control` row (`paused` = nobody claims work, `worker` = the ECS worker runs schedules and jobs; migration `0011` removed `legacy`). Changing it does not need a deploy. `GET /api/v1/ops/jobs` (`x-admin-key: $ADMIN_API_KEY`) returns the same picture from the web app: mode, lease, `job_runs` by type and status for the last 24 h, `job_daily_stats`, running campaigns and unresolved `ops_alerts`.
@@ -206,7 +225,7 @@ None of the pruned tables is referenced by `evidence_spans` or `announcement_hol
 
 ## Announcement policy and one-off cleanup
 
-Every announcement gets `category_key`, `retention_class` (`forever`, `five_years`, `noise`, `review_hold`), `retain_until` and `policy_version` from `packages/ingest/src/announcements/policy.ts` (`ANNOUNCEMENT_POLICY_VERSION`). The ingester drops `noise` rows at fetch time and rewrites the four columns of existing rows whose `policy_version` is older. An announcement is pinned while it has a row in `announcement_holds`, or while a document with `source` in (`announcement_metadata`, `order_filing`) and `url` equal to `nse://announcement/<id>` or to the announcement's `attachment_url` has evidence spans. Pinned rows are never deleted. Pins found by the cleanup are recorded as `announcement_holds` rows with `reason = 'evidence'`, and the announcement is set to `review_hold`.
+Every announcement gets `category_key`, `retention_class` (`forever`, `five_years`, `noise`, `review_hold`), `retain_until` and `policy_version` from `packages/ingest/src/announcements/policy.ts` (`ANNOUNCEMENT_POLICY_VERSION`). The ingester drops `noise` rows at fetch time and rewrites the four columns of existing rows whose `policy_version` is older. An announcement is pinned while it has a row in `announcement_holds`, or while a document with `source` in (`announcement_metadata`, `order_filing`, `rating_rationale`) and `url` equal to `nse://announcement/<id>`, `nse://announcement/<id>/rating` or the announcement's `attachment_url` has evidence spans. Pinned rows are never deleted, and neither is any announcement that has such a linked document, cited or not: the document exists before any extraction (regex, cached or LLM) reads it, so the delete only has to see the document row. Each delete batch takes the `announcement_evidence` advisory lock exclusively while `writeExtraction` holds it shared, so a batch never commits between an extraction's checks and its evidence write. The one window left is an announcement past its retention date that a pipeline first reads in the same seconds a batch deletes it; the document and its evidence stay valid, only the NEWS row is gone. Pins found by the cleanup are recorded as `announcement_holds` rows with `reason = 'evidence'`, and the announcement is set to `review_hold`.
 
 `maintenance.announcements` is a one-off chain with no schedule. Each step enqueues the next one only after it succeeds, so nothing is deleted until a verified backup exists:
 

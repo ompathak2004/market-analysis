@@ -500,3 +500,44 @@ export const companyGraphState = pgTable("company_graph_state", {
   rebuiltAt: timestamp("rebuilt_at", { withTimezone: true }),
   updatedAt: timestamps.updatedAt,
 });
+
+export const PRECISION_SAMPLE_NAME = /^[a-z0-9_-]{1,64}$/;
+
+export const relationshipPrecisionSamples = pgTable(
+  "relationship_precision_samples",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    extractorFamily: relationshipFamily("extractor_family"),
+    size: integer("size").notNull(),
+    seed: text("seed").notNull(),
+    createdAt: timestamps.createdAt,
+  },
+  (t) => [
+    uniqueIndex("relationship_precision_samples_name_uq").on(t.name),
+    check(
+      "relationship_precision_samples_name_ck",
+      sql`${t.name} ~ ${sql.raw(`'${PRECISION_SAMPLE_NAME.source}'`)}`,
+    ),
+    check("relationship_precision_samples_size_ck", sql`${t.size} > 0`),
+  ],
+);
+
+export const relationshipPrecisionSampleItems = pgTable(
+  "relationship_precision_sample_items",
+  {
+    sampleId: integer("sample_id")
+      .notNull()
+      .references(() => relationshipPrecisionSamples.id, { onDelete: "cascade" }),
+    observationId: bigint("observation_id", { mode: "number" })
+      .notNull()
+      .references(() => relationshipObservations.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.sampleId, t.observationId] }),
+    uniqueIndex("relationship_precision_sample_items_position_uq").on(t.sampleId, t.position),
+    index("relationship_precision_sample_items_observation_idx").on(t.observationId),
+    check("relationship_precision_sample_items_position_ck", sql`${t.position} > 0`),
+  ],
+);

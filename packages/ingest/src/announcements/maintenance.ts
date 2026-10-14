@@ -11,8 +11,13 @@ export const VACUUM_CHECK_EVERY = 10;
 export const VACUUM_BACKLOG_LIMIT = 2;
 const INSUFFICIENT_PRIVILEGE = "42501";
 export const EVIDENCE_HOLD = "evidence";
-export const ANNOUNCEMENT_DOCUMENT_SOURCES = ["announcement_metadata", "order_filing"] as const;
+export const ANNOUNCEMENT_DOCUMENT_SOURCES = [
+  "announcement_metadata",
+  "order_filing",
+  "rating_rationale",
+] as const;
 export const ANNOUNCEMENT_DOCUMENT_PREFIX = "nse://announcement/";
+export const ANNOUNCEMENT_EVIDENCE_LOCK = "announcement_evidence";
 
 type Fragment = ReturnType<typeof sql>;
 type Executor = Pick<Db, "execute" | "transaction">;
@@ -50,14 +55,15 @@ const sources = sql.join(
   sql`, `,
 );
 
-function citedBy(alias: Fragment): Fragment {
-  return sql`
-    select 1 from documents d
-    join document_revisions r on r.document_id = d.id
-    join evidence_spans e on e.document_revision_id = r.id
-    where d.source in (${sources})
+function linkedDocument(alias: Fragment): Fragment {
+  return sql`d.source in (${sources})
       and (d.url = ${ANNOUNCEMENT_DOCUMENT_PREFIX} || ${alias}.id::text
+        or d.url like ${ANNOUNCEMENT_DOCUMENT_PREFIX} || ${alias}.id::text || '/%'
         or d.url = ${alias}.attachment_url)`;
+}
+
+function documented(alias: Fragment): Fragment {
+  return sql`select 1 from documents d where ${linkedDocument(alias)}`;
 }
 
 export async function announcementFootprint(
@@ -183,7 +189,7 @@ export async function holdCitedAnnouncements(
           join document_revisions r on r.document_id = d.id
           join evidence_spans e on e.document_revision_id = r.id
           join announcements a
-            on a.id = substring(d.url from ${`^${ANNOUNCEMENT_DOCUMENT_PREFIX}([0-9]+)$`})::int
+            on a.id = substring(d.url from ${`^${ANNOUNCEMENT_DOCUMENT_PREFIX}([0-9]+)(?:/[a-z_]+)?$`})::int
           where d.source in (${sources}) and d.url like ${`${ANNOUNCEMENT_DOCUMENT_PREFIX}%`}
             and a.id <= ${maxId}
           union all
@@ -223,12 +229,13 @@ export async function deleteAnnouncementBatch(
     db,
     async (tx) => {
       await tx.execute(sql.raw(`set local statement_timeout = '${DELETE_STATEMENT_TIMEOUT}'`));
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${ANNOUNCEMENT_EVIDENCE_LOCK}))`);
       const rows = await tx.execute<{ id: number }>(sql`
         delete from announcements where id in (
           select a.id from announcements a
           where ${due} and a.id <= ${maxId}
             and not exists (select 1 from announcement_holds h where h.announcement_id = a.id)
-            and not exists (${citedBy(sql`a`)})
+            and not exists (${documented(sql`a`)})
           order by a.id
           limit ${opts.limit ?? DELETE_BATCH}
           for update skip locked)

@@ -147,6 +147,21 @@ describe.skipIf(!url)("announcement maintenance (DATABASE_URL_TEST)", () => {
         attachmentUrl: attachment,
       });
       await cite(tx, attachment, "announcement_metadata");
+      const citedByRating = await announcement(tx, companyId, {
+        subject: "Credit rating",
+        retentionClass: "five_years",
+        retainUntil: past,
+      });
+      await cite(tx, `${ANNOUNCEMENT_DOCUMENT_PREFIX}${citedByRating}/rating`, "rating_rationale");
+      const documented = await announcement(tx, companyId, {
+        subject: "Order win stored but not yet cited",
+        retentionClass: "five_years",
+        retainUntil: past,
+      });
+      await tx.execute(sql`
+        insert into documents (url, source, sha256, byte_size, fetched_at)
+        values (${`${ANNOUNCEMENT_DOCUMENT_PREFIX}${documented}`}, 'order_filing', ${randomUUID()}, 1,
+                now() - interval '400 days')`);
       const expired = await announcement(tx, companyId, {
         subject: "Credit rating",
         retentionClass: "five_years",
@@ -174,24 +189,38 @@ describe.skipIf(!url)("announcement maintenance (DATABASE_URL_TEST)", () => {
         pauseMs: 0,
       });
       expect(result.complete).toBe(true);
-      expect(result.held).toBeGreaterThanOrEqual(2);
-      const ids = [noise, pinned, citedById, citedByUrl, expired, live, forever, later];
+      expect(result.held).toBeGreaterThanOrEqual(3);
+      const ids = [
+        noise,
+        pinned,
+        citedById,
+        citedByUrl,
+        citedByRating,
+        documented,
+        expired,
+        live,
+        forever,
+        later,
+      ];
       expect(await surviving(tx, ids)).toEqual([
         pinned,
         citedById,
         citedByUrl,
+        citedByRating,
+        documented,
         live,
         forever,
         later,
       ]);
       const holds = await tx.execute<{ announcement_id: number; reason: string }>(sql`
         select announcement_id, reason from announcement_holds
-        where announcement_id in (${pinned}, ${citedById}, ${citedByUrl})
+        where announcement_id in (${pinned}, ${citedById}, ${citedByUrl}, ${citedByRating})
         order by announcement_id, reason`);
       expect(holds.map((h) => [Number(h.announcement_id), h.reason])).toEqual([
         [pinned, "legal"],
         [citedById, "evidence"],
         [citedByUrl, "evidence"],
+        [citedByRating, "evidence"],
       ]);
       const classes = await tx.execute<{ retention_class: string }>(sql`
         select retention_class from announcements where id = ${citedById}`);

@@ -1,4 +1,5 @@
 import { MINUTE, sha256 } from "@ma/core";
+import { PRECISION_SAMPLE_NAME, relationshipFamily } from "@ma/db";
 import { z } from "zod";
 
 export const LANES = ["control", "io", "parse", "compute", "llm", "cache"] as const;
@@ -61,6 +62,15 @@ const byDay = (p: { symbol: string; date: string }) => `${p.symbol}:${p.date}`;
 const announcementStep = z.object({ day: isoDay, maxId: z.number().int().nonnegative() }).strict();
 const backedUpStep = announcementStep.extend({ backupKey: z.string().min(1).max(200) }).strict();
 const byStep = (p: { day: string; maxId: number }) => `${p.day}:${p.maxId}`;
+
+const precisionSample = z
+  .object({
+    name: z.string().regex(PRECISION_SAMPLE_NAME),
+    size: z.number().int().min(1).max(500).optional(),
+    family: z.enum(relationshipFamily.enumValues).optional(),
+    seed: z.string().min(1).max(64).optional(),
+  })
+  .strict();
 
 export const JOB_CONTRACTS = {
   "universe.fanout": job("universe", "control", "fanout", empty, MINUTE),
@@ -145,6 +155,9 @@ export const JOB_CONTRACTS = {
     (p) => `${p.source}:${p.documentId}:${p.revisionId}`,
   ),
   "relationships.priors": job("intel", "compute", "unit", empty, 5 * MINUTE),
+  "relationships.sample": job(null, "control", "unit", precisionSample, 2 * MINUTE, (p) => p.name),
+  "relationships.facts.fanout": job("relationships", "control", "fanout", empty, MINUTE),
+  "relationships.facts": job("relationships", "parse", "unit", companyUnit, 5 * MINUTE, byCompany),
   "ratings.fanout": job("relationships", "control", "fanout", empty, MINUTE),
   "ratings.sync": job("relationships", "io", "unit", companyUnit, 4 * MINUTE, byCompany),
   "presentations.fanout": job("relationships", "control", "fanout", empty, MINUTE),

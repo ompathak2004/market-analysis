@@ -43,6 +43,19 @@ describe("job contracts", () => {
     expect(() => parsePayload("prices.window", { ...unit, from: "2021/10/12" })).toThrow();
   });
 
+  it("keys precision samples by name and bounds their payload", () => {
+    expect(unitKey("relationships.sample", { name: "gate-2026-10" })).toBe(
+      "relationships.sample:gate-2026-10",
+    );
+    expect(
+      parsePayload("relationships.sample", { name: "gate_1", size: 500, family: "concall" }),
+    ).toEqual({ name: "gate_1", size: 500, family: "concall" });
+    expect(() => parsePayload("relationships.sample", { name: "Gate 1" })).toThrow();
+    expect(() => parsePayload("relationships.sample", { name: "g", size: 501 })).toThrow();
+    expect(() => parsePayload("relationships.sample", { name: "g", family: "rumour" })).toThrow();
+    expect(() => parsePayload("relationships.sample", {})).toThrow();
+  });
+
   it("rejects unknown payload fields", () => {
     expect(() => parsePayload("prices.sync", { companyId: 1, extra: true })).toThrow();
     expect(() => parsePayload("prices.sync", { companyId: -1 })).toThrow();

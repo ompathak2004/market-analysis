@@ -24,6 +24,7 @@ export const SCHEDULES: readonly ScheduleEntry[] = [
   { type: "ratings.fanout", cron: "45 7 * * *" },
   { type: "presentations.fanout", cron: "0 8 * * *" },
   { type: "relationships.llm", cron: "0 5 * * *" },
+  { type: "relationships.facts.fanout", cron: "0 1 * * 0" },
   { type: "relationships.priors", cron: "0 2 * * 0" },
   { type: "intel.fanout", cron: "30 2,14 * * *" },
   { type: "research.fanout", cron: "5,35 * * * *" },

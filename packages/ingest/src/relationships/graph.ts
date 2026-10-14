@@ -15,6 +15,7 @@ import {
   sql,
   type Tx,
 } from "@ma/db";
+import { ANNOUNCEMENT_EVIDENCE_LOCK } from "../announcements/maintenance.js";
 import { pageOf } from "../documents.js";
 import {
   ALIAS_RESOLVER_VERSION,
@@ -133,6 +134,9 @@ export async function writeExtraction(
   found: { observations: readonly Observation[]; dropped: number },
   opts: ExtractionWriteOptions = {},
 ): Promise<ExtractionWrite> {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock_shared(hashtext(${ANNOUNCEMENT_EVIDENCE_LOCK}))`,
+  );
   const llm = unit.extractorVersion >= LLM_EXTRACTOR_VERSION_BASE;
   const tokens = opts.tokens ?? 0;
   const removed = await tx.execute<{ supplier: number; customer: number }>(sql`

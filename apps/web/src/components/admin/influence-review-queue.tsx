@@ -101,10 +101,12 @@ export function InfluenceReviewQueue({
   items,
   nextCursor,
   paged,
+  scope,
 }: {
   items: InfluenceReviewItem[];
   nextCursor: string | null;
   paged: boolean;
+  scope: string | null;
 }) {
   const queue = useReviewQueue(QUEUE);
   const visible = items.filter((i) => !queue.done.has(i.edgeId));
@@ -116,6 +118,7 @@ export function InfluenceReviewQueue({
       noteLabel="Influence review note"
       idle="single-document name matches and news · oldest first"
       cursorParam="infl"
+      scope={scope}
       queue={queue}
       nextCursor={nextCursor}
       paged={paged}

@@ -4,6 +4,7 @@ import type { AppContext } from "../context";
 import { type CostBucket, type Counterparty, supplyChainKey, type ValueBasis } from "./core";
 
 type Observation = typeof relationshipObservations.$inferSelect;
+type SQL = ReturnType<typeof sql>;
 
 export type ReviewDecision = (typeof reviewDecision.enumValues)[number];
 
@@ -78,10 +79,14 @@ export function clampLimit(limit: number | null | undefined): number {
   return Math.max(1, Math.min(REVIEW_PAGE_MAX, Math.trunc(limit)));
 }
 
-export function reviewQueueQuery(opts: { limit: number; after: ReviewCursor | null }) {
-  const after = opts.after
-    ? sql`and (o.created_at, o.id) > (${opts.after.createdAt}::timestamptz, ${opts.after.id}::bigint)`
-    : sql``;
+export interface ReviewItemsFilter {
+  join?: SQL;
+  where: SQL;
+  orderBy: SQL;
+  limit: number;
+}
+
+export function reviewItemsQuery(filter: ReviewItemsFilter) {
   return sql`
     select o.id,
            to_char(o.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as created_at,
@@ -96,6 +101,7 @@ export function reviewQueueQuery(opts: { limit: number; after: ReviewCursor | nu
            o.fiscal_year, o.confidence, o.new_counterparty, ex.extractor_family,
            ev.evidence
     from relationship_observations o
+    ${filter.join ?? sql``}
     join relationship_extractions ex on ex.id = o.extraction_id
     join companies f on f.id = o.focal_company_id
     join counterparties sc on sc.id = o.supplier_counterparty_id
@@ -114,11 +120,22 @@ export function reviewQueueQuery(opts: { limit: number; after: ReviewCursor | nu
       order by s.id
       limit 1
     ) ev on true
-    where o.status = 'pending'
+    where ${filter.where}
+    order by ${filter.orderBy}
+    limit ${filter.limit + 1}`;
+}
+
+export function reviewQueueQuery(opts: { limit: number; after: ReviewCursor | null }) {
+  const after = opts.after
+    ? sql`and (o.created_at, o.id) > (${opts.after.createdAt}::timestamptz, ${opts.after.id}::bigint)`
+    : sql``;
+  return reviewItemsQuery({
+    where: sql`o.status = 'pending'
       and (o.confidence < ${REVIEW_CONFIDENCE_THRESHOLD} or o.new_counterparty)
-      ${after}
-    order by o.created_at, o.id
-    limit ${opts.limit + 1}`;
+      ${after}`,
+    orderBy: sql`o.created_at, o.id`,
+    limit: opts.limit,
+  });
 }
 
 type QueueRow = {
@@ -171,6 +188,15 @@ function itemFrom(r: QueueRow): ReviewQueueItem {
   };
 }
 
+export async function reviewItems(
+  ctx: AppContext,
+  query: SQL,
+  limit: number,
+): Promise<{ items: ReviewQueueItem[]; more: boolean }> {
+  const rows = [...(await ctx.db.execute<QueueRow>(query))];
+  return { items: rows.slice(0, limit).map(itemFrom), more: rows.length > limit };
+}
+
 export async function reviewQueue(
   ctx: AppContext,
   opts: { limit?: number | null; cursor?: string | null } = {},
@@ -178,15 +204,12 @@ export async function reviewQueue(
   const limit = clampLimit(opts.limit);
   const after = opts.cursor ? decodeCursor(opts.cursor) : null;
   if (opts.cursor && !after) throw new AppError("invalid cursor", "BAD_REQUEST", 400);
-  const rows = [...(await ctx.db.execute<QueueRow>(reviewQueueQuery({ limit, after })))];
-  const page = rows.slice(0, limit).map(itemFrom);
-  const last = page.at(-1);
+  const { items, more } = await reviewItems(ctx, reviewQueueQuery({ limit, after }), limit);
+  const last = items.at(-1);
   return {
-    items: page,
+    items,
     nextCursor:
-      rows.length > limit && last
-        ? encodeCursor({ createdAt: last.createdAt, id: last.observationId })
-        : null,
+      more && last ? encodeCursor({ createdAt: last.createdAt, id: last.observationId }) : null,
   };
 }
 

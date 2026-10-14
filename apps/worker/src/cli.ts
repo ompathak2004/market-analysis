@@ -24,6 +24,7 @@ export const FAMILY_ALIASES: Record<string, { type: JobType; payload?: Record<st
     fundamentals: { type: "fundamentals.fanout" },
     announcements: { type: "announcements.fanout" },
     relationships: { type: "relationships.fanout" },
+    facts: { type: "relationships.facts.fanout" },
     intel: { type: "intel.fanout" },
     moneycontrol: { type: "research.fanout" },
     "broker-reports": { type: "broker.fetch" },

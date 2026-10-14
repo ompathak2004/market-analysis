@@ -181,6 +181,20 @@
     padding-top: 2px;
   }
 
+  .review-gate {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    min-width: 0;
+    font-size: var(--fs-sm);
+  }
+
+  .review-gate-stat {
+    display: inline-flex;
+    gap: 6px;
+  }
+
   .review-foot {
     display: flex;
     align-items: center;
