@@ -7,6 +7,7 @@ import { Badge, Ext, Sym } from "@/components/ui/chip";
 import { Empty } from "@/components/ui/empty";
 import { Pane } from "@/components/ui/pane";
 import { clampText, compactInr, istDateTime, pct, shortDate } from "@/lib/format";
+import { focusedPane } from "@/lib/keymap/pane-focus";
 import { rows, selectedRow, selectRow } from "@/lib/keymap/row-nav";
 import { isTyping } from "@/lib/keymap/use-keymap";
 import {
@@ -276,6 +277,8 @@ export function ReviewQueue({
       if (!decision || isTyping(e.target)) return;
       if (document.querySelector(".help-overlay:not([hidden])")) return;
       const pane = document.querySelector<HTMLElement>(`[data-pane="${PANE}"]`);
+      const focused = focusedPane();
+      if (focused && focused !== pane) return;
       const row = pane ? selectedRow(pane) : null;
       const id = Number(row?.dataset.observation);
       if (!Number.isSafeInteger(id) || id <= 0) return;

@@ -21,6 +21,11 @@ const SOURCES = [
     label: "Influence",
     value: "NSE governance XBRL (DIN) · NSE related-party XBRL · shareholding pattern",
   },
+  {
+    label: "Political",
+    value: "Sansad members · MyNeta affidavits · SBI electoral bond disclosures",
+  },
+  { label: "Policy", value: "PIB releases · PRS bill tracker · eGazette · NSE industry" },
 ];
 
 export default function HelpPage() {
@@ -51,6 +56,14 @@ export default function HelpPage() {
           operator confirms them. Every confirmed link cites a filing span, the change feed starts
           after the first read of each filing, and related-party transactions are flagged as
           material from ₹10 Cr or 1% of revenue, whichever is lower.
+        </p>
+        <p className="pane-section dim sm">
+          Documented political links appear only when every hop from the company to the office,
+          party or donation is a confirmed edge with a cited span. Structured records with an
+          identifier confirm at 98%, two primary documents at 95%; a single document with a name
+          match tops out at 80% and news or inference at 60%, and both wait at /admin/review. Policy
+          events reach a company by name or through its NSE industry sector, tagged by ministry
+          rules first and by the model only from the policy text.
         </p>
       </Pane>
     </div>

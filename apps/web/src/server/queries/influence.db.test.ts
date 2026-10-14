@@ -217,7 +217,7 @@ describe.skipIf(!url)("INFL read model (DATABASE_URL_TEST)", () => {
     expect(res.related[1]).toMatchObject({ pct: 74.5, symbol: `${tag}SUB`, asOf: "2025-09-30" });
     expect(res.related.some((r) => r.name.includes("Pending"))).toBe(false);
 
-    expect(res.political).toEqual([]);
+    expect(res.paths).toEqual([]);
     expect(res.policy).toEqual([]);
   });
 

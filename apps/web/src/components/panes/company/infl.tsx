@@ -13,8 +13,8 @@ import {
   type InfluenceEntity,
   type InfluenceEvent,
   type InfluenceEvidence,
+  type InfluencePath,
   type InfluencePolicyEvent,
-  type InfluencePoliticalLink,
   type InfluenceResponse,
   influenceFor,
 } from "@/server/queries";
@@ -50,12 +50,31 @@ const EVENT_TONE: Record<string, ChipTone> = {
   policy_change: "info",
 };
 
-const POLITICAL_LABEL: Record<InfluencePoliticalLink["kind"], string> = {
+const POLITICAL_LABEL: Record<InfluencePath["terminal"], string> = {
   holds_office: "OFFICE",
-  declared_interest: "INTEREST",
-  declared_family: "FAMILY",
   member_of_party: "PARTY",
   donated_to: "DONATION",
+};
+
+const HOP_LABEL: Record<string, readonly [string, string]> = {
+  director_of: ["director of", "director"],
+  promoter_of: ["promoter of", "promoter"],
+  declared_interest: ["declared holding in", "declared holding"],
+  declared_family: ["family holding in", "family holding"],
+  owns: ["owns", "owned by"],
+  related_party: ["related party", "related party of"],
+};
+
+type PathRow = {
+  key: string;
+  subject: string;
+  symbol: string | null;
+  terminal: InfluencePath["terminal"];
+  target: string;
+  via: string;
+  since: string | null;
+  confidence: number;
+  evidence: InfluenceEvidence[];
 };
 
 type BoardRow = {
@@ -88,6 +107,13 @@ const QUOTE_FIELDS: ReadonlyArray<readonly [string, (v: string) => string]> = [
   ["din", (v) => `DIN ${v}`],
   ["appointedOn", (v) => `appointed ${shortDate(v)}`],
   ["ceasedOn", (v) => `ceased ${shortDate(v)}`],
+  ["position", (v) => v],
+  ["party", (v) => v],
+  ["constituency", (v) => v],
+  ["holder", (v) => `held by ${v}`],
+  ["description", (v) => v],
+  ["industry", (v) => `industry ${v}`],
+  ["value", (v) => v],
 ];
 
 function readableQuote(quote: string): string {
@@ -119,6 +145,29 @@ function confidenceTitle(confidence: number, past?: string | null): string {
   return [`confidence ${confidenceLabel(confidence)}`, past ? `until ${shortDate(past)}` : null]
     .filter(Boolean)
     .join(" · ");
+}
+
+function pathRow(p: InfluencePath, i: number): PathRow {
+  const last = p.hops[p.hops.length - 1];
+  const subject = p.nodes[p.nodes.length - 2];
+  const via = p.hops
+    .slice(0, -1)
+    .map((h) => {
+      const label = HOP_LABEL[h.kind];
+      return label ? label[h.forward ? 0 : 1] : h.kind.replaceAll("_", " ");
+    })
+    .join(" › ");
+  return {
+    key: `${i}:${p.hops.map((h) => h.edgeId).join("-")}`,
+    subject: subject?.label ?? "—",
+    symbol: subject?.symbol ?? null,
+    terminal: p.terminal,
+    target: p.nodes[p.nodes.length - 1]?.label ?? "—",
+    via: via || "direct",
+    since: last?.validFrom ?? null,
+    confidence: Math.min(...p.hops.map((h) => h.confidence)),
+    evidence: [...(last?.evidence ?? []), ...p.hops.slice(0, -1).flatMap((h) => h.evidence)],
+  };
 }
 
 function directorRow(d: InfluenceDirector): BoardRow {
@@ -245,21 +294,39 @@ const RELATED_COLUMNS: Column<InfluenceEntity>[] = [
   },
 ];
 
-const POLITICAL_COLUMNS: Column<InfluencePoliticalLink>[] = [
-  { key: "f", header: "PERSON", cell: (r) => <span className="truncate">{r.from}</span> },
+const POLITICAL_COLUMNS: Column<PathRow>[] = [
+  {
+    key: "f",
+    header: "WHO",
+    cell: (r) => (
+      <span className="row">
+        {r.symbol ? <Sym symbol={r.symbol} tab="infl" /> : null}
+        <span className="truncate">{r.subject}</span>
+      </span>
+    ),
+    title: (r) => [r.subject, confidenceTitle(r.confidence)].join(" · "),
+  },
   {
     key: "k",
     header: "LINK",
     width: "sm",
-    cell: (r) => <Badge tone="warn">{POLITICAL_LABEL[r.kind]}</Badge>,
+    cell: (r) => <Badge tone="warn">{POLITICAL_LABEL[r.terminal]}</Badge>,
   },
-  { key: "t", header: "TO", cell: (r) => <span className="dim truncate">{r.to}</span> },
+  { key: "t", header: "TO", cell: (r) => <span className="dim truncate">{r.target}</span> },
+  {
+    key: "v",
+    header: "VIA",
+    width: "md",
+    priority: 2,
+    cell: (r) => <span className="dim truncate">{r.via}</span>,
+    title: (r) => r.via,
+  },
   {
     key: "d",
     header: "SINCE",
     width: "date",
     priority: 2,
-    cell: (r) => (r.validFrom ? shortDate(r.validFrom) : "—"),
+    cell: (r) => (r.since ? shortDate(r.since) : "—"),
   },
 ];
 
@@ -338,14 +405,26 @@ function coverageRows(data: InfluenceResponse): CoverageRow[] {
     },
     {
       key: "pol",
-      label: "Political",
+      label: "Officeholders · Sansad",
+      readAt: c.parliamentChangedAt,
+      detail: `${data.paths.length} documented paths`,
+    },
+    {
+      key: "aff",
+      label: "Affidavits · MyNeta",
       readAt: null,
-      detail: `${data.political.length} links`,
+      detail: `${c.affidavitsRead} declarants`,
+    },
+    {
+      key: "bond",
+      label: "Electoral bonds · SBI/ECI",
+      readAt: c.bondsReadAt,
+      detail: `${data.paths.filter((p) => p.terminal === "donated_to").length} donation paths`,
     },
     {
       key: "pcy",
-      label: "Policy",
-      readAt: null,
+      label: "Policy · PIB, PRS, Gazette",
+      readAt: c.policyReadAt,
       detail: `${data.policy.length} events`,
     },
   ];
@@ -453,26 +532,26 @@ export async function PoliticalPane({ symbol }: { symbol: string }) {
   const res = await load(symbol);
   if (!res.ok)
     return <PaneError id="political" title="POLITICAL LINKS" area="political" code={res.code} />;
-  const rows = res.data.political;
+  const rows = res.data.paths.map(pathRow);
   return (
     <Pane
       id="political"
       title="POLITICAL LINKS"
       area="political"
-      meta={rows.length ? `${rows.length} links` : "not read"}
-      foot={<output>public declarations only · no inference from names</output>}
+      meta={rows.length ? `${rows.length} documented` : "none documented"}
+      foot={<output>every hop confirmed and cited · no inference from names</output>}
     >
-      <DataTable<InfluencePoliticalLink>
-        label="Political links"
+      <DataTable<PathRow>
+        label="Documented political links"
         rows={rows}
-        rowKey={(r) => r.edgeId}
+        rowKey={(r) => r.key}
         rowExternal={(r) => r.evidence[0]?.url ?? null}
         rowDigest={(r) => digest(r.evidence)}
         rowSub={(r) => <EvidenceLine items={readable(r.evidence)} />}
         columns={POLITICAL_COLUMNS}
         empty={
-          <Empty title="NOT YET READ" hint="parliament · myneta · eci bonds">
-            Officeholder, affidavit and electoral-bond sources are not ingested yet.
+          <Empty title="NO DOCUMENTED LINK" hint="parliament · myneta · electoral bonds">
+            No fully confirmed, cited chain connects {symbol} to an officeholder, party or donation.
           </Empty>
         }
       />
@@ -490,7 +569,7 @@ export async function PolicyPane({ symbol }: { symbol: string }) {
       title="POLICY EVENTS"
       area="policy"
       meta={rows.length ? `${rows.length} events` : "not read"}
-      foot={<output>tagged to company or sector</output>}
+      foot={<output>named company or NSE-industry sector · every hop cited</output>}
     >
       <DataTable<InfluencePolicyEvent>
         label="Policy events"
@@ -501,8 +580,8 @@ export async function PolicyPane({ symbol }: { symbol: string }) {
         rowSub={(r) => <EvidenceLine items={readable(r.evidence)} />}
         columns={POLICY_COLUMNS}
         empty={
-          <Empty title="NOT YET READ" hint="pib · e-gazette · prs">
-            Policy releases are not ingested yet.
+          <Empty title="NO TAGGED POLICY" hint="pib · e-gazette · prs">
+            No confirmed policy release applies to {symbol} or its sector yet.
           </Empty>
         }
       />
@@ -520,7 +599,7 @@ export async function ChangeFeedPane({ symbol }: { symbol: string }) {
       title="CHANGE FEED"
       area="feed"
       meta={rows.length ? `latest ${shortDate(rows[0]?.occurredAt)}` : "—"}
-      foot={<output>board changes · material related-party transactions</output>}
+      foot={<output>board · material RPT · public office · donations · policy</output>}
     >
       <DataTable<InfluenceEvent>
         label="Influence change feed"

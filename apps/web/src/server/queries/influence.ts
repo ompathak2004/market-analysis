@@ -8,14 +8,24 @@ const HOUR = 60 * MINUTE;
 const EVENT_LIMIT = 40;
 const POLICY_LIMIT = 20;
 const EVIDENCE_PER_EDGE = 3;
+const PATH_DEPTH = 4;
+const PATH_LIMIT = 30;
 
-const POLITICAL_KINDS = [
-  "holds_office",
-  "declared_interest",
-  "declared_family",
-  "member_of_party",
-  "donated_to",
-] as const;
+const PATH_TERMINALS = ["holds_office", "member_of_party", "donated_to"] as const;
+const HISTORICAL_KINDS = ["donated_to"] as const;
+
+const PATH_STEPS: ReadonlyArray<readonly [string, boolean]> = [
+  ["director_of", false],
+  ["promoter_of", false],
+  ["declared_interest", false],
+  ["declared_family", false],
+  ["owns", true],
+  ["owns", false],
+  ["related_party", true],
+  ["holds_office", true],
+  ["member_of_party", true],
+  ["donated_to", true],
+];
 
 const ROLE_ORDER = [
   "chairman",
@@ -75,16 +85,26 @@ export interface InfluenceEntity {
   evidence: InfluenceEvidence[];
 }
 
-export interface InfluencePoliticalLink {
+export interface InfluencePathNode {
+  nodeId: number;
+  kind: string;
+  label: string;
+  symbol: string | null;
+}
+
+export interface InfluencePathHop {
   edgeId: number;
-  kind: (typeof POLITICAL_KINDS)[number];
-  from: string;
-  to: string;
-  toKind: string;
+  kind: string;
+  forward: boolean;
   validFrom: string | null;
-  validTo: string | null;
   confidence: number;
   evidence: InfluenceEvidence[];
+}
+
+export interface InfluencePath {
+  terminal: (typeof PATH_TERMINALS)[number];
+  nodes: InfluencePathNode[];
+  hops: InfluencePathHop[];
 }
 
 export interface InfluencePolicyEvent {
@@ -120,6 +140,10 @@ export interface InfluenceCoverage {
   directorsListed: number;
   rptRows: number;
   rptPeriodEnd: string | null;
+  parliamentChangedAt: string | null;
+  affidavitsRead: number;
+  bondsReadAt: string | null;
+  policyReadAt: string | null;
 }
 
 export interface InfluenceResponse {
@@ -128,7 +152,7 @@ export interface InfluenceResponse {
   board: InfluenceDirector[];
   promoters: InfluenceEntity[];
   related: InfluenceEntity[];
-  political: InfluencePoliticalLink[];
+  paths: InfluencePath[];
   policy: InfluencePolicyEvent[];
   events: InfluenceEvent[];
   coverage: InfluenceCoverage;
@@ -138,7 +162,6 @@ type GraphRow = {
   board: InfluenceDirector[] | null;
   promoters: InfluenceEntity[] | null;
   related: InfluenceEntity[] | null;
-  political: InfluencePoliticalLink[] | null;
   policy: InfluencePolicyEvent[] | null;
 };
 
@@ -146,6 +169,13 @@ type CoverageRow = {
   coverage: Omit<InfluenceCoverage, "pendingByKind"> & {
     pendingByKind: InfluenceCoverage["pendingByKind"] | null;
   };
+};
+
+type PathEnd = { nodeId: number; kind: string; label: string; symbol: string | null };
+
+type PathRow = {
+  terminal: InfluencePath["terminal"];
+  hops: (InfluencePathHop & { from: PathEnd; to: PathEnd })[];
 };
 
 const pgArray = (items: readonly string[]) =>
@@ -158,13 +188,102 @@ export function influenceKey(companyId: number): string {
   return `influence:${companyId}:`;
 }
 
+export async function confirmedPaths(
+  ctx: Pick<AppContext, "db">,
+  companyId: number,
+): Promise<InfluencePath[]> {
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = await ctx.db.execute<PathRow>(sql`
+    with recursive steps (kind, forward) as (
+      values ${sql.join(
+        PATH_STEPS.map(([kind, forward]) => sql`(${kind}::text, ${forward}::boolean)`),
+        sql`, `,
+      )}
+    ), walk as (
+      select n.id as node_id, array[n.id] as nodes, array[]::bigint[] as edges,
+             array[]::boolean[] as dirs, 0 as depth, null::text as last_kind,
+             1::real as min_confidence
+      from graph_nodes n
+      where n.company_id = ${companyId}
+      union all
+      select case when e.from_node_id = w.node_id then e.to_node_id else e.from_node_id end,
+             w.nodes || case when e.from_node_id = w.node_id then e.to_node_id
+                             else e.from_node_id end,
+             w.edges || e.id, w.dirs || (e.from_node_id = w.node_id), w.depth + 1,
+             e.kind::text, least(w.min_confidence, e.confidence)
+      from walk w
+      join influence_edges_confirmed e on w.node_id in (e.from_node_id, e.to_node_id)
+      join steps st on st.kind = e.kind::text and st.forward = (e.from_node_id = w.node_id)
+      where w.depth < ${PATH_DEPTH}
+        and (w.last_kind is null or not (w.last_kind = any(${pgArray(PATH_TERMINALS)})))
+        and (e.valid_to is null or e.valid_to >= ${today}::date
+             or e.kind::text = any(${pgArray(HISTORICAL_KINDS)}))
+        and exists (select 1 from influence_edge_evidence ee where ee.edge_id = e.id)
+        and not (case when e.from_node_id = w.node_id then e.to_node_id
+                      else e.from_node_id end = any(w.nodes))
+    ), found as (
+      select w.edges, w.dirs, w.depth, w.last_kind, w.min_confidence
+      from walk w
+      where w.last_kind = any(${pgArray(PATH_TERMINALS)})
+      order by w.depth, w.min_confidence desc, w.edges
+      limit ${PATH_LIMIT}
+    )
+    select f.last_kind as terminal,
+           (select json_agg(json_build_object(
+                     'edgeId', e.id, 'kind', e.kind, 'forward', f.dirs[u.ord],
+                     'validFrom', e.valid_from, 'confidence', e.confidence,
+                     'from', json_build_object('nodeId', e.from_node_id, 'kind', e.from_kind,
+                                               'label', e.from_label, 'symbol', e.from_symbol),
+                     'to', json_build_object('nodeId', e.to_node_id, 'kind', e.to_kind,
+                                             'label', e.to_label, 'symbol', e.to_symbol),
+                     'evidence', coalesce(v.items, '[]'::json)) order by u.ord)
+            from unnest(f.edges) with ordinality u(edge_id, ord)
+            join influence_edges_confirmed e on e.id = u.edge_id
+            left join lateral (
+              select json_agg(json_build_object(
+                       'spanId', x.span_id, 'quote', x.quote, 'page', x.page,
+                       'documentId', x.document_id, 'source', x.source, 'url', x.url,
+                       'publishedAt', x.published_at)) as items
+              from (
+                select s.id as span_id, s.quote, s.page, d.id as document_id, d.source, d.url,
+                       coalesce(dr.published_at, d.published_at) as published_at
+                from influence_edge_evidence ee
+                join evidence_spans s on s.id = ee.evidence_span_id
+                join document_revisions dr on dr.id = s.document_revision_id
+                join documents d on d.id = dr.document_id
+                where ee.edge_id = e.id
+                order by coalesce(dr.published_at, d.published_at) desc nulls last, s.id desc
+                limit ${EVIDENCE_PER_EDGE}
+              ) x
+            ) v on true) as hops
+    from found f
+    order by f.depth, f.min_confidence desc, f.edges`);
+  return [...rows].map((r) => {
+    const hops = r.hops ?? [];
+    const first = hops[0];
+    const start = first ? (first.forward ? first.from : first.to) : null;
+    const ends = hops.map((h) => (h.forward ? h.to : h.from));
+    const nodes = (start ? [start, ...ends] : ends).map((n) => ({
+      nodeId: Number(n.nodeId),
+      kind: n.kind,
+      label: n.label,
+      symbol: n.symbol,
+    }));
+    return {
+      terminal: r.terminal,
+      nodes,
+      hops: hops.map(({ from: _from, to: _to, ...h }) => ({ ...h, edgeId: Number(h.edgeId) })),
+    };
+  });
+}
+
 export async function influenceFor(ctx: AppContext, symbol: string): Promise<InfluenceResponse> {
   const company = await findCompany(ctx, symbol);
   const data = await ctx.api.getOrLoad(
-    `${influenceKey(company.id)}v1`,
+    `${influenceKey(company.id)}v2`,
     async () => {
       const today = new Date().toISOString().slice(0, 10);
-      const [graph, events, coverage] = await Promise.all([
+      const [graph, paths, events, coverage] = await Promise.all([
         ctx.db.execute<GraphRow>(sql`
           with node as (
             select id from graph_nodes where company_id = ${company.id}
@@ -172,17 +291,11 @@ export async function influenceFor(ctx: AppContext, symbol: string): Promise<Inf
             select e.* from influence_edges_confirmed e, node
             where (e.kind in ('director_of', 'promoter_of') and e.to_node_id = node.id)
                or (e.kind in ('related_party', 'owns') and e.from_node_id = node.id)
-          ), board_nodes as (
-            select from_node_id from own
-            where kind = 'director_of' and (valid_to is null or valid_to >= ${today}::date)
-          ), political as (
-            select e.* from influence_edges_confirmed e, node
-            where e.kind::text = any(${pgArray(POLITICAL_KINDS)})
-              and (e.from_node_id = node.id or e.to_node_id = node.id
-                or e.from_node_id in (select from_node_id from board_nodes))
           ), sectors as (
             select e.to_node_id from influence_edges_confirmed e, node
             where e.kind = 'operates_in_sector' and e.from_node_id = node.id
+              and (e.valid_to is null or e.valid_to >= ${today}::date)
+              and exists (select 1 from influence_edge_evidence ee where ee.edge_id = e.id)
           ), policy as (
             select e.*, pe.id as policy_event_id, pe.source::text as policy_source, pe.title,
                    pe.ministry, pe.stage, pe.published_at, pe.url as policy_url
@@ -192,8 +305,9 @@ export async function influenceFor(ctx: AppContext, symbol: string): Promise<Inf
             cross join node
             where e.kind = 'policy_applies_to'
               and (e.to_node_id = node.id or e.to_node_id in (select to_node_id from sectors))
+              and exists (select 1 from influence_edge_evidence ee where ee.edge_id = e.id)
           ), cited as (
-            select id from own union select id from political union select id from policy
+            select id from own union select id from policy
           ), evidence as (
             select x.edge_id,
                    json_agg(json_build_object(
@@ -269,13 +383,6 @@ export async function influenceFor(ctx: AppContext, symbol: string): Promise<Inf
                    where kind = 'promoter_of') p) as promoters,
             (select json_agg(j order by total_cr desc nulls last, id)
              from entity_json where kind in ('related_party', 'owns')) as related,
-            (select json_agg(json_build_object(
-                      'edgeId', e.id, 'kind', e.kind, 'from', e.from_label, 'to', e.to_label,
-                      'toKind', e.to_kind, 'validFrom', e.valid_from, 'validTo', e.valid_to,
-                      'confidence', e.confidence, 'evidence', coalesce(v.items, '[]'::json))
-                    order by e.updated_at desc)
-             from political e
-             left join evidence v on v.edge_id = e.id) as political,
             (select json_agg(row_json order by published_at desc)
              from (
                select json_build_object(
@@ -290,6 +397,7 @@ export async function influenceFor(ctx: AppContext, symbol: string): Promise<Inf
                order by e.published_at desc
                limit ${POLICY_LIMIT}
              ) p) as policy`),
+        confirmedPaths(ctx, company.id),
         ctx.db.execute<InfluenceEvent>(sql`
           select ev.id, ev.kind::text as kind, ev.occurred_at::text as "occurredAt", ev.summary,
                  not exists (
@@ -329,7 +437,12 @@ export async function influenceFor(ctx: AppContext, symbol: string): Promise<Inf
                    'rptRows', (select count(*)::int from related_party_transactions t, rpt
                                where t.company_id = ${company.id} and t.source = 'nse_rpt'
                                  and t.period_end = rpt.period_end),
-                   'rptPeriodEnd', (select period_end from rpt)) as coverage
+                   'rptPeriodEnd', (select period_end from rpt),
+                   'parliamentChangedAt', (select max(finished_at) from influence_extractions
+                                           where family = 'parliament' and status = 'succeeded'),
+                   'affidavitsRead', coalesce(c.affidavits_read, 0),
+                   'bondsReadAt', c.bonds_read_at,
+                   'policyReadAt', c.policy_read_at) as coverage
           from (select 1) one
           left join influence_coverage c on c.company_id = ${company.id}`),
       ]);
@@ -341,7 +454,7 @@ export async function influenceFor(ctx: AppContext, symbol: string): Promise<Inf
         board: g?.board ?? [],
         promoters: g?.promoters ?? [],
         related: g?.related ?? [],
-        political: g?.political ?? [],
+        paths,
         policy: g?.policy ?? [],
         events: [...events].map((e) => ({ ...e, id: Number(e.id) })),
         coverage: {
@@ -355,6 +468,10 @@ export async function influenceFor(ctx: AppContext, symbol: string): Promise<Inf
           directorsListed: Number(c?.directorsListed ?? 0),
           rptRows: Number(c?.rptRows ?? 0),
           rptPeriodEnd: c?.rptPeriodEnd ?? null,
+          parliamentChangedAt: c?.parliamentChangedAt ?? null,
+          affidavitsRead: Number(c?.affidavitsRead ?? 0),
+          bondsReadAt: c?.bondsReadAt ?? null,
+          policyReadAt: c?.policyReadAt ?? null,
         },
       };
     },

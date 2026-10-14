@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { logout } from "@/app/admin/actions";
+import { InfluenceReviewQueue } from "@/components/admin/influence-review-queue";
 import { ReviewQueue } from "@/components/admin/review-queue";
 import { attempt, PaneError } from "@/components/panes/shared";
 import { getContext } from "@/server/context";
 import { hasAdminSession } from "@/server/http/admin-session";
-import { decodeCursor, reviewQueue } from "@/server/queries";
+import { decodeCursor, influenceReviewQueue, reviewQueue } from "@/server/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -22,11 +23,17 @@ export default async function AdminReviewPage({
   const ctx = getContext();
   if (!ctx.config.ADMIN_API_KEY) notFound();
   if (!(await hasAdminSession(ctx))) redirect("/admin/login");
-  const raw = (await searchParams).cursor;
+  const params = await searchParams;
+  const raw = params.cursor;
   const cursor = typeof raw === "string" && decodeCursor(raw) ? raw : null;
-  const res = await attempt(reviewQueue(ctx, { cursor }));
+  const rawInfl = params.infl;
+  const inflCursor = typeof rawInfl === "string" && decodeCursor(rawInfl) ? rawInfl : null;
+  const [res, infl] = await Promise.all([
+    attempt(reviewQueue(ctx, { cursor })),
+    attempt(influenceReviewQueue(ctx, { cursor: inflCursor })),
+  ]);
   return (
-    <div className="grid grid-solo admin-screen">
+    <div className="grid grid-review admin-screen">
       {res.ok ? (
         <ReviewQueue
           items={res.data.items}
@@ -46,6 +53,20 @@ export default async function AdminReviewPage({
           title="REVIEW · SPLC OBSERVATIONS"
           code={res.code}
           source="relationship_observations"
+        />
+      )}
+      {infl.ok ? (
+        <InfluenceReviewQueue
+          items={infl.data.items}
+          nextCursor={infl.data.nextCursor}
+          paged={inflCursor != null}
+        />
+      ) : (
+        <PaneError
+          id="review-infl"
+          title="REVIEW · INFLUENCE EDGES"
+          code={infl.code}
+          source="influence_edges"
         />
       )}
     </div>
