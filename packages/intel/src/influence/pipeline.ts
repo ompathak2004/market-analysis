@@ -7,22 +7,14 @@ import {
   counterpartyAliases,
   desc,
   eq,
-  evidenceSpans,
   fencedTransaction,
   fundamentals,
-  graphNodes,
   gte,
   inArray,
-  influenceCoverage,
-  influenceEdgeEvidence,
   influenceEdges,
-  influenceEventEdges,
-  influenceEvents,
-  influenceExtractions,
   isNull,
   or,
   ownership,
-  personAliases,
   personRoles,
   persons,
   relatedPartyTransactions,
@@ -49,7 +41,6 @@ import {
 } from "@ma/ingest";
 import {
   confidenceFor,
-  edgeStatus,
   INFLUENCE_EVENT_RULE_VERSION,
   INFLUENCE_RESOLVER_VERSION,
   isMaterialRpt,
@@ -59,13 +50,30 @@ import {
   RPT_EDGE_CLASSES,
   resolvePerson,
   rptRelationshipClass,
-  type SourceKind,
 } from "./index.js";
+
+import {
+  addAlias,
+  alreadyExtracted,
+  type EdgeOutcome,
+  type Extraction,
+  type InfluenceSyncResult,
+  listedCompanyIndex,
+  nodeFor,
+  personCandidates,
+  recordEvent,
+  result,
+  runExtraction,
+  spanFor,
+  touchCoverage,
+  upsertEdge,
+} from "./store.js";
+
+export type { InfluenceSyncResult, InfluenceSyncStatus } from "./store.js";
 
 const GOVERNANCE_SOURCE = "nse_governance";
 const RPT_SOURCE = "nse_rpt";
 const RPT_FILING_ATTEMPTS = 2;
-const ERROR_CHARS = 500;
 
 export interface GovernanceSourceLike {
   filings(symbol: string, signal?: AbortSignal): Promise<GovernanceFiling[]>;
@@ -77,17 +85,6 @@ export interface RptSourceLike {
   report(filing: RptFiling, signal?: AbortSignal): Promise<RptReport>;
 }
 
-export type InfluenceSyncStatus = "updated" | "unchanged" | "no_filing" | "no_symbol";
-
-export interface InfluenceSyncResult {
-  status: InfluenceSyncStatus;
-  changed: boolean;
-  rows: number;
-  edges: number;
-  events: number;
-  skipped: number;
-}
-
 export interface PerimeterResult {
   changed: boolean;
   promoters: number;
@@ -96,359 +93,10 @@ export interface PerimeterResult {
   edges: number;
 }
 
-type NodeKind = "person" | "company" | "counterparty";
-type EdgeKind = (typeof influenceEdges.$inferInsert)["kind"];
-type Span = { start: number; end: number };
-type InfluenceFamily = (typeof influenceExtractions.$inferInsert)["family"];
-
-interface EdgeInput {
-  fromNodeId: number;
-  toNodeId: number;
-  kind: EdgeKind;
-  fact: { personRoleId?: number; ownershipId?: number; rptId?: number };
-  confidence: number;
-  source: SourceKind;
-  identifier: boolean;
-  inputHash: string;
-  validFrom: string | null;
-  validTo: string | null;
-  spanIds: readonly number[];
-}
-
-interface EdgeOutcome {
-  id: number;
-  created: boolean;
-  changed: boolean;
-}
-
-const result = (
-  status: InfluenceSyncStatus,
-  counts: Partial<Omit<InfluenceSyncResult, "status">> = {},
-): InfluenceSyncResult => ({
-  status,
-  changed: counts.changed ?? false,
-  rows: counts.rows ?? 0,
-  edges: counts.edges ?? 0,
-  events: counts.events ?? 0,
-  skipped: counts.skipped ?? 0,
-});
-
 async function companyFor(ctx: IngestContext, companyId: number) {
   const company = await ctx.db.query.companies.findFirst({ where: eq(companies.id, companyId) });
   if (!company) throw new Error(`company ${companyId} not found`);
   return company;
-}
-
-async function nodeFor(tx: Tx, kind: NodeKind, id: number): Promise<number> {
-  const column =
-    kind === "person"
-      ? graphNodes.personId
-      : kind === "company"
-        ? graphNodes.companyId
-        : graphNodes.counterpartyId;
-  const ref =
-    kind === "person"
-      ? { personId: id }
-      : kind === "company"
-        ? { companyId: id }
-        : { counterpartyId: id };
-  const [inserted] = await tx
-    .insert(graphNodes)
-    .values({ kind, ...ref })
-    .onConflictDoNothing({ target: column })
-    .returning({ id: graphNodes.id });
-  if (inserted) return inserted.id;
-  const [row] = await tx.select({ id: graphNodes.id }).from(graphNodes).where(eq(column, id));
-  if (!row) throw new Error(`graph node ${kind}:${id} missing`);
-  return row.id;
-}
-
-async function spanFor(
-  tx: Tx,
-  revisionId: number,
-  content: string,
-  span: Span | undefined,
-  locator: Record<string, unknown>,
-): Promise<number | null> {
-  if (!span || span.end <= span.start) return null;
-  const [inserted] = await tx
-    .insert(evidenceSpans)
-    .values({
-      documentRevisionId: revisionId,
-      startOffset: span.start,
-      endOffset: span.end,
-      quote: content.slice(span.start, span.end),
-      locator,
-    })
-    .onConflictDoNothing({
-      target: [
-        evidenceSpans.documentRevisionId,
-        evidenceSpans.startOffset,
-        evidenceSpans.endOffset,
-      ],
-    })
-    .returning({ id: evidenceSpans.id });
-  if (inserted) return inserted.id;
-  const [row] = await tx
-    .select({ id: evidenceSpans.id })
-    .from(evidenceSpans)
-    .where(
-      and(
-        eq(evidenceSpans.documentRevisionId, revisionId),
-        eq(evidenceSpans.startOffset, span.start),
-        eq(evidenceSpans.endOffset, span.end),
-      ),
-    );
-  return row?.id ?? null;
-}
-
-async function upsertEdge(tx: Tx, e: EdgeInput): Promise<EdgeOutcome | null> {
-  const existing = await tx
-    .select({
-      id: influenceEdges.id,
-      status: influenceEdges.status,
-      inputHash: influenceEdges.inputHash,
-    })
-    .from(influenceEdges)
-    .where(
-      and(
-        eq(influenceEdges.fromNodeId, e.fromNodeId),
-        eq(influenceEdges.toNodeId, e.toNodeId),
-        eq(influenceEdges.kind, e.kind),
-        inArray(influenceEdges.status, ["confirmed", "pending", "rejected"]),
-      ),
-    )
-    .orderBy(desc(influenceEdges.updatedAt));
-  const live =
-    existing.find((r) => r.status === "confirmed") ?? existing.find((r) => r.status === "pending");
-  const rejected = existing.find((r) => r.status === "rejected");
-  const ruled = edgeStatus({
-    confidence: e.confidence,
-    source: e.source,
-    identifier: e.identifier,
-  });
-  const fact = {
-    personRoleId: e.fact.personRoleId ?? null,
-    ownershipId: e.fact.ownershipId ?? null,
-    rptId: e.fact.rptId ?? null,
-  };
-  let outcome: EdgeOutcome;
-  if (live) {
-    const changed = live.inputHash !== e.inputHash;
-    if (changed) {
-      const promote = live.status === "pending" && ruled === "confirmed";
-      await tx
-        .update(influenceEdges)
-        .set({
-          ...fact,
-          confidence: e.confidence,
-          resolverVersion: INFLUENCE_RESOLVER_VERSION,
-          inputHash: e.inputHash,
-          validFrom: e.validFrom,
-          validTo: e.validTo,
-          updatedAt: new Date(),
-          ...(promote
-            ? { status: "confirmed" as const, version: sql`${influenceEdges.version} + 1` }
-            : {}),
-        })
-        .where(eq(influenceEdges.id, live.id));
-    }
-    outcome = { id: live.id, created: false, changed };
-  } else {
-    if (rejected && rejected.inputHash === e.inputHash) return null;
-    const [row] = await tx
-      .insert(influenceEdges)
-      .values({
-        fromNodeId: e.fromNodeId,
-        toNodeId: e.toNodeId,
-        kind: e.kind,
-        ...fact,
-        confidence: e.confidence,
-        status: rejected ? "pending" : ruled,
-        resolverVersion: INFLUENCE_RESOLVER_VERSION,
-        inputHash: e.inputHash,
-        validFrom: e.validFrom,
-        validTo: e.validTo,
-      })
-      .returning({ id: influenceEdges.id });
-    if (!row) throw new Error("influence edge insert failed");
-    outcome = { id: row.id, created: true, changed: true };
-  }
-  if (e.spanIds.length) {
-    await tx
-      .insert(influenceEdgeEvidence)
-      .values(
-        [...new Set(e.spanIds)].map((evidenceSpanId) => ({ edgeId: outcome.id, evidenceSpanId })),
-      )
-      .onConflictDoNothing();
-  }
-  return outcome;
-}
-
-async function recordEvent(
-  tx: Tx,
-  companyId: number,
-  kind: (typeof influenceEvents.$inferInsert)["kind"],
-  occurredAt: Date,
-  summary: string,
-  key: readonly (string | number | null)[],
-  edgeIds: readonly number[],
-): Promise<boolean> {
-  const [event] = await tx
-    .insert(influenceEvents)
-    .values({
-      companyId,
-      kind,
-      occurredAt,
-      summary,
-      ruleVersion: INFLUENCE_EVENT_RULE_VERSION,
-      inputHash: sha256([INFLUENCE_EVENT_RULE_VERSION, ...key].join("|")),
-    })
-    .onConflictDoNothing({
-      target: [influenceEvents.companyId, influenceEvents.kind, influenceEvents.inputHash],
-    })
-    .returning({ id: influenceEvents.id });
-  if (!event) return false;
-  if (edgeIds.length) {
-    await tx
-      .insert(influenceEventEdges)
-      .values(edgeIds.map((edgeId) => ({ eventId: event.id, edgeId })))
-      .onConflictDoNothing();
-  }
-  return true;
-}
-
-async function touchCoverage(
-  db: Pick<Tx, "insert">,
-  companyId: number,
-  set: Partial<
-    Pick<
-      typeof influenceCoverage.$inferInsert,
-      "governanceReadAt" | "rptReadAt" | "perimeterReadAt"
-    >
-  >,
-) {
-  const values = { ...set, resolverVersion: INFLUENCE_RESOLVER_VERSION, updatedAt: new Date() };
-  await db
-    .insert(influenceCoverage)
-    .values({ companyId, ...values })
-    .onConflictDoUpdate({ target: influenceCoverage.companyId, set: values });
-}
-
-interface Extraction {
-  documentRevisionId: number;
-  companyId: number;
-  family: InfluenceFamily;
-  version: number;
-  inputHash: string;
-}
-
-const extractionKey = (x: Extraction) =>
-  and(
-    eq(influenceExtractions.documentRevisionId, x.documentRevisionId),
-    eq(influenceExtractions.family, x.family),
-    eq(influenceExtractions.version, x.version),
-    eq(influenceExtractions.inputHash, x.inputHash),
-  );
-
-async function alreadyExtracted(ctx: IngestContext, x: Extraction): Promise<boolean> {
-  const [row] = await ctx.db
-    .select({ id: influenceExtractions.id })
-    .from(influenceExtractions)
-    .where(and(extractionKey(x), eq(influenceExtractions.status, "succeeded")));
-  return Boolean(row);
-}
-
-async function startExtraction(tx: Tx, x: Extraction) {
-  await tx
-    .insert(influenceExtractions)
-    .values({ ...x, status: "running" })
-    .onConflictDoUpdate({
-      target: [
-        influenceExtractions.documentRevisionId,
-        influenceExtractions.family,
-        influenceExtractions.version,
-        influenceExtractions.inputHash,
-      ],
-      set: { status: "running", startedAt: new Date(), finishedAt: null, error: null },
-    });
-}
-
-async function finishExtraction(tx: Tx, x: Extraction, rows: number) {
-  await tx
-    .update(influenceExtractions)
-    .set({ status: "succeeded", rows, finishedAt: new Date() })
-    .where(extractionKey(x));
-}
-
-async function failExtraction(ctx: IngestContext, x: Extraction, err: unknown) {
-  const error = (err instanceof Error ? err.message : String(err)).slice(0, ERROR_CHARS);
-  await ctx.db
-    .insert(influenceExtractions)
-    .values({ ...x, status: "failed", error, finishedAt: new Date() })
-    .onConflictDoUpdate({
-      target: [
-        influenceExtractions.documentRevisionId,
-        influenceExtractions.family,
-        influenceExtractions.version,
-        influenceExtractions.inputHash,
-      ],
-      set: { status: "failed", error, finishedAt: new Date() },
-    });
-}
-
-async function runExtraction<T>(
-  ctx: IngestContext,
-  x: Extraction,
-  signal: AbortSignal | undefined,
-  fn: (tx: Tx) => Promise<T & { rows: number }>,
-): Promise<T & { rows: number }> {
-  try {
-    return await fencedTransaction(
-      ctx.db,
-      async (tx) => {
-        await startExtraction(tx, x);
-        const out = await fn(tx);
-        await finishExtraction(tx, x, out.rows);
-        return out;
-      },
-      signal,
-    );
-  } catch (err) {
-    if (!signal?.aborted) await failExtraction(ctx, x, err).catch(() => undefined);
-    throw err;
-  }
-}
-
-async function personCandidates(
-  tx: Tx,
-  dins: readonly string[],
-  personIds: readonly number[],
-): Promise<PersonCandidate[]> {
-  const filters = [
-    ...(dins.length ? [inArray(persons.din, [...dins])] : []),
-    ...(personIds.length ? [inArray(persons.id, [...personIds])] : []),
-  ];
-  if (!filters.length) return [];
-  const rows = await tx
-    .select({ id: persons.id, din: persons.din, normalizedName: persons.normalizedName })
-    .from(persons)
-    .where(or(...filters));
-  const aliases = rows.length
-    ? await tx
-        .select({ personId: personAliases.personId, alias: personAliases.normalizedAlias })
-        .from(personAliases)
-        .where(
-          inArray(
-            personAliases.personId,
-            rows.map((r) => r.id),
-          ),
-        )
-    : [];
-  return rows.map((r) => ({
-    ...r,
-    aliases: aliases.filter((a) => a.personId === r.id).map((a) => a.alias),
-  }));
 }
 
 async function createPerson(tx: Tx, d: GovernanceDirector): Promise<number> {
@@ -471,13 +119,6 @@ async function createPerson(tx: Tx, d: GovernanceDirector): Promise<number> {
     : await tx.insert(persons).values(values).returning({ id: persons.id });
   if (!row) throw new Error(`person insert failed for ${d.name}`);
   return row.id;
-}
-
-async function addAlias(tx: Tx, personId: number, alias: string, source: string) {
-  await tx
-    .insert(personAliases)
-    .values({ personId, alias, normalizedAlias: normalizePersonName(alias), source })
-    .onConflictDoNothing();
 }
 
 const ROLE_LABEL: Record<GovernanceDirector["role"], string> = {
@@ -696,16 +337,6 @@ async function latestRevenueCr(ctx: IngestContext, companyId: number): Promise<n
     .orderBy(desc(fundamentals.periodEnd))
     .limit(1);
   return row?.revenue == null ? null : Number(row.revenue);
-}
-
-async function listedCompanyIndex(ctx: IngestContext): Promise<Map<string, number>> {
-  const rows = await ctx.db.select({ id: companies.id, name: companies.name }).from(companies);
-  const out = new Map<string, number>();
-  for (const r of rows) {
-    const key = normalizeCompanyName(r.name);
-    if (key) out.set(key, r.id);
-  }
-  return out;
 }
 
 async function counterpartyFor(

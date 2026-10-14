@@ -45,7 +45,10 @@ import { rptRelationshipClass } from "./rules.js";
 const url = process.env.DATABASE_URL_TEST;
 
 const fixture = (name: string) =>
-  readFileSync(new URL(`../../../ingest/src/sources/__fixtures__/${name}`, import.meta.url), "utf8");
+  readFileSync(
+    new URL(`../../../ingest/src/sources/__fixtures__/${name}`, import.meta.url),
+    "utf8",
+  );
 
 const governanceSource = (filing: GovernanceFiling, report: () => GovernanceReport) =>
   ({
