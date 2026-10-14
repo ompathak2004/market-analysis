@@ -417,7 +417,8 @@ export async function collectAircraftTraces(
     }
     if (!samples.length) return;
     throwIfAborted(opts.signal);
-    stats.positions += await storeTrace(ctx, a, samples, now, stats, opts.signal);
+    const inserted = await storeTrace(ctx, a, samples, now, stats, opts.signal);
+    stats.positions += inserted;
     stats.traced++;
   });
   if (stats.skipped) ctx.logger.warn({ skipped: stats.skipped, day }, "trace deadline reached");
