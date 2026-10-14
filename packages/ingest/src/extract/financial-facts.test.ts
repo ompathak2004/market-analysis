@@ -126,8 +126,6 @@ describe("extractFinancialFacts", () => {
       cogs: 7_432.11,
       capex: 987.65,
     });
-    expect(r?.facts.every((f) => f.periodEnd === FY25 && f.periodType === "annual")).toBe(true);
-    expect(r?.facts.find((f) => f.metric === "cogs")?.confidence).toBe(0.85);
   });
 
   it("reads a flattened standalone statement in lakhs", () => {
@@ -163,7 +161,6 @@ describe("extractFinancialFacts", () => {
       purchases: 5_100,
       cogs: 5_100,
     });
-    expect(r?.facts.find((f) => f.metric === "cogs")?.confidence).toBe(0.75);
   });
 
   it("reads statements whose heading is printed below the table", () => {

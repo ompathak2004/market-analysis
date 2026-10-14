@@ -7,11 +7,8 @@ export type FinancialUnit = "crore" | "lakh" | "million" | "billion" | "thousand
 export type FinancialFactMetric = "revenue" | "purchases" | "cogs" | "capex" | "rnd";
 
 export interface FinancialFact {
-  periodEnd: string;
-  periodType: "annual";
   metric: FinancialFactMetric;
   valueCr: number;
-  confidence: number;
 }
 
 export interface FinancialFactsResult {
@@ -23,7 +20,6 @@ export interface FinancialFactsResult {
 interface Statement {
   kind: FinancialStatement;
   unit: FinancialUnit;
-  dated: boolean;
   section: string;
   noteColumn: boolean;
   revenue: number;
@@ -110,19 +106,11 @@ export function extractFinancialFacts(
     statements.find((s) => s.kind === "standalone");
   if (!chosen) return null;
   const toCrore = (v: number) => round2(v * UNIT_TO_CRORE[chosen.unit]);
-  const penalty = chosen.dated ? 0 : 0.1;
   const facts: FinancialFact[] = [];
-  const push = (metric: FinancialFactMetric, value: number, confidence: number) =>
-    facts.push({
-      periodEnd,
-      periodType: "annual",
-      metric,
-      valueCr: value,
-      confidence: round2(confidence - penalty),
-    });
+  const push = (metric: FinancialFactMetric, valueCr: number) => facts.push({ metric, valueCr });
 
   const revenue = toCrore(chosen.revenue);
-  push("revenue", revenue, 0.95);
+  push("revenue", revenue);
 
   const materials = rowValue(chosen.section, MATERIALS, chosen.noteColumn);
   const traded = rowValue(chosen.section, TRADED, chosen.noteColumn);
@@ -130,20 +118,18 @@ export function extractFinancialFacts(
     const bought = (materials ?? 0) + (traded ?? 0);
     const purchases = toCrore(bought);
     if (purchases > 0 && purchases <= revenue * MAX_COST_TO_REVENUE) {
-      push("purchases", purchases, 0.9);
+      push("purchases", purchases);
       const change = rowValue(chosen.section, INVENTORY_CHANGE, chosen.noteColumn);
       const cogs = toCrore(bought + (change ?? 0));
-      if (cogs > 0 && cogs <= revenue * MAX_COST_TO_REVENUE) {
-        push("cogs", cogs, change === null ? 0.75 : 0.85);
-      }
+      if (cogs > 0 && cogs <= revenue * MAX_COST_TO_REVENUE) push("cogs", cogs);
     }
   }
 
   const rnd = rowValue(chosen.section, RND, chosen.noteColumn);
-  if (rnd !== null && rnd > 0) push("rnd", toCrore(rnd), 0.8);
+  if (rnd !== null && rnd > 0) push("rnd", toCrore(rnd));
 
   const capex = capexOf(text, chosen, periodEnd);
-  if (capex !== null) push("capex", capex, 0.85);
+  if (capex !== null) push("capex", capex);
 
   return { statement: chosen.kind, unit: chosen.unit, facts };
 }
@@ -176,7 +162,7 @@ function statementsOf(text: string, periodEnd: string): Statement[] {
         prefix === "consolidated" || (prefix !== "standalone" && GROUP_LINES.test(section))
           ? "consolidated"
           : "standalone";
-      out.push({ kind, unit, dated: stated !== null, section, noteColumn, revenue, end, before });
+      out.push({ kind, unit, section, noteColumn, revenue, end, before });
       break;
     }
   }

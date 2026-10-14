@@ -76,9 +76,10 @@ export async function syncFinancialFacts(
       result.failed++;
       continue;
     }
+    const periodEnd = fiscalPeriod(fy).end;
     const parsed = extractFinancialFacts(
       looksLikeMarkup(text, row.content_type) ? maskMarkup(text) : text,
-      fiscalPeriod(fy).end,
+      periodEnd,
     );
     if (!parsed) {
       result.unparsed++;
@@ -100,8 +101,8 @@ export async function syncFinancialFacts(
           .values(
             parsed.facts.map((f) => ({
               companyId,
-              periodEnd: f.periodEnd,
-              periodType: f.periodType,
+              periodEnd,
+              periodType: "annual" as const,
               metric: f.metric,
               valueCr: String(f.valueCr),
               sourceRevisionId: revisionId,
