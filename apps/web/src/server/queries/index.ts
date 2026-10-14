@@ -4,6 +4,7 @@ export * from "./influence";
 export * from "./influence-reviews";
 export * from "./insights";
 export * from "./ops";
+export * from "./precision";
 export * from "./research";
 export * from "./reviews";
 export * from "./screens";
