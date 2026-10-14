@@ -179,4 +179,37 @@ describe("extractFinancialFacts", () => {
     expect(extractFinancialFacts(GROUP_REPORT, "2024-03-31")).toBeNull();
     expect(extractFinancialFacts(MILLION_REPORT.replace("(INR in million)", ""), FY25)).toBeNull();
   });
+
+  it("refuses a heading whose year-end date it cannot read", () => {
+    const vague = MILLION_REPORT.replace(
+      "for the year ended 31.03.2025",
+      "for the year ended 31 Mar., 2O25",
+    );
+    expect(extractFinancialFacts(vague, FY25)).toBeNull();
+  });
+
+  it("reads a hyphenated year-end date", () => {
+    const hyphenated = MILLION_REPORT.replace(
+      "for the year ended 31.03.2025",
+      "for the year ended 31-March-2025",
+    );
+    expect(byMetric(extractFinancialFacts(hyphenated, FY25)?.facts ?? []).revenue).toBe(5_432.1);
+  });
+
+  it("does not shift a short row into the previous year when the statement has a note column", () => {
+    const shortRow = GROUP_REPORT.replace(
+      "Changes in inventories of finished goods, work-in-progress and stock-in-trade 31 ( 345.60 ) 120.00",
+      "Changes in inventories of finished goods, work-in-progress and stock-in-trade 50 (120.00)",
+    );
+    expect(byMetric(extractFinancialFacts(shortRow, FY25)?.facts ?? [])).toEqual({
+      revenue: 12_345.67,
+      purchases: 7_777.71,
+      capex: 987.65,
+    });
+    const noted = GROUP_REPORT.replace(
+      "Changes in inventories of finished goods, work-in-progress and stock-in-trade 31 ( 345.60 ) 120.00",
+      "Changes in inventories of finished goods, work-in-progress and stock-in-trade 31a (120.00)",
+    );
+    expect(byMetric(extractFinancialFacts(noted, FY25)?.facts ?? []).cogs).toBe(7_657.71);
+  });
 });

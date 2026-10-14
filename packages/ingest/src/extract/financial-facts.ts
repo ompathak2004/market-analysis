@@ -17,11 +17,16 @@ export interface FinancialFactsResult {
   facts: FinancialFact[];
 }
 
+interface RowLayout {
+  noteColumn: boolean;
+  columns: number;
+}
+
 interface Statement {
   kind: FinancialStatement;
   unit: FinancialUnit;
   section: string;
-  noteColumn: boolean;
+  layout: RowLayout;
   revenue: number;
   end: number;
   before: boolean;
@@ -112,20 +117,22 @@ export function extractFinancialFacts(
   const revenue = toCrore(chosen.revenue);
   push("revenue", revenue);
 
-  const materials = rowValue(chosen.section, MATERIALS, chosen.noteColumn);
-  const traded = rowValue(chosen.section, TRADED, chosen.noteColumn);
+  const materials = rowValue(chosen.section, MATERIALS, chosen.layout);
+  const traded = rowValue(chosen.section, TRADED, chosen.layout);
   if (materials !== null || traded !== null) {
     const bought = (materials ?? 0) + (traded ?? 0);
     const purchases = toCrore(bought);
     if (purchases > 0 && purchases <= revenue * MAX_COST_TO_REVENUE) {
       push("purchases", purchases);
-      const change = rowValue(chosen.section, INVENTORY_CHANGE, chosen.noteColumn);
-      const cogs = toCrore(bought + (change ?? 0));
-      if (cogs > 0 && cogs <= revenue * MAX_COST_TO_REVENUE) push("cogs", cogs);
+      const change = rowValue(chosen.section, INVENTORY_CHANGE, chosen.layout);
+      if (change !== null) {
+        const cogs = toCrore(bought + change);
+        if (cogs > 0 && cogs <= revenue * MAX_COST_TO_REVENUE) push("cogs", cogs);
+      }
     }
   }
 
-  const rnd = rowValue(chosen.section, RND, chosen.noteColumn);
+  const rnd = rowValue(chosen.section, RND, chosen.layout);
   if (rnd !== null && rnd > 0) push("rnd", toCrore(rnd));
 
   const capex = capexOf(text, chosen, periodEnd);
@@ -139,8 +146,7 @@ function statementsOf(text: string, periodEnd: string): Statement[] {
   for (const m of text.matchAll(PNL_HEADING)) {
     const start = m.index;
     const headingEnd = start + m[0].length;
-    const stated = statedYearEnd(headingTail(text, headingEnd), YEAR_ENDED);
-    if (stated === undefined || (stated !== null && stated !== periodEnd)) continue;
+    if (statedYearEnd(headingTail(text, headingEnd), YEAR_ENDED) !== periodEnd) continue;
     const unit = unitNear(text, start);
     if (!unit) continue;
     const raw = text.slice(headingEnd, headingEnd + PNL_WINDOW);
@@ -151,18 +157,20 @@ function statementsOf(text: string, periodEnd: string): Statement[] {
       { before: true, section: normalize(pageBefore(text, start, PNL_WINDOW)), end: headingEnd },
     ];
     for (const { before, section, end } of layouts) {
-      if (before && stated === null) continue;
       const revenueRow = firstRow(section.slice(0, REVENUE_REACH), REVENUE);
       if (!revenueRow) continue;
-      const noteColumn = revenueRow.length >= 3 && NOTE.test(revenueRow[0] as string);
-      const revenue = currentValue(revenueRow, noteColumn);
+      const layout = {
+        noteColumn: revenueRow.length >= 3 && NOTE.test(revenueRow[0] as string),
+        columns: revenueRow.length,
+      };
+      const revenue = currentValue(revenueRow, layout);
       if (revenue === null || revenue <= 0) continue;
       const prefix = (m[1] ?? m[2])?.toLowerCase();
       const kind: FinancialStatement =
         prefix === "consolidated" || (prefix !== "standalone" && GROUP_LINES.test(section))
           ? "consolidated"
           : "standalone";
-      out.push({ kind, unit, section, noteColumn, revenue, end, before });
+      out.push({ kind, unit, section, layout, revenue, end, before });
       break;
     }
   }
@@ -176,8 +184,7 @@ function capexOf(text: string, statement: Statement, periodEnd: string): number 
     if (prefix && prefix !== statement.kind) continue;
     const start = statement.end + m.index;
     const headingEnd = start + m[0].length;
-    const stated = statedYearEnd(headingTail(text, headingEnd), YEAR_ENDED_OR_AS_AT);
-    if (stated === undefined || (stated !== null && stated !== periodEnd)) continue;
+    if (statedYearEnd(headingTail(text, headingEnd), YEAR_ENDED_OR_AS_AT) !== periodEnd) continue;
     const unit = unitNear(text, start) ?? statement.unit;
     const section = normalize(
       statement.before
@@ -186,7 +193,7 @@ function capexOf(text: string, statement: Statement, periodEnd: string): number 
     );
     const row = firstRow(section, CAPEX);
     if (!row) return null;
-    const value = currentValue(row, NOTE.test(row[0] as string) && row.length >= 3);
+    const value = currentValue(row, { noteColumn: row.length >= 3, columns: row.length });
     if (value === null || value === 0) return null;
     return round2(Math.abs(value) * UNIT_TO_CRORE[unit]);
   }
@@ -203,12 +210,12 @@ function pageBefore(text: string, at: number, window: number): string {
   return text.slice(Math.max(text.lastIndexOf("\n\n", at), at - window, 0), at);
 }
 
-function statedYearEnd(tail: string, marker: RegExp): string | null | undefined {
+function statedYearEnd(tail: string, marker: RegExp): string | null {
   const at = marker.exec(tail);
-  if (!at) return undefined;
+  if (!at) return null;
   const after = tail.slice(at.index + at[0].length, at.index + at[0].length + 40);
   const dayFirst =
-    /^\s*(?:on\s+)?(\d{1,2})(?:st|nd|rd|th)?\s*(?:of\s+)?([a-z]{3,9})\.?,?\s*(20\d{2})/i.exec(
+    /^\s*(?:on\s+)?(\d{1,2})(?:st|nd|rd|th)?[\s-]*(?:of\s+)?([a-z]{3,9})\.?,?[\s-]*(20\d{2})/i.exec(
       after,
     );
   if (dayFirst) return monthEnd(Number(dayFirst[3]), monthOf(dayFirst[2] as string));
@@ -284,21 +291,20 @@ function isCell(word: string): boolean {
   return NUMBER.test(word) || NIL.test(word) || NOTE.test(word);
 }
 
-function rowValue(section: string, label: Label, noteColumn: boolean): number | null {
+function rowValue(section: string, label: Label, layout: RowLayout): number | null {
   const row = firstRow(section, label);
-  return row ? currentValue(row, noteColumn) : null;
+  return row ? currentValue(row, layout) : 0;
 }
 
-function currentValue(row: readonly string[], noteColumn: boolean): number | null {
+function currentValue(row: readonly string[], layout: RowLayout): number | null {
   const [first, second] = row;
   if (first === undefined) return null;
-  const dropNote =
-    noteColumn &&
-    NOTE.test(first) &&
-    second !== undefined &&
-    (row.length >= 3 || !NOTE.test(second) || !NUMBER.test(first));
-  const cell = dropNote ? second : first;
-  if (cell === undefined) return null;
+  let cell = first;
+  if (layout.noteColumn && NOTE.test(first)) {
+    if (NUMBER.test(first) && row.length < layout.columns) return null;
+    if (second === undefined) return null;
+    cell = second;
+  }
   if (NIL.test(cell)) return 0;
   return NUMBER.test(cell) ? parseIndianNumber(cell) : null;
 }
