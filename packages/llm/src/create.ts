@@ -19,7 +19,9 @@ export function createLlmClient(deps: {
       rpm: config.CEREBRAS_RPM,
       dailyTokens: config.LLM_DAILY_TOKEN_BUDGET,
       classTokens: {
-        ...(config.LLM_BUDGET_RELATIONSHIPS ? { relationships: config.LLM_BUDGET_RELATIONSHIPS } : {}),
+        ...(config.LLM_BUDGET_RELATIONSHIPS
+          ? { relationships: config.LLM_BUDGET_RELATIONSHIPS }
+          : {}),
         ...(config.LLM_BUDGET_INSIGHTS ? { insights: config.LLM_BUDGET_INSIGHTS } : {}),
         ...(config.LLM_BUDGET_INFLUENCE ? { influence: config.LLM_BUDGET_INFLUENCE } : {}),
       },
