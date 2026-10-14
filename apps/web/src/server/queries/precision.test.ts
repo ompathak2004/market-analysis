@@ -14,10 +14,9 @@ describe("wilsonLowerBound", () => {
     expect(wilsonLowerBound(96, 100)).toBeGreaterThanOrEqual(PRECISION_GATE);
   });
 
-  it("is zero without labels or successes and widens with a larger z", () => {
+  it("is zero without labels or successes", () => {
     expect(wilsonLowerBound(0, 0)).toBe(0);
     expect(wilsonLowerBound(0, 10)).toBe(0);
-    expect(wilsonLowerBound(90, 100, 2.576)).toBeLessThan(wilsonLowerBound(90, 100));
   });
 
   it("rises with sample size at a fixed ratio", () => {

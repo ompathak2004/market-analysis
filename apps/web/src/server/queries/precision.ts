@@ -29,12 +29,12 @@ export interface PrecisionSummary {
   passes: boolean;
 }
 
-export function wilsonLowerBound(successes: number, n: number, z = WILSON_Z): number {
+export function wilsonLowerBound(successes: number, n: number): number {
   if (n <= 0) return 0;
   const p = successes / n;
-  const z2 = z * z;
+  const z2 = WILSON_Z * WILSON_Z;
   const centre = p + z2 / (2 * n);
-  const margin = z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n));
+  const margin = WILSON_Z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n));
   return Math.max(0, (centre - margin) / (1 + z2 / n));
 }
 
