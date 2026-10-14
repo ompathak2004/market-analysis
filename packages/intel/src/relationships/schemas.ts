@@ -26,4 +26,3 @@ export const relationshipExtractionSchema = z.object({
 });
 
 export type RelationshipClaim = z.infer<typeof relationshipClaimSchema>;
-export type RelationshipExtraction = z.infer<typeof relationshipExtractionSchema>;

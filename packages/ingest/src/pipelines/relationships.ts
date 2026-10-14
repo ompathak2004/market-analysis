@@ -30,11 +30,6 @@ import {
 import { screenerUrl } from "../sources/screener.js";
 
 export type DocumentFamily = "annual_report" | "concall" | "screener";
-export const DOCUMENT_FAMILIES: readonly DocumentFamily[] = [
-  "annual_report",
-  "concall",
-  "screener",
-];
 
 const DOCUMENT_MS = 30_000;
 const DISCOVERED_MAX_AGE_MS = 365 * DAY;

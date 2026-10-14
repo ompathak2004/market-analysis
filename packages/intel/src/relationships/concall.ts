@@ -1,5 +1,5 @@
 import { fiscalYearFromLabel, LLM_EXTRACTOR_VERSION_BASE, periodEndFromLabel } from "@ma/ingest";
-import { type LlmSource, pendingLlmDocuments } from "./extract.js";
+import type { LlmSource } from "./extract.js";
 import { CONCALL_SYSTEM } from "./prompts.js";
 import { type Cue, RELATIONSHIP_CUES } from "./sections.js";
 
@@ -58,11 +58,6 @@ export const CONCALL_LLM_SOURCE: LlmSource = {
   markRead: false,
   families: ["concall"],
   prepare: maskAnalystTurns,
-  pending: (db, scope) =>
-    pendingLlmDocuments(db, scope, {
-      families: ["concall"],
-      extractorVersion: CONCALL_LLM_EXTRACTOR_VERSION,
-    }),
   period: (doc) => {
     const end =
       doc.label && fiscalYearFromLabel(doc.label) !== null

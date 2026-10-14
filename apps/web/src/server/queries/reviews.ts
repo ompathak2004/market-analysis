@@ -190,10 +190,13 @@ export async function reviewQueue(
   };
 }
 
-function pgCode(err: unknown): string | null {
+export function pgError(err: unknown): { code: string; message: string } | null {
   for (let e: unknown = err, depth = 0; e && depth < 4; depth++) {
     const code = (e as { code?: unknown }).code;
-    if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) return code;
+    if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) {
+      const message = (e as { message?: unknown }).message;
+      return { code, message: typeof message === "string" ? message : code };
+    }
     e = (e as { cause?: unknown }).cause;
   }
   return null;
@@ -227,7 +230,7 @@ export async function reviewRelationship(
       { accessMode: "read write" },
     )
     .catch((err: unknown) => {
-      const code = pgCode(err);
+      const code = pgError(err)?.code;
       if (code === "P0002") throw new NotFoundError("observation", String(input.observationId));
       if (code === "22023") throw new AppError("reviewer required", "BAD_REQUEST", 400);
       throw err;

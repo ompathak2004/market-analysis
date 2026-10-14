@@ -4,7 +4,6 @@ import type { HttpClient } from "../http.js";
 import { monthNumber } from "./policy-doc.js";
 
 export const ECI_BONDS_PARSER_VERSION = 1;
-export const ECI_BONDS_PAGE_URL = "https://www.eci.gov.in/disclosure-of-electoral-bonds";
 
 export type BondKind = "purchase" | "redemption";
 

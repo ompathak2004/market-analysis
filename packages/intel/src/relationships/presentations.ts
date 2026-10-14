@@ -1,6 +1,6 @@
 import { sql } from "@ma/db";
 import { LLM_EXTRACTOR_VERSION_BASE } from "@ma/ingest";
-import { type LlmSource, pendingLlmDocuments, publishedPeriod } from "./extract.js";
+import { type LlmSource, publishedPeriod } from "./extract.js";
 import { PRESENTATIONS_SYSTEM } from "./prompts.js";
 import { type Cue, RELATIONSHIP_CUES } from "./sections.js";
 
@@ -31,11 +31,6 @@ export const PRESENTATION_LLM_SOURCE: LlmSource = {
   roles: ["customer", "supplier"],
   markRead: true,
   families: ["presentation"],
-  pending: (db, scope) =>
-    pendingLlmDocuments(db, scope, {
-      families: ["presentation"],
-      extractorVersion: PRESENTATION_LLM_EXTRACTOR_VERSION,
-      where: LATEST_DECK,
-    }),
+  pendingWhere: LATEST_DECK,
   period: (doc) => publishedPeriod(doc.publishedAt),
 };

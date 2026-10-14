@@ -66,7 +66,7 @@ export interface LlmSource {
   markRead: boolean;
   families: readonly SourceFamily[];
   prepare?: (text: string) => string;
-  pending(db: Db, scope: PendingScope): Promise<LlmDocument[]>;
+  pendingWhere?: ReturnType<typeof sql>;
   period(doc: LlmDocument, text: string): Period;
 }
 
@@ -479,16 +479,10 @@ export async function extractLlmDocument(
   }
 }
 
-export interface PendingQuery {
-  families: readonly SourceFamily[];
-  extractorVersion: number;
-  where?: ReturnType<typeof sql>;
-}
-
 export async function pendingLlmDocuments(
   db: Db,
+  q: Pick<LlmSource, "families" | "extractorVersion" | "pendingWhere">,
   scope: PendingScope,
-  q: PendingQuery,
 ): Promise<LlmDocument[]> {
   const families = sql.join(
     q.families.map((f) => sql`${f}`),
@@ -509,7 +503,7 @@ export async function pendingLlmDocuments(
           and l.extractor_family = rs.family and l.extractor_version = ${q.extractorVersion}
           and (l.status = 'succeeded' or (l.status = 'failed'
             and l.finished_at > now() - make_interval(days => ${FAILED_RETRY_DAYS}))))
-      ${q.where ? sql`and ${q.where}` : sql``}
+      ${q.pendingWhere ? sql`and ${q.pendingWhere}` : sql``}
     order by rs.published_at desc nulls last, rs.document_id desc
     limit ${scope.limit}`);
   return rows.map(toLlmDocument);

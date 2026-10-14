@@ -5,7 +5,7 @@ import {
   ORDER_RELATIONSHIP_EXTRACTOR_VERSION,
   orderPeriod,
 } from "@ma/ingest";
-import { type LlmSource, pendingLlmDocuments } from "./extract.js";
+import type { LlmSource } from "./extract.js";
 import { ORDERS_SYSTEM } from "./prompts.js";
 import type { Cue } from "./sections.js";
 
@@ -48,12 +48,7 @@ export const ORDER_LLM_SOURCE: LlmSource = {
   roles: ["customer"],
   markRead: false,
   families: ["order_filing", "announcement_metadata"],
-  pending: (db, scope) =>
-    pendingLlmDocuments(db, scope, {
-      families: ["order_filing", "announcement_metadata"],
-      extractorVersion: ORDER_LLM_EXTRACTOR_VERSION,
-      where: REGEX_FOUND_NOTHING,
-    }),
+  pendingWhere: REGEX_FOUND_NOTHING,
   period: (doc, text) =>
     doc.publishedAt
       ? orderPeriod(new Date(`${doc.publishedAt}T00:00:00Z`), executionMonths(text))

@@ -46,3 +46,12 @@ export function handle(fn: (req: Request, params: Record<string, string>) => Pro
 export function query(req: Request): Record<string, string> {
   return Object.fromEntries(new URL(req.url).searchParams.entries());
 }
+
+export async function jsonBody(req: Request): Promise<unknown> {
+  if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+    throw new AppError("content-type must be application/json", "UNSUPPORTED_MEDIA_TYPE", 415);
+  }
+  return req.json().catch(() => {
+    throw new AppError("invalid json body", "BAD_REQUEST", 400);
+  });
+}

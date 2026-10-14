@@ -1,5 +1,5 @@
 import { LLM_EXTRACTOR_VERSION_BASE, maskOutsideRationale } from "@ma/ingest";
-import { type LlmSource, pendingLlmDocuments, publishedPeriod } from "./extract.js";
+import { type LlmSource, publishedPeriod } from "./extract.js";
 import { RATINGS_SYSTEM } from "./prompts.js";
 import { type Cue, RELATIONSHIP_CUES } from "./sections.js";
 
@@ -28,10 +28,5 @@ export const RATING_LLM_SOURCE: LlmSource = {
   markRead: true,
   families: ["rating_rationale"],
   prepare: maskOutsideRationale,
-  pending: (db, scope) =>
-    pendingLlmDocuments(db, scope, {
-      families: ["rating_rationale"],
-      extractorVersion: RATING_LLM_EXTRACTOR_VERSION,
-    }),
   period: (doc) => publishedPeriod(doc.publishedAt),
 };

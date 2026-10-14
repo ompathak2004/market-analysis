@@ -123,12 +123,6 @@ export const POLICY_SECTORS: readonly PolicySectorDef[] = [
   },
 ];
 
-const POLICY_SECTOR_KEYS = new Set(POLICY_SECTORS.map((s) => s.key));
-
-export function isPolicySectorKey(key: string): boolean {
-  return POLICY_SECTOR_KEYS.has(key);
-}
-
 export function ministryKey(raw: string | null | undefined): string | null {
   const key = (raw ?? "")
     .toLowerCase()

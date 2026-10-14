@@ -141,7 +141,7 @@ export async function spanFor(
   locator: Record<string, unknown>,
 ): Promise<number | null> {
   if (!span || span.end <= span.start) return null;
-  const [inserted] = await tx
+  const [row] = await tx
     .insert(evidenceSpans)
     .values({
       documentRevisionId: revisionId,
@@ -150,25 +150,15 @@ export async function spanFor(
       quote: content.slice(span.start, span.end),
       locator,
     })
-    .onConflictDoNothing({
+    .onConflictDoUpdate({
       target: [
         evidenceSpans.documentRevisionId,
         evidenceSpans.startOffset,
         evidenceSpans.endOffset,
       ],
+      set: { quote: sql`excluded.quote` },
     })
     .returning({ id: evidenceSpans.id });
-  if (inserted) return inserted.id;
-  const [row] = await tx
-    .select({ id: evidenceSpans.id })
-    .from(evidenceSpans)
-    .where(
-      and(
-        eq(evidenceSpans.documentRevisionId, revisionId),
-        eq(evidenceSpans.startOffset, span.start),
-        eq(evidenceSpans.endOffset, span.end),
-      ),
-    );
   return row?.id ?? null;
 }
 
@@ -322,6 +312,13 @@ export interface Extraction {
   inputHash: string;
 }
 
+const EXTRACTION_TARGET = [
+  influenceExtractions.documentRevisionId,
+  influenceExtractions.family,
+  influenceExtractions.version,
+  influenceExtractions.inputHash,
+];
+
 const extractionKey = (x: Extraction) =>
   and(
     eq(influenceExtractions.documentRevisionId, x.documentRevisionId),
@@ -343,12 +340,7 @@ async function startExtraction(tx: Tx, x: Extraction) {
     .insert(influenceExtractions)
     .values({ ...x, status: "running" })
     .onConflictDoUpdate({
-      target: [
-        influenceExtractions.documentRevisionId,
-        influenceExtractions.family,
-        influenceExtractions.version,
-        influenceExtractions.inputHash,
-      ],
+      target: EXTRACTION_TARGET,
       set: { status: "running", startedAt: new Date(), finishedAt: null, error: null },
     });
 }
@@ -366,12 +358,7 @@ async function failExtraction(ctx: IngestContext, x: Extraction, err: unknown) {
     .insert(influenceExtractions)
     .values({ ...x, status: "failed", error, finishedAt: new Date() })
     .onConflictDoUpdate({
-      target: [
-        influenceExtractions.documentRevisionId,
-        influenceExtractions.family,
-        influenceExtractions.version,
-        influenceExtractions.inputHash,
-      ],
+      target: EXTRACTION_TARGET,
       set: { status: "failed", error, finishedAt: new Date() },
     });
 }

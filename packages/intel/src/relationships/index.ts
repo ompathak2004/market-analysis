@@ -1,7 +1,12 @@
 import type { Db } from "@ma/db";
 import { ANNUAL_LLM_SOURCE } from "./annual.js";
 import { CONCALL_LLM_SOURCE } from "./concall.js";
-import { type LlmDocument, type LlmSource, llmDocumentCost } from "./extract.js";
+import {
+  type LlmDocument,
+  type LlmSource,
+  llmDocumentCost,
+  pendingLlmDocuments,
+} from "./extract.js";
 import { ORDER_LLM_SOURCE } from "./orders.js";
 import { PRESENTATION_LLM_SOURCE } from "./presentations.js";
 import { RATING_LLM_SOURCE } from "./ratings.js";
@@ -80,7 +85,10 @@ export async function pendingLlmPlan(
   const queues = await Promise.all(
     sources.map(async (source) => ({
       source,
-      docs: await LLM_SOURCES[source].pending(db, { companyId: null, limit: perSource }),
+      docs: await pendingLlmDocuments(db, LLM_SOURCES[source], {
+        companyId: null,
+        limit: perSource,
+      }),
     })),
   );
   return planLlmDocuments(queues, budgetTokens);

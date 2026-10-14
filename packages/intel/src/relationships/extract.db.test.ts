@@ -15,7 +15,12 @@ import {
 import { LlmClient } from "@ma/llm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ANNUAL_LLM_EXTRACTOR_VERSION, ANNUAL_LLM_SOURCE } from "./annual.js";
-import { extractLlmDocument, type LlmDocument, loadLlmDocument } from "./extract.js";
+import {
+  extractLlmDocument,
+  type LlmDocument,
+  loadLlmDocument,
+  pendingLlmDocuments,
+} from "./extract.js";
 
 const url = process.env.DATABASE_URL_TEST;
 
@@ -238,7 +243,10 @@ describe.skipIf(!url)("llm relationship extraction (DATABASE_URL_TEST)", () => {
   });
 
   it("lists the annual report as pending for the llm adapter", async () => {
-    const pending = await ANNUAL_LLM_SOURCE.pending(db, { companyId: focalId, limit: 5 });
+    const pending = await pendingLlmDocuments(db, ANNUAL_LLM_SOURCE, {
+      companyId: focalId,
+      limit: 5,
+    });
     expect(pending.map((d) => d.documentId)).toEqual([doc.documentId]);
   });
 
@@ -296,6 +304,8 @@ describe.skipIf(!url)("llm relationship extraction (DATABASE_URL_TEST)", () => {
     const result = await extractLlmDocument({ db, llm, logger, docs }, ANNUAL_LLM_SOURCE, doc);
     expect(result.status).toBe("skipped");
     expect(calls).toBe(before);
-    expect(await ANNUAL_LLM_SOURCE.pending(db, { companyId: focalId, limit: 5 })).toEqual([]);
+    expect(
+      await pendingLlmDocuments(db, ANNUAL_LLM_SOURCE, { companyId: focalId, limit: 5 }),
+    ).toEqual([]);
   });
 });

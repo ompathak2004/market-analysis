@@ -6,6 +6,7 @@ import {
   clampLimit,
   decodeCursor,
   encodeCursor,
+  pgError,
   type ReviewCursor,
   type ReviewEvidence,
 } from "./reviews";
@@ -156,18 +157,6 @@ export async function influenceReviewQueue(
         ? encodeCursor({ createdAt: last.createdAt, id: last.edgeId })
         : null,
   };
-}
-
-function pgError(err: unknown): { code: string; message: string } | null {
-  for (let e: unknown = err, depth = 0; e && depth < 4; depth++) {
-    const code = (e as { code?: unknown }).code;
-    if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) {
-      const message = (e as { message?: unknown }).message;
-      return { code, message: typeof message === "string" ? message : code };
-    }
-    e = (e as { cause?: unknown }).cause;
-  }
-  return null;
 }
 
 export async function reviewInfluenceEdge(

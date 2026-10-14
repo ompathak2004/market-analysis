@@ -1,5 +1,5 @@
 import { fiscalPeriod, fiscalYearFromLabel, LLM_EXTRACTOR_VERSION_BASE } from "@ma/ingest";
-import { type LlmSource, pendingLlmDocuments } from "./extract.js";
+import type { LlmSource } from "./extract.js";
 import { ANNUAL_SYSTEM } from "./prompts.js";
 import { type Cue, RELATIONSHIP_CUES } from "./sections.js";
 
@@ -26,11 +26,6 @@ export const ANNUAL_LLM_SOURCE: LlmSource = {
   roles: ["customer", "supplier"],
   markRead: false,
   families: ["annual_report"],
-  pending: (db, scope) =>
-    pendingLlmDocuments(db, scope, {
-      families: ["annual_report"],
-      extractorVersion: ANNUAL_LLM_EXTRACTOR_VERSION,
-    }),
   period: (doc) => {
     const fy = doc.label ? fiscalYearFromLabel(doc.label) : null;
     return fy === null
