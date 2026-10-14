@@ -1,5 +1,6 @@
 import type { HandlerMap } from "../registry.js";
 import { altdataHandlers } from "./altdata.js";
+import { documentHandlers } from "./documents.js";
 import { insightHandlers } from "./insights.js";
 import { intelHandlers } from "./intel.js";
 import { marketHandlers } from "./market.js";
@@ -16,5 +17,6 @@ export const HANDLERS: HandlerMap = {
   ...researchHandlers,
   ...insightHandlers,
   ...altdataHandlers,
+  ...documentHandlers,
   ...opsHandlers,
 };

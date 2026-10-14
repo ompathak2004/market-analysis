@@ -6,6 +6,7 @@ import { API_CACHE } from "@ma/jobs";
 import { createLlmClient, type LlmClient } from "@ma/llm";
 import { z } from "zod";
 import { type BufferedMetrics, createMetrics } from "./metrics.js";
+import { S3ObjectStore } from "./storage.js";
 
 export const APP_POOL_MAX = 2;
 export const QUEUE_POOL_MAX = 1;
@@ -49,7 +50,10 @@ export function createWorkerContext(
   const logger = createLogger(name, config.LOG_LEVEL);
   const db = createDb(config.DATABASE_URL, APP_POOL_MAX);
   const redis = createRedis(config.REDIS_URL);
-  const ingest = createIngestContext({ db, redis, config, logger });
+  const objects = config.S3_ARCHIVE_BUCKET
+    ? S3ObjectStore.fromEnv(config.S3_ARCHIVE_BUCKET, env.AWS_REGION)
+    : null;
+  const ingest = createIngestContext({ db, redis, config, logger, objects });
   const llm = createLlmClient({
     config,
     redis,

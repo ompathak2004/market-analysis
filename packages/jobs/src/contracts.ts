@@ -175,6 +175,17 @@ export const JOB_CONTRACTS = {
   ),
   "maintenance.prune": job(null, "compute", "unit", empty, 5 * MINUTE),
   "ops.digest": job(null, "control", "unit", empty, MINUTE),
+  "documents.snapshot": job("documents", "control", "fanout", empty, 2 * MINUTE),
+  "documents.revision": job(
+    "documents",
+    "io",
+    "unit",
+    z.object({ documentIds: z.array(z.number().int().positive()).min(1).max(100) }).strict(),
+    4 * MINUTE,
+    (p) => `${p.documentIds[0]}-${p.documentIds[p.documentIds.length - 1]}`,
+  ),
+  "documents.gc": job("documents", "compute", "unit", empty, 5 * MINUTE),
+  "documents.release": job("documents", "compute", "unit", empty, 5 * MINUTE),
 } as const;
 
 export type JobType = keyof typeof JOB_CONTRACTS;
@@ -214,7 +225,6 @@ export interface JobEnvelope {
   runId: number | null;
   attemptBase: number;
   deferrals: number;
-  // pg-boss does not hand the priority back to a worker; app-managed retries re-send it from here.
   priority?: number | undefined;
 }
 

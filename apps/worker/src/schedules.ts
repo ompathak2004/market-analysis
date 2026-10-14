@@ -42,6 +42,9 @@ export const SCHEDULES: readonly ScheduleEntry[] = [
   { type: "ops.reconcile", cron: "*/15 * * * *" },
   { type: "maintenance.prune", cron: "30 3 * * *" },
   { type: "ops.digest", cron: "0 8 * * *" },
+  { type: "documents.snapshot", cron: "45 * * * *" },
+  { type: "documents.release", cron: "40 4 * * *" },
+  { type: "documents.gc", cron: "50 4 * * *" },
 ];
 
 export function scheduleId(entry: ScheduleEntry): string {
