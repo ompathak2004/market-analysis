@@ -13,10 +13,5 @@ const gone = () =>
     410,
   );
 
-export function GET() {
-  return gone();
-}
-
-export function POST() {
-  return gone();
-}
+export const GET = gone;
+export const POST = gone;
