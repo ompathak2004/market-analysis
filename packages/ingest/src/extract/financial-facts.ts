@@ -134,7 +134,7 @@ export function extractFinancialFacts(
   }
 
   const rnd = rowValue(chosen.section, RND, chosen.layout);
-  if (rnd) push("rnd", toCrore(rnd));
+  if (rnd !== null && rnd !== undefined && rnd > 0) push("rnd", toCrore(rnd));
 
   const capex = capexOf(text, chosen, periodEnd);
   if (capex !== null) push("capex", capex);

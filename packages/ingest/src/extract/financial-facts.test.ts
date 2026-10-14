@@ -196,6 +196,14 @@ describe("extractFinancialFacts", () => {
     expect(byMetric(extractFinancialFacts(hyphenated, FY25)?.facts ?? []).revenue).toBe(5_432.1);
   });
 
+  it("ignores a negative research and development row", () => {
+    const negative = LAKH_REPORT.replace(
+      "Research and development expenses 600.00 550.00",
+      "Research and development expenses (600.00) 550.00",
+    );
+    expect(byMetric(extractFinancialFacts(negative, FY25)?.facts ?? []).rnd).toBeUndefined();
+  });
+
   it("skips purchases when a cost row is present but unreadable", () => {
     const unreadable = GROUP_REPORT.replace(
       "Cost of materials consumed 29 6,543.21 6,000.00",
