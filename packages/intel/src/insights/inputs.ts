@@ -754,7 +754,7 @@ async function loadSupplyChain(
     )
     .leftJoin(documents, eq(documents.id, relationships.sourceDocumentId))
     .where(
-      sql`(${relationships.supplierCompanyId} = ${companyId} or ${relationships.customerCompanyId} = ${companyId}) and ${relationships.validTo} >= ${asOf}`,
+      sql`(${relationships.supplierCompanyId} = ${companyId} or ${relationships.customerCompanyId} = ${companyId}) and ${relationships.validTo} >= ${asOf} and ${relationships.status} in ('active', 'expired')`,
     )
     .orderBy(desc(relationshipEstimates.supplierRevenuePct), desc(relationships.confidence));
   const otherIds = [
