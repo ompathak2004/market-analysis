@@ -1,7 +1,59 @@
 import { describe, expect, it } from "vitest";
-import { normalizeAdsb } from "./adsb.js";
+import { type AdsbLolTrace, normalizeAdsb, normalizeTrace, traceDay } from "./adsb.js";
 import { parseAircraftDb, parseFlags } from "./aircraft-db.js";
 import { parseAisMessage, parseAisTime } from "./aisstream.js";
+
+describe("normalizeTrace", () => {
+  const base = 1_791_976_365.5;
+  const point = (
+    offset: number,
+    alt: number | "ground",
+    flags = 0,
+    extra: { flight?: string; squawk?: string } | null = null,
+  ) => [offset, 19.09 + offset / 1e4, 72.9, alt, 120, 268.6, flags, -500, extra, "adsb_icao"];
+
+  it("thins dense points to 30 s, keeps ground transitions and drops stale ones", () => {
+    const out = normalizeTrace(
+      {
+        r: "vt-jsj",
+        t: "gl7t",
+        timestamp: base,
+        trace: [
+          point(0, 42_975, 0, { flight: "VTJSJ   ", squawk: "2421" }),
+          point(10, 42_000),
+          point(20, 41_000, 1),
+          point(31, 40_000),
+          point(40, 2_000),
+          point(45, "ground"),
+          point(50, "ground"),
+          point(52, "ground"),
+        ] as NonNullable<AdsbLolTrace["trace"]>,
+      },
+      "8016b6",
+    );
+    expect(out.map((s) => [s.ts.getTime() / 1000 - 1_791_976_366, s.altFt, s.onGround])).toEqual([
+      [0, 42_975, false],
+      [31, 40_000, false],
+      [45, null, true],
+      [52, null, true],
+    ]);
+    expect(out[0]).toMatchObject({
+      hex: "8016b6",
+      registration: "VT-JSJ",
+      icaoType: "GL7T",
+      callsign: "VTJSJ",
+      squawk: "2421",
+      gsKt: 120,
+      track: 268.6,
+    });
+    expect(out[3]?.callsign).toBe("VTJSJ");
+    expect(normalizeTrace({ timestamp: base }, "8016b6")).toEqual([]);
+  });
+
+  it("names the UTC day of a history trace", () => {
+    expect(traceDay(new Date("2026-10-14T00:30:00Z"), 1)).toBe("2026-10-13");
+  });
+});
 
 describe("normalizeAdsb", () => {
   it("normalizes hexes, ground state and position age", () => {
