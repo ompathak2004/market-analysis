@@ -50,26 +50,6 @@ export const BIZJET_TYPES: ReadonlySet<string> = new Set([
   "P180",
 ]);
 
-export const AIRLINER_TYPES: ReadonlySet<string> = new Set([
-  "A318",
-  "A319",
-  "A320",
-  "A321",
-  "A20N",
-  "A21N",
-  "B737",
-  "B738",
-  "B739",
-  "B37M",
-  "B38M",
-  "B39M",
-  "B752",
-  "B788",
-  "B789",
-  "B77W",
-  "B77L",
-]);
-
 export const CHARTER_OWNER =
   /club one|viking|air charter|zest aviation|fly-?by-?wire|mytri|indo pacific|^corporate|charter|airways|airlines|air india|indigo|interglobe|spicejet|akasa|alliance air|pawan hans|academy|flying club|flying school|flight training|government|state of|ministry|air force|border security|police|airports authority/i;
 

@@ -17,13 +17,6 @@ export function objectKey(kind: ObjectKind, sha256: string, extension: string): 
   return `${OBJECT_PREFIXES[kind]}${sha256.slice(0, 2)}/${sha256}.${extension}`;
 }
 
-export function objectKind(key: string): ObjectKind | null {
-  for (const [kind, prefix] of Object.entries(OBJECT_PREFIXES)) {
-    if (key.startsWith(prefix)) return kind as ObjectKind;
-  }
-  return null;
-}
-
 export class MemoryObjectStore implements ObjectStore {
   readonly objects = new Map<string, { body: Uint8Array; sha256: string }>();
 
