@@ -57,7 +57,7 @@
     grid-template-rows: minmax(0, 1.2fr) minmax(0, 1fr);
     grid-template-areas:
       "customers suppliers"
-      "signals signals";
+      "coverage signals";
   }
 
   .grid-news {
