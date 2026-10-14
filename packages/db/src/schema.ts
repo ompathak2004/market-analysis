@@ -23,7 +23,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
-const timestamps = {
+export const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 };
@@ -410,67 +410,6 @@ export const documents = pgTable(
   ],
 );
 
-export const relationships = pgTable(
-  "relationships",
-  {
-    id: serial("id").primaryKey(),
-    supplierCompanyId: integer("supplier_company_id").references(() => companies.id, {
-      onDelete: "set null",
-    }),
-    supplierName: text("supplier_name").notNull(),
-    customerCompanyId: integer("customer_company_id").references(() => companies.id, {
-      onDelete: "set null",
-    }),
-    customerName: text("customer_name").notNull(),
-    costBucket: costBucket("cost_bucket").notNull().default("UNKNOWN"),
-    disclosedBy: disclosedBy("disclosed_by").notNull(),
-    disclosureKind: disclosureKind("disclosure_kind").notNull(),
-    disclosedPct: real("disclosed_pct"),
-    disclosedValue: numeric("disclosed_value", { precision: 18, scale: 2 }),
-    fiscalYear: smallint("fiscal_year"),
-    validFrom: date("valid_from").notNull(),
-    validTo: date("valid_to").notNull(),
-    confidence: real("confidence").notNull(),
-    evidence: text("evidence"),
-    sourceDocumentId: integer("source_document_id").references(() => documents.id, {
-      onDelete: "set null",
-    }),
-    ...timestamps,
-  },
-  (t) => [
-    index("relationships_supplier_idx").on(t.supplierCompanyId, t.validTo),
-    index("relationships_customer_idx").on(t.customerCompanyId, t.validTo),
-    uniqueIndex("relationships_dedupe_uq").on(
-      t.supplierName,
-      t.customerName,
-      t.disclosureKind,
-      t.fiscalYear,
-      t.sourceDocumentId,
-    ),
-  ],
-);
-
-export const relationshipEstimates = pgTable(
-  "relationship_estimates",
-  {
-    id: serial("id").primaryKey(),
-    relationshipId: integer("relationship_id")
-      .notNull()
-      .references(() => relationships.id, { onDelete: "cascade" }),
-    asOf: date("as_of").notNull(),
-    method: estimateMethod("method").notNull(),
-    valueCr: numeric("value_cr", { precision: 18, scale: 2 }),
-    valueLowCr: numeric("value_low_cr", { precision: 18, scale: 2 }),
-    valueHighCr: numeric("value_high_cr", { precision: 18, scale: 2 }),
-    supplierRevenuePct: real("supplier_revenue_pct"),
-    customerCostPct: real("customer_cost_pct"),
-    inputs: jsonb("inputs").$type<Record<string, unknown>>().notNull(),
-    modelVersion: smallint("model_version").notNull(),
-    createdAt: timestamps.createdAt,
-  },
-  (t) => [uniqueIndex("relationship_estimates_uq").on(t.relationshipId, t.asOf, t.modelVersion)],
-);
-
 export const analystCalls = pgTable(
   "analyst_calls",
   {
@@ -757,13 +696,9 @@ export const insights = pgTable(
     supersededAt: timestamp("superseded_at", { withTimezone: true }),
   },
   (t) => [
-    uniqueIndex("insights_key_uq").on(
-      t.companyId,
-      t.kind,
-      t.subjectId,
-      t.modelVersion,
-      t.inputHash,
-    ),
+    unique("insights_key_uq")
+      .on(t.companyId, t.kind, t.subjectId, t.modelVersion, t.inputHash)
+      .nullsNotDistinct(),
     index("insights_current_idx").on(t.kind, t.companyId, t.generatedAt),
   ],
 );
