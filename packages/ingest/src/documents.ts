@@ -43,6 +43,14 @@ export interface FetchDocumentOptions {
   signal?: AbortSignal;
 }
 
+export interface InlineDocumentOptions {
+  source: string;
+  companyId?: number | null;
+  publishedAt?: Date | null;
+  contentType?: string | null;
+  signal?: AbortSignal;
+}
+
 export interface FetchDocumentResult {
   doc: StoredDocument;
   revision: DocumentRevision;
@@ -112,6 +120,37 @@ export class DocumentStore {
       return this.current(doc as StoredDocument, { changed: false, fromCache: false });
     }
 
+    return this.persist(url, existing, content, hash, pageMap, fetched, opts);
+  }
+
+  async putInline(
+    url: string,
+    content: string,
+    opts: InlineDocumentOptions,
+  ): Promise<FetchDocumentResult> {
+    const existing = await this.db.query.documents.findFirst({ where: eq(documents.url, url) });
+    const clean = content.replaceAll("\u0000", "");
+    const hash = sha256(clean);
+    if (existing && existing.sha256 === hash && existing.currentRevisionId !== null) {
+      return this.current(existing, { changed: false, fromCache: true });
+    }
+    const meta = {
+      contentType: opts.contentType ?? TEXT_CONTENT_TYPE,
+      etag: null,
+      lastModified: null,
+    };
+    return this.persist(url, existing, clean, hash, null, meta, opts);
+  }
+
+  private async persist(
+    url: string,
+    existing: StoredDocument | undefined,
+    content: string,
+    hash: string,
+    pageMap: PageSpan[] | null,
+    meta: Pick<Fetched, "contentType" | "etag" | "lastModified">,
+    opts: Pick<FetchDocumentOptions, "source" | "companyId" | "publishedAt" | "signal">,
+  ): Promise<FetchDocumentResult> {
     const stored = await this.store(content, hash);
     const now = new Date();
     const row = {
@@ -119,9 +158,9 @@ export class DocumentStore {
       source: opts.source,
       companyId: opts.companyId ?? null,
       sha256: hash,
-      contentType: fetched.contentType,
-      etag: fetched.etag,
-      lastModified: fetched.lastModified,
+      contentType: meta.contentType,
+      etag: meta.etag,
+      lastModified: meta.lastModified,
       byteSize: Buffer.byteLength(content),
       content,
       status: "fetched" as const,
@@ -146,8 +185,8 @@ export class DocumentStore {
           textParserVersion: TEXT_PARSER_VERSION,
           textS3Key: stored.key,
           textBytes: row.byteSize,
-          pageMap: pageMap ?? null,
-          mimeType: fetched.contentType,
+          pageMap,
+          mimeType: meta.contentType,
           publishedAt: row.publishedAt,
           fetchedAt: now,
           rawUnavailable: true,

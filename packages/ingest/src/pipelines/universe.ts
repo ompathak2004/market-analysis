@@ -10,6 +10,7 @@ import {
   type Tx,
 } from "@ma/db";
 import type { IngestContext } from "../context.js";
+import { aliasesFor } from "../data/company-aliases.js";
 import { MARKET_INDICES, marketIndex } from "../data/market-indices.js";
 import { normalizeCompanyName } from "../extract/relationships.js";
 import { toYahooSymbol } from "../sources/yahoo.js";
@@ -95,31 +96,4 @@ export async function seedMarketIndices(db: Pick<Tx, "insert">): Promise<number>
       set: { name: sql`excluded.name`, yahooSymbol: sql`excluded.yahoo_symbol` },
     });
   return rows.length;
-}
-
-export const GROUP_ALIASES: Record<string, string[]> = {
-  RELIANCE: [
-    "reliance jio",
-    "jio platforms",
-    "jio infocomm",
-    "reliance retail",
-    "reliance industries limited",
-  ],
-  BHARTIARTL: ["airtel", "bharti airtel"],
-  TATAMOTORS: ["tata motors", "jaguar land rover"],
-  MARUTI: ["maruti suzuki", "maruti"],
-  ADANIENT: ["adani enterprises"],
-  HINDALCO: ["novelis"],
-  TATASTEEL: ["tata steel"],
-  LT: ["larsen & toubro", "larsen and toubro", "l&t"],
-};
-
-export function aliasesFor(name: string, nseSymbol: string | null): string[] {
-  const base = normalizeCompanyName(name);
-  const out = new Set<string>([base, ...(nseSymbol ? (GROUP_ALIASES[nseSymbol] ?? []) : [])]);
-  const noIndia = base.replace(/\s+\(?india\)?$/, "");
-  if (noIndia !== base && noIndia.split(" ").length >= 2) out.add(noIndia);
-  if (nseSymbol && nseSymbol.length >= 4 && !/^\d/.test(nseSymbol))
-    out.add(nseSymbol.toLowerCase());
-  return [...out];
 }
