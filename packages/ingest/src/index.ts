@@ -22,6 +22,7 @@ export * from "./geo.js";
 export * from "./http.js";
 export * from "./pipelines/aircraft.js";
 export * from "./pipelines/analysts.js";
+export * from "./pipelines/financial-facts.js";
 export * from "./pipelines/fundamentals.js";
 export * from "./pipelines/market.js";
 export * from "./pipelines/orders.js";
