@@ -18,7 +18,6 @@ const VABB = airportByIcao("VABB");
 class FakeRedis {
   strings = new Map<string, string>();
   hashes = new Map<string, Map<string, string>>();
-  sets = new Map<string, Set<string>>();
   async get(k: string) {
     return this.strings.get(k) ?? null;
   }
@@ -29,12 +28,6 @@ class FakeRedis {
   async del(...keys: string[]) {
     for (const k of keys) this.strings.delete(k);
     return keys.length;
-  }
-  async expire() {
-    return 1;
-  }
-  async exists(k: string) {
-    return this.strings.has(k) ? 1 : 0;
   }
   async hget(k: string, f: string) {
     return this.hashes.get(k)?.get(f) ?? null;
@@ -51,15 +44,6 @@ class FakeRedis {
   }
   async hgetall(k: string) {
     return Object.fromEntries(this.hashes.get(k) ?? []);
-  }
-  async smembers(k: string) {
-    return [...(this.sets.get(k) ?? [])];
-  }
-  async sadd(k: string, ...m: string[]) {
-    const s = this.sets.get(k) ?? new Set<string>();
-    for (const x of m) s.add(x);
-    this.sets.set(k, s);
-    return m.length;
   }
 }
 

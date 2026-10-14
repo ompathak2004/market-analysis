@@ -91,9 +91,8 @@ export function normalizeTrace(body: AdsbLolTrace, hex: string): PositionSample[
   if (typeof base !== "number" || !Array.isArray(body.trace)) return [];
   const out: PositionSample[] = [];
   let kept: PositionSample | null = null;
-  const points = body.trace;
-  points.forEach((p, i) => {
-    if (typeof p[1] !== "number" || typeof p[2] !== "number" || p[6] & TRACE_STALE) return;
+  for (const [i, p] of body.trace.entries()) {
+    if (typeof p[1] !== "number" || typeof p[2] !== "number" || p[6] & TRACE_STALE) continue;
     const onGround = p[3] === "ground";
     const sample: PositionSample = {
       hex,
@@ -111,11 +110,11 @@ export function normalizeTrace(body: AdsbLolTrace, hex: string): PositionSample[
     };
     const transition = kept !== null && kept.onGround !== onGround;
     const spaced = kept === null || sample.ts.getTime() - kept.ts.getTime() >= TRACE_MIN_SPACING_MS;
-    if (!transition && !spaced && i < points.length - 1) return;
+    if (!transition && !spaced && i < body.trace.length - 1) continue;
     if (kept && sample.ts.getTime() === kept.ts.getTime()) out.pop();
     out.push(sample);
     kept = sample;
-  });
+  }
   return out;
 }
 
@@ -146,7 +145,7 @@ export class AdsbSource {
     const file = `traces/${h.slice(-2)}/trace_full_${h}.json`;
     const url = day
       ? `${TRACE_BASE}/globe_history/${day.replaceAll("-", "/")}/${file}`
-      : `${TRACE_BASE}/data/traces/${h.slice(-2)}/trace_full_${h}.json`;
+      : `${TRACE_BASE}/data/${file}`;
     const res = await this.http.get(url, {
       headers: { accept: "application/json" },
       timeoutMs: 20_000,

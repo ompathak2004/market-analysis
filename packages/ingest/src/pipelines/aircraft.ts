@@ -442,20 +442,7 @@ async function storeTrace(
       for (const batch of chunk(samples, 500)) {
         const res = await tx
           .insert(aircraftPositions)
-          .values(
-            batch.map((s) => ({
-              hex,
-              ts: s.ts,
-              lat: s.lat,
-              lon: s.lon,
-              altFt: s.onGround ? null : s.altFt,
-              gsKt: s.gsKt,
-              track: s.track,
-              onGround: s.onGround,
-              squawk: s.squawk,
-              source: "adsb_lol_trace",
-            })),
-          )
+          .values(batch.map((s) => positionRow(s, "adsb_lol_trace")))
           .onConflictDoNothing()
           .returning({ hex: aircraftPositions.hex });
         count += res.length;
@@ -472,6 +459,24 @@ async function storeTrace(
   );
   if (inserted) await markReplay(ctx, hex, first.ts);
   return inserted;
+}
+
+function positionRow(
+  s: PositionSample,
+  source: "adsb_lol" | "adsb_lol_trace",
+): typeof aircraftPositions.$inferInsert {
+  return {
+    hex: s.hex,
+    ts: s.ts,
+    lat: s.lat,
+    lon: s.lon,
+    altFt: s.onGround ? null : s.altFt,
+    gsKt: s.gsKt,
+    track: s.track,
+    onGround: s.onGround,
+    squawk: s.squawk,
+    source,
+  };
 }
 
 async function markReplay(ctx: IngestContext, hex: string, from: Date): Promise<void> {
@@ -552,20 +557,7 @@ export async function sampleAircraftPositions(
       if (samples.length) {
         const res = await tx
           .insert(aircraftPositions)
-          .values(
-            samples.map((s) => ({
-              hex: s.hex,
-              ts: s.ts,
-              lat: s.lat,
-              lon: s.lon,
-              altFt: s.onGround ? null : s.altFt,
-              gsKt: s.gsKt,
-              track: s.track,
-              onGround: s.onGround,
-              squawk: s.squawk,
-              source: "adsb_lol",
-            })),
-          )
+          .values(samples.map((s) => positionRow(s, "adsb_lol")))
           .onConflictDoNothing()
           .returning({ hex: aircraftPositions.hex });
         positions = res.length;
@@ -704,11 +696,12 @@ export async function deriveAircraftFlights(
   opts: DeriveFlightsOptions = {},
 ): Promise<Record<string, number>> {
   const now = opts.now ?? new Date();
+  const floor = new Date(now.getTime() - REPLAY_MAX_MS);
   const pass = await beginPass(
     ctx.redis,
     { cursorKey: DERIVE_CURSOR, resumeKey: DERIVE_RESUME },
     now,
-    new Date(now.getTime() - REPLAY_MAX_MS),
+    floor,
   );
   const seenFrom = new Date(pass.cursor.getTime() - 3 * HOUR);
   const replay = await ctx.redis.hgetall(REPLAY_KEY);
@@ -754,10 +747,9 @@ export async function deriveAircraftFlights(
         and(
           eq(aircraftFlights.aircraftId, a.id),
           inArray(aircraftFlights.source, ["sampled", "merged"]),
-          sql`coalesce(${aircraftFlights.arrivedAt}, ${aircraftFlights.departedAt}) >= ${new Date(now.getTime() - REPLAY_MAX_MS).toISOString()}`,
+          sql`coalesce(${aircraftFlights.arrivedAt}, ${aircraftFlights.departedAt}) >= ${floor.toISOString()}`,
         ),
       );
-    const floor = new Date(now.getTime() - REPLAY_MAX_MS);
     const requested = replay[a.hex] ? new Date(Number(replay[a.hex])) : null;
     const from = earliest(replayFrom(stored, now, REPLAY_MAX_MS), requested, floor);
     const rows = await ctx.db
