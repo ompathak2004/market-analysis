@@ -1,17 +1,12 @@
 import { chunk, guardCommit, throwIfAborted } from "@ma/core";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import * as schema from "./schema.js";
+import * as schema from "./tables.js";
 
 export type Db = ReturnType<typeof createDb>;
 
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
-/**
- * A business write that commits only if the caller is still allowed to: the signal (and the
- * ambient deadline scope) is not aborted and the scope's commit guard, which the worker sets to
- * its lease fence, passes as the last statement before COMMIT.
- */
 export function fencedTransaction<T>(
   db: Pick<Db, "transaction">,
   fn: (tx: Tx) => Promise<T>,
@@ -25,7 +20,6 @@ export function fencedTransaction<T>(
   });
 }
 
-/** Writes `rows` in fenced transactions of `size`, checking for abort before each batch. */
 export async function fencedBatches<T>(
   db: Pick<Db, "transaction">,
   rows: readonly T[],

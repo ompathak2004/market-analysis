@@ -393,9 +393,12 @@ export const documents = pgTable(
     etag: text("etag"),
     lastModified: text("last_modified"),
     byteSize: integer("byte_size").notNull(),
-    content: text("content").notNull(),
+    content: text("content"),
     status: documentStatus("status").notNull().default("fetched"),
     parserVersion: smallint("parser_version"),
+    textParserVersion: smallint("text_parser_version").notNull().default(0),
+    currentRevisionId: bigint("current_revision_id", { mode: "number" }),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
     fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
     parsedAt: timestamp("parsed_at", { withTimezone: true }),
   },
@@ -403,6 +406,7 @@ export const documents = pgTable(
     uniqueIndex("documents_url_uq").on(t.url),
     index("documents_sha256_idx").on(t.sha256),
     index("documents_company_source_idx").on(t.companyId, t.source),
+    index("documents_inline_idx").on(t.source, t.id).where(sql`${t.content} is not null`),
   ],
 );
 

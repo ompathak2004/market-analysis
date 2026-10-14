@@ -50,6 +50,13 @@
       "when": 1791912082714,
       "tag": "0006_price_coverage_manifest",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791968465891,
+      "tag": "0007_documents_evidence",
+      "breakpoints": true
     }
   ]
 }
