@@ -1,3 +1,4 @@
+import { PRECISION_SAMPLE_NAME } from "@ma/db";
 import { z } from "zod";
 import { decodeCursor, REVIEW_PAGE_DEFAULT, REVIEW_PAGE_MAX } from "../queries/reviews";
 
@@ -16,3 +17,4 @@ export const reviewListQuery = z.object({
     .optional(),
 });
 export const reviewNote = z.string().trim().max(500).nullish();
+export const precisionQuery = z.object({ sample: z.string().regex(PRECISION_SAMPLE_NAME) });
