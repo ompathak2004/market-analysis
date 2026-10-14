@@ -196,6 +196,24 @@ describe("extractFinancialFacts", () => {
     expect(byMetric(extractFinancialFacts(hyphenated, FY25)?.facts ?? []).revenue).toBe(5_432.1);
   });
 
+  it("skips purchases when a cost row is present but unreadable", () => {
+    const unreadable = GROUP_REPORT.replace(
+      "Cost of materials consumed 29 6,543.21 6,000.00",
+      "Cost of materials consumed 29 see annexure",
+    );
+    expect(byMetric(extractFinancialFacts(unreadable, FY25)?.facts ?? [])).toEqual({
+      revenue: 12_345.67,
+      capex: 987.65,
+    });
+    const absent = GROUP_REPORT.replace("Cost of materials consumed 29 6,543.21 6,000.00\n", "");
+    expect(byMetric(extractFinancialFacts(absent, FY25)?.facts ?? [])).toEqual({
+      revenue: 12_345.67,
+      purchases: 1_234.5,
+      cogs: 888.9,
+      capex: 987.65,
+    });
+  });
+
   it("does not shift a short row into the previous year when the statement has a note column", () => {
     const shortRow = GROUP_REPORT.replace(
       "Changes in inventories of finished goods, work-in-progress and stock-in-trade 31 ( 345.60 ) 120.00",

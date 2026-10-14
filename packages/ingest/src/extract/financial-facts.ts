@@ -119,21 +119,22 @@ export function extractFinancialFacts(
 
   const materials = rowValue(chosen.section, MATERIALS, chosen.layout);
   const traded = rowValue(chosen.section, TRADED, chosen.layout);
-  if (materials !== null || traded !== null) {
+  const stated = materials !== undefined || traded !== undefined;
+  if (stated && materials !== null && traded !== null) {
     const bought = (materials ?? 0) + (traded ?? 0);
     const purchases = toCrore(bought);
     if (purchases > 0 && purchases <= revenue * MAX_COST_TO_REVENUE) {
       push("purchases", purchases);
       const change = rowValue(chosen.section, INVENTORY_CHANGE, chosen.layout);
       if (change !== null) {
-        const cogs = toCrore(bought + change);
+        const cogs = toCrore(bought + (change ?? 0));
         if (cogs > 0 && cogs <= revenue * MAX_COST_TO_REVENUE) push("cogs", cogs);
       }
     }
   }
 
   const rnd = rowValue(chosen.section, RND, chosen.layout);
-  if (rnd !== null && rnd > 0) push("rnd", toCrore(rnd));
+  if (rnd) push("rnd", toCrore(rnd));
 
   const capex = capexOf(text, chosen, periodEnd);
   if (capex !== null) push("capex", capex);
@@ -263,12 +264,14 @@ function normalize(section: string): string {
     .replace(/\(\s*(\d[\d,]*(?:\.\d+)?)\s*\)/g, "($1)");
 }
 
-function firstRow(section: string, label: Label): string[] | null {
+function firstRow(section: string, label: Label): string[] | null | undefined {
+  let labelled = false;
   for (const m of section.matchAll(label.pattern)) {
+    labelled = true;
     const row = rowTokens(section.slice(m.index + m[0].length, m.index + m[0].length + 400), label);
     if (row) return row;
   }
-  return null;
+  return labelled ? null : undefined;
 }
 
 function rowTokens(tail: string, label: Label): string[] | null {
@@ -291,9 +294,9 @@ function isCell(word: string): boolean {
   return NUMBER.test(word) || NIL.test(word) || NOTE.test(word);
 }
 
-function rowValue(section: string, label: Label, layout: RowLayout): number | null {
+function rowValue(section: string, label: Label, layout: RowLayout): number | null | undefined {
   const row = firstRow(section, label);
-  return row ? currentValue(row, layout) : 0;
+  return row ? currentValue(row, layout) : row;
 }
 
 function currentValue(row: readonly string[], layout: RowLayout): number | null {

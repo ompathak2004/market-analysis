@@ -153,14 +153,15 @@ describe.skipIf(!url)("announcement maintenance (DATABASE_URL_TEST)", () => {
         retainUntil: past,
       });
       await cite(tx, `${ANNOUNCEMENT_DOCUMENT_PREFIX}${citedByRating}/rating`, "rating_rationale");
-      const fetching = await announcement(tx, companyId, {
-        subject: "Order win being read",
+      const documented = await announcement(tx, companyId, {
+        subject: "Order win stored but not yet cited",
         retentionClass: "five_years",
         retainUntil: past,
       });
       await tx.execute(sql`
-        insert into documents (url, source, sha256, byte_size)
-        values (${`${ANNOUNCEMENT_DOCUMENT_PREFIX}${fetching}`}, 'order_filing', ${randomUUID()}, 1)`);
+        insert into documents (url, source, sha256, byte_size, fetched_at)
+        values (${`${ANNOUNCEMENT_DOCUMENT_PREFIX}${documented}`}, 'order_filing', ${randomUUID()}, 1,
+                now() - interval '400 days')`);
       const expired = await announcement(tx, companyId, {
         subject: "Credit rating",
         retentionClass: "five_years",
@@ -195,7 +196,7 @@ describe.skipIf(!url)("announcement maintenance (DATABASE_URL_TEST)", () => {
         citedById,
         citedByUrl,
         citedByRating,
-        fetching,
+        documented,
         expired,
         live,
         forever,
@@ -206,7 +207,7 @@ describe.skipIf(!url)("announcement maintenance (DATABASE_URL_TEST)", () => {
         citedById,
         citedByUrl,
         citedByRating,
-        fetching,
+        documented,
         live,
         forever,
         later,

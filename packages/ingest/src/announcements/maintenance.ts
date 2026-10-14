@@ -18,7 +18,6 @@ export const ANNOUNCEMENT_DOCUMENT_SOURCES = [
 ] as const;
 export const ANNOUNCEMENT_DOCUMENT_PREFIX = "nse://announcement/";
 export const ANNOUNCEMENT_EVIDENCE_LOCK = "announcement_evidence";
-const EXTRACTION_GRACE = "1 day";
 
 type Fragment = ReturnType<typeof sql>;
 type Executor = Pick<Db, "execute" | "transaction">;
@@ -63,19 +62,8 @@ function linkedDocument(alias: Fragment): Fragment {
         or d.url = ${alias}.attachment_url)`;
 }
 
-function citedBy(alias: Fragment): Fragment {
-  return sql`
-    select 1 from documents d
-    join document_revisions r on r.document_id = d.id
-    join evidence_spans e on e.document_revision_id = r.id
-    where ${linkedDocument(alias)}`;
-}
-
-function fetchedRecently(alias: Fragment): Fragment {
-  return sql`
-    select 1 from documents d
-    where ${linkedDocument(alias)}
-      and d.fetched_at > now() - ${EXTRACTION_GRACE}::interval`;
+function documented(alias: Fragment): Fragment {
+  return sql`select 1 from documents d where ${linkedDocument(alias)}`;
 }
 
 export async function announcementFootprint(
@@ -247,8 +235,7 @@ export async function deleteAnnouncementBatch(
           select a.id from announcements a
           where ${due} and a.id <= ${maxId}
             and not exists (select 1 from announcement_holds h where h.announcement_id = a.id)
-            and not exists (${citedBy(sql`a`)})
-            and not exists (${fetchedRecently(sql`a`)})
+            and not exists (${documented(sql`a`)})
           order by a.id
           limit ${opts.limit ?? DELETE_BATCH}
           for update skip locked)
