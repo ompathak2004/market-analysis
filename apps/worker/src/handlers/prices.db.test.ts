@@ -29,6 +29,9 @@ describe.skipIf(!url)("price handlers against the real pipeline (DATABASE_URL_TE
   const firstWeek = ["1992-01-01", "1992-01-02", "1992-01-03", "1992-01-06", "1992-01-07"];
   const rest = ["1992-01-08", "1992-01-09", "1992-01-10", "1992-01-13", "1992-01-14"];
   const fences = ["1991-12-31", "1992-01-15"];
+  const recentWeekdays = Array.from({ length: 60 }, (_, k) => addDaysIso(istToday(), -k))
+    .filter((d) => ![0, 6].includes(new Date(`${d}T00:00:00Z`).getUTCDay()))
+    .reverse();
   const ids = { company: 0, series: 0, recent: 0, recentSeries: 0, bare: 0 };
   let yahoo: (symbol: string, w: { from: string; toExclusive: string }) => YahooHistory | null;
   let yahooCalls = 0;
@@ -138,6 +141,10 @@ describe.skipIf(!url)("price handlers against the real pipeline (DATABASE_URL_TE
     db = createDb(url ?? "", 2);
     lock = await db.$client.reserve();
     await lock`select pg_advisory_lock(${PRICE_TEST_LOCK})`;
+    for (const d of [...fences, ...firstWeek, ...recentWeekdays])
+      await db.execute(sql`
+        insert into trading_sessions (exchange, date, source) values ('NSE', ${d}, ${tag})
+        on conflict do nothing`);
     const main = await company(tag, symbol, "1992-01-01", "1992-01-14");
     ids.company = main.id;
     ids.series = main.series;
@@ -146,10 +153,6 @@ describe.skipIf(!url)("price handlers against the real pipeline (DATABASE_URL_TE
     ids.recent = recent.id;
     ids.recentSeries = recent.series;
     ids.bare = (await company(`${tag}B`, null, desired.from, desired.to)).id;
-    for (const d of [...fences, ...firstWeek])
-      await db.execute(sql`
-        insert into trading_sessions (exchange, date, source) values ('NSE', ${d}, ${tag})
-        on conflict do nothing`);
   });
 
   afterAll(async () => {
