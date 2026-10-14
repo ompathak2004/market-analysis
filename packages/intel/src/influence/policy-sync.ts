@@ -4,6 +4,7 @@ import {
   companies,
   companyPolicySectors,
   eq,
+  fencedTransaction,
   graphNodes,
   inArray,
   influenceEdges,
@@ -312,7 +313,7 @@ export async function seedCompanyPolicySectors(
   ctx: IngestContext,
   signal?: AbortSignal,
 ): Promise<SectorSeedResult> {
-  await ctx.db.transaction((tx) => seedSectors(tx));
+  await fencedTransaction(ctx.db, (tx) => seedSectors(tx), signal);
   const rows = await ctx.db
     .select({
       id: companies.id,
@@ -326,13 +327,17 @@ export async function seedCompanyPolicySectors(
     throwIfAborted(signal);
     const keys = c.symbol ? sectorsForIndustry(c.industry) : [];
     if (!c.symbol || !keys.length) {
-      await ctx.db.transaction(async (tx) => {
-        const [node] = await tx
-          .select({ id: graphNodes.id })
-          .from(graphNodes)
-          .where(eq(graphNodes.companyId, c.id));
-        if (node) await closeStaleSectors(tx, c.id, node.id, [], []);
-      });
+      await fencedTransaction(
+        ctx.db,
+        async (tx) => {
+          const [node] = await tx
+            .select({ id: graphNodes.id })
+            .from(graphNodes)
+            .where(eq(graphNodes.companyId, c.id));
+          if (node) await closeStaleSectors(tx, c.id, node.id, [], []);
+        },
+        signal,
+      );
       continue;
     }
     const symbol = c.symbol;
@@ -349,62 +354,66 @@ export async function seedCompanyPolicySectors(
       ...(signal ? { signal } : {}),
     });
     out.companies += 1;
-    await ctx.db.transaction(async (tx) => {
-      const spanId = await spanFor(
-        tx,
-        revision.id,
-        snap.content,
-        snap.spans.get(`company:${symbol}`),
-        {
-          kind: "industry",
-          field: "industry",
-        },
-      );
-      const companyNode = await nodeFor(tx, "company", c.id);
-      const sectorNodes: number[] = [];
-      for (const sectorKey of keys) {
-        sectorNodes.push(await nodeOf(tx, { kind: "policy_sector", sectorKey }));
-      }
-      await closeStaleSectors(tx, c.id, companyNode, sectorNodes, keys);
-      const inserted = await tx
-        .insert(companyPolicySectors)
-        .values(
-          keys.map((sectorKey) => ({
-            companyId: c.id,
-            sectorKey,
-            source: SECTOR_SOURCE,
-            evidenceSpanId: spanId,
-          })),
-        )
-        .onConflictDoUpdate({
-          target: [companyPolicySectors.companyId, companyPolicySectors.sectorKey],
-          set: { source: SECTOR_SOURCE, evidenceSpanId: spanId },
-          setWhere: sql`(${companyPolicySectors.source}, ${companyPolicySectors.evidenceSpanId})
+    await fencedTransaction(
+      ctx.db,
+      async (tx) => {
+        const spanId = await spanFor(
+          tx,
+          revision.id,
+          snap.content,
+          snap.spans.get(`company:${symbol}`),
+          {
+            kind: "industry",
+            field: "industry",
+          },
+        );
+        const companyNode = await nodeFor(tx, "company", c.id);
+        const sectorNodes: number[] = [];
+        for (const sectorKey of keys) {
+          sectorNodes.push(await nodeOf(tx, { kind: "policy_sector", sectorKey }));
+        }
+        await closeStaleSectors(tx, c.id, companyNode, sectorNodes, keys);
+        const inserted = await tx
+          .insert(companyPolicySectors)
+          .values(
+            keys.map((sectorKey) => ({
+              companyId: c.id,
+              sectorKey,
+              source: SECTOR_SOURCE,
+              evidenceSpanId: spanId,
+            })),
+          )
+          .onConflictDoUpdate({
+            target: [companyPolicySectors.companyId, companyPolicySectors.sectorKey],
+            set: { source: SECTOR_SOURCE, evidenceSpanId: spanId },
+            setWhere: sql`(${companyPolicySectors.source}, ${companyPolicySectors.evidenceSpanId})
             is distinct from (excluded.source, excluded.evidence_span_id)`,
-        })
-        .returning({ key: companyPolicySectors.sectorKey });
-      out.rows += inserted.length;
-      for (const [i, sectorKey] of keys.entries()) {
-        const toNodeId = sectorNodes[i];
-        if (toNodeId === undefined) continue;
-        const edge = await upsertEdge(tx, {
-          fromNodeId: companyNode,
-          toNodeId,
-          kind: "operates_in_sector",
-          fact: {},
-          confidence: CONFIDENCE.twoPrimaryDocuments,
-          source: "structured_primary",
-          identifier: true,
-          inputHash: sha256(
-            JSON.stringify([revision.contentSha256, sectorKey, POLICY_SECTOR_MAP_VERSION]),
-          ),
-          validFrom: null,
-          validTo: null,
-          spanIds: spanId ? [spanId] : [],
-        });
-        if (edge?.changed) out.edges += 1;
-      }
-    });
+          })
+          .returning({ key: companyPolicySectors.sectorKey });
+        out.rows += inserted.length;
+        for (const [i, sectorKey] of keys.entries()) {
+          const toNodeId = sectorNodes[i];
+          if (toNodeId === undefined) continue;
+          const edge = await upsertEdge(tx, {
+            fromNodeId: companyNode,
+            toNodeId,
+            kind: "operates_in_sector",
+            fact: {},
+            confidence: CONFIDENCE.twoPrimaryDocuments,
+            source: "structured_primary",
+            identifier: true,
+            inputHash: sha256(
+              JSON.stringify([revision.contentSha256, sectorKey, POLICY_SECTOR_MAP_VERSION]),
+            ),
+            validFrom: null,
+            validTo: null,
+            spanIds: spanId ? [spanId] : [],
+          });
+          if (edge?.changed) out.edges += 1;
+        }
+      },
+      signal,
+    );
   }
   return out;
 }
