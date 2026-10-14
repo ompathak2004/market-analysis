@@ -79,6 +79,15 @@ describe("NSE related party XBRL", () => {
     expect(sale?.valueCr).toBe(33);
   });
 
+  it("stores the magnitude of a net outflow reported as a negative amount", () => {
+    const xml = fixture("nse-rpt.xbrl.xml").replace(
+      /(contextRef="D_RelatedPartyTransaction2" decimals="-7" unitRef="INR">)10000000/,
+      "$1-10000000",
+    );
+    const row = parseRptXbrl(xml).rows.find((r) => r.counterparty === "Tata Motors Limited");
+    expect(row?.valueCr).toBe(1);
+  });
+
   it("keeps people named as key management personnel", () => {
     const kmp = report.rows.filter((r) => r.relationship === "Key Management Personnel");
     expect(kmp.map((r) => r.counterparty)).toContain("Mr. K Krithivasan");

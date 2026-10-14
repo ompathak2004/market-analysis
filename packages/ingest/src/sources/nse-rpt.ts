@@ -121,15 +121,19 @@ export function parseRptXbrl(xml: string): RptReport {
     if (!counterparty) continue;
     const type = fact("TypeOfRelatedPartyTransaction");
     const details = fact("DetailsOfOtherRelatedPartyTransaction");
-    const amount = ids
-      .map((id) => contexts.get(id)?.get("AmountOfRelatedPartyTransactionDuringTheReportingPeriod"))
-      .find(Boolean);
+    const amount = inrToCrore(
+      ids
+        .map((id) =>
+          contexts.get(id)?.get("AmountOfRelatedPartyTransactionDuringTheReportingPeriod"),
+        )
+        .find(Boolean),
+    );
     rows.push({
       entity: fact("NameOfListedEntityOrSubsidiaryEnteringIntoTheTransaction") ?? "",
       counterparty,
       relationship: fact("RelationshipOfTheCounterpartyWithTheListedEntityOrItsSubsidiary"),
       transactionType: type && /any\s+other/i.test(type) && details ? details : (type ?? details),
-      valueCr: inrToCrore(amount),
+      valueCr: amount == null ? null : Math.abs(amount),
     });
   }
   return {
