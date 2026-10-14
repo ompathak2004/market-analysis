@@ -817,8 +817,9 @@ export async function syncFleets(
     if (!company) continue;
     stats.sources++;
     let doc: Awaited<ReturnType<typeof ctx.docs.fetch>>["doc"];
+    let text: string;
     try {
-      ({ doc } = await ctx.docs.fetch(src.url, {
+      ({ doc, text } = await ctx.docs.fetch(src.url, {
         source: "fleet",
         companyId: company.id,
         maxAgeMs: 6 * DAY,
@@ -832,7 +833,7 @@ export async function syncFleets(
       continue;
     }
     if (src.via === "firecrawl") stats.scrapes++;
-    const rows = parseFleetPage(doc.content, src.type);
+    const rows = parseFleetPage(text, src.type);
     const docId = doc.id;
     await fencedTransaction(
       ctx.db,

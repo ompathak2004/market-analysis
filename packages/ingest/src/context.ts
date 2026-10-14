@@ -1,5 +1,5 @@
 import { Cache, RateLimiter, type RedisClient } from "@ma/cache";
-import type { Logger, ServiceConfig } from "@ma/core";
+import type { Logger, ObjectStore, ServiceConfig } from "@ma/core";
 import type { Db } from "@ma/db";
 import { DocumentStore } from "./documents.js";
 import { Firecrawl } from "./firecrawl.js";
@@ -16,6 +16,7 @@ export interface IngestContext {
   firecrawl: Firecrawl;
   firecrawlBudget: FirecrawlBudget;
   docs: DocumentStore;
+  objects: ObjectStore | null;
   nse: NseSource;
   yahoo: YahooSource;
   logger: Logger;
@@ -46,8 +47,10 @@ export function createIngestContext(deps: {
   redis: RedisClient;
   config: ServiceConfig;
   logger: Logger;
+  objects?: ObjectStore | null;
 }): IngestContext {
   const { db, redis, config, logger } = deps;
+  const objects = deps.objects ?? null;
   const limiter = new RateLimiter(redis, HOST_LIMITS);
   const http = new HttpClient(limiter, logger.child({ component: "http" }));
   const firecrawlBudget = new FirecrawlBudget(redis, config.FIRECRAWL_MONTHLY_CREDITS);
@@ -64,7 +67,8 @@ export function createIngestContext(deps: {
     http,
     firecrawl,
     firecrawlBudget,
-    docs: new DocumentStore(db, http, firecrawl, logger.child({ component: "documents" })),
+    docs: new DocumentStore(db, http, firecrawl, logger.child({ component: "documents" }), objects),
+    objects,
     nse: new NseSource(http, config.NSE_BASE_URL),
     yahoo: new YahooSource(http),
     logger,

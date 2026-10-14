@@ -3,10 +3,15 @@ import { type Logger, type ServiceConfig, throwIfAborted } from "@ma/core";
 import { and, type Db, eq, fencedTransaction, insights, isNull, sql } from "@ma/db";
 import type { LlmClient } from "@ma/llm";
 
+export interface DocumentReader {
+  textOf(documentId: number): Promise<string | null>;
+}
+
 export interface IntelContext {
   db: Db;
   redis: RedisClient;
   llm: LlmClient;
+  docs: DocumentReader;
   logger: Logger;
   config: ServiceConfig;
 }

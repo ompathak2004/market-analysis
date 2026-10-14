@@ -1,4 +1,4 @@
-import { analystCalls, companies, documents, eq, fencedTransaction, sql } from "@ma/db";
+import { analystCalls, companies, eq, fencedTransaction, sql } from "@ma/db";
 import { LlmInvalidOutput } from "@ma/llm";
 import type { IntelContext } from "./context.js";
 import { BROKER_THESIS_SYSTEM, groundingFeedback, inputMessage } from "./prompts.js";
@@ -55,15 +55,15 @@ export async function summarizeBrokerReport(
       call: analystCalls,
       symbol: companies.nseSymbol,
       name: companies.name,
-      content: documents.content,
     })
     .from(analystCalls)
     .innerJoin(companies, eq(companies.id, analystCalls.companyId))
-    .leftJoin(documents, eq(documents.id, analystCalls.reportDocumentId))
     .where(eq(analystCalls.id, analystCallId))
     .limit(1);
   if (!row) return "skipped";
-  const text = row.content ? reportExcerpt(row.content) : "";
+  const content =
+    row.call.reportDocumentId === null ? null : await ctx.docs.textOf(row.call.reportDocumentId);
+  const text = content ? reportExcerpt(content) : "";
   if (text.length < 200) {
     await fencedTransaction(ctx.db, (tx) =>
       tx

@@ -26,13 +26,13 @@ export async function syncFundamentals(
   const company = await ctx.db.query.companies.findFirst({ where: eq(companies.id, companyId) });
   if (!company?.screenerSlug) return null;
 
-  const { doc, changed } = await ctx.docs.fetch(screenerUrl(company.screenerSlug), {
+  const { doc, text, changed } = await ctx.docs.fetch(screenerUrl(company.screenerSlug), {
     source: "screener",
     companyId,
     maxAgeMs: DAY_MS,
     ...(signal ? { signal } : {}),
   });
-  const parsed = parseScreenerCompany(doc.content);
+  const parsed = parseScreenerCompany(text);
   const upToDate =
     !changed && doc.status === "parsed" && doc.parserVersion === SCREENER_PARSER_VERSION;
   if (upToDate) {

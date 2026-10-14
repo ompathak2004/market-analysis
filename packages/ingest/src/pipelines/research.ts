@@ -85,14 +85,14 @@ export async function syncMoneycontrol(
     );
   }
 
-  const { doc, changed } = await ctx.docs.fetch(pageUrl, {
+  const { doc, text, changed } = await ctx.docs.fetch(pageUrl, {
     source: "moneycontrol",
     companyId,
     maxAgeMs: PAGE_MAX_AGE_MS,
     extract: trimMoneycontrolPage,
     ...(signal ? { signal } : {}),
   });
-  const page = parseMoneycontrolPage(doc.content);
+  const page = parseMoneycontrolPage(text);
   const pageCurrent =
     !changed && doc.status === "parsed" && doc.parserVersion === MONEYCONTROL_PARSER_VERSION;
 
@@ -210,14 +210,14 @@ export async function syncMoneycontrol(
 
 async function fetchSwot(ctx: IngestContext, url: string, companyId: number, signal?: AbortSignal) {
   try {
-    const { doc } = await ctx.docs.fetch(url, {
+    const { text } = await ctx.docs.fetch(url, {
       source: "moneycontrol_swot",
       companyId,
       maxAgeMs: SWOT_MAX_AGE_MS,
       extract: trimSwotPage,
       ...(signal ? { signal } : {}),
     });
-    return parseSwotPage(doc.content);
+    return parseSwotPage(text);
   } catch (err) {
     throwIfAborted(signal);
     ctx.logger.warn({ url, companyId, err }, "moneycontrol swot fetch failed");

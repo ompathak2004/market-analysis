@@ -74,8 +74,9 @@ export async function extractRelationshipsForCompany(
     const fyEnd = periodEndFromLabel(src.label);
     const fiscalYear = src.kind === "annual_report" ? fiscalYearFromLabel(src.label) : null;
     let doc: Awaited<ReturnType<typeof ctx.docs.fetch>>["doc"];
+    let text: string;
     try {
-      ({ doc } = await ctx.docs.fetch(src.url, {
+      ({ doc, text } = await ctx.docs.fetch(src.url, {
         source: src.kind,
         companyId,
         maxAgeMs: YEAR_MS,
@@ -91,13 +92,12 @@ export async function extractRelationshipsForCompany(
     documentsProcessed++;
     throwIfAborted(signal);
 
-    // One document's signals, relationships and parsed mark commit together, fenced.
     relCount += await fencedTransaction(
       ctx.db,
       async (tx) => {
         let docRels = 0;
         if (src.kind === "annual_report") {
-          const c = extractConcentration(doc.content);
+          const c = extractConcentration(text);
           if (c?.revenueFromThem != null) {
             const revenueCr = toCrore(c.revenueFromThem, c.unit);
             const fy = await tx.query.fundamentals.findFirst({
@@ -124,14 +124,14 @@ export async function extractRelationshipsForCompany(
           }
         }
 
-        for (const share of extractTopCustomerShares(doc.content).slice(0, 3)) {
+        for (const share of extractTopCustomerShares(text).slice(0, 3)) {
           await upsertSignal(tx, companyId, fyEnd, `top${share.topN}_customers_pct`, share.pct, {
             sentence: share.sentence,
             documentId: doc.id,
           });
         }
 
-        const mentions = extractNamedMentions(doc.content, matcher, companyId);
+        const mentions = extractNamedMentions(text, matcher, companyId);
         for (const m of mentions) {
           if (m.role === "unknown") continue;
           throwIfAborted(signal);
