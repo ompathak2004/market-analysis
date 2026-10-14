@@ -78,7 +78,6 @@ Worker equivalents (after `pnpm build:worker`): `pnpm worker:cli run prices --wa
 1d. **INFL political and policy follow-ups**:
    - First run: `influence.parliament`, then `influence.affidavits` and `influence.sectors`; run `influence.bonds '{"purchaseUrls":[...],"redemptionUrls":[...]}'` once with the SBI `EB_Purchase_Details` and `EB_Redemption_Details` PDF URLs; then work the pending edges at `/admin/review`.
    - `influence_coverage` has no parliament or MyNeta read timestamp; the pane derives the parliament read from `influence_extractions` and shows the affidavit read as unknown. Add both columns.
-   - `JOB_INVALIDATIONS` has no `influence` entry, so worker influence jobs rely on the 30 min cache TTL; only review decisions invalidate the company's influence key.
    - `@ma/db` does not re-export `notInArray`; the sector seeder uses `not (inArray(...))`.
    - Sansad gives no ministerial portfolio or term dates; find a source for portfolios and swearing-in dates.
    - The Rajya Sabha Register of Members' Interests is not published openly; MyNeta `rajsab09aff` is the proxy and has no affidavit PDF link.

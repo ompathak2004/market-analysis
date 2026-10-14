@@ -34,13 +34,18 @@ export const JOB_INVALIDATIONS: Record<string, readonly string[]> = {
   "altdata-cleanup": ["travel:", "logistics:", "altdata:"],
 };
 
+export const FAMILY_INVALIDATIONS: Record<string, readonly string[]> = {
+  ...JOB_INVALIDATIONS,
+  influence: ["influence:"],
+};
+
 export interface InvalidationTarget {
   api: Pick<Cache, "invalidatePrefix">;
   logger: Pick<Logger, "warn">;
 }
 
 export async function invalidateAfterJob(ctx: InvalidationTarget, job: string): Promise<void> {
-  for (const prefix of JOB_INVALIDATIONS[job] ?? []) {
+  for (const prefix of FAMILY_INVALIDATIONS[job] ?? []) {
     await ctx.api
       .invalidatePrefix(prefix)
       .catch((err: unknown) => ctx.logger.warn({ job, prefix, err }, "cache invalidation failed"));
