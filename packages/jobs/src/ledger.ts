@@ -54,7 +54,6 @@ export function runKey(type: string, unitKey: string): string {
   return `${type}\u0000${unitKey}`;
 }
 
-/** Upserts many runs of one campaign in one statement; keys are `runKey(type, unitKey)`. */
 export async function ensureRuns(db: Executor, inputs: RunInput[]): Promise<Map<string, number>> {
   if (!inputs.length) return new Map();
   const rows = await db

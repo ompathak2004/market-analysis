@@ -276,7 +276,6 @@ export async function collectVesselPositions(
     firstSeenAt: ts,
     lastSeenAt: ts,
   }));
-  // The whole window commits together, fenced, so a lost lease leaves no half-written window.
   const { staticCount, inserted, windowsWithData } = await fencedTransaction(
     ctx.db,
     async (tx) => {

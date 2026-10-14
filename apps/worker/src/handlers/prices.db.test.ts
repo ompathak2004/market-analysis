@@ -15,7 +15,6 @@ import type { UnitRun } from "../registry.js";
 import { priceHandlers } from "./prices.js";
 
 const url = process.env.DATABASE_URL_TEST;
-// Held by the ingest manifest test while it rewrites every series in the database.
 const PRICE_TEST_LOCK = 74_201;
 
 function bar(date: string, close: number): DailyBar {
@@ -29,7 +28,6 @@ describe.skipIf(!url)("price handlers against the real pipeline (DATABASE_URL_TE
   const symbol = `${tag}.NS`;
   const firstWeek = ["1992-01-01", "1992-01-02", "1992-01-03", "1992-01-06", "1992-01-07"];
   const rest = ["1992-01-08", "1992-01-09", "1992-01-10", "1992-01-13", "1992-01-14"];
-  // Sessions just outside the series, so only the missing `rest` week is a calendar hole.
   const fences = ["1991-12-31", "1992-01-15"];
   const ids = { company: 0, series: 0, recent: 0, recentSeries: 0, bare: 0 };
   let yahoo: (symbol: string, w: { from: string; toExclusive: string }) => YahooHistory | null;
