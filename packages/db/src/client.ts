@@ -32,13 +32,22 @@ export async function fencedBatches<T>(
   }
 }
 
-export function createDb(url: string, max = 3) {
+export interface DbOptions {
+  applicationName?: string;
+  statementTimeoutMs?: number;
+}
+
+export function createDb(url: string, max = 3, opts: DbOptions = {}) {
   const local = /localhost|127\.0\.0\.1/.test(url);
   const sql = postgres(url, {
     max,
     idle_timeout: 20,
     connect_timeout: 15,
     prepare: false,
+    connection: {
+      ...(opts.applicationName ? { application_name: opts.applicationName } : {}),
+      ...(opts.statementTimeoutMs ? { statement_timeout: opts.statementTimeoutMs } : {}),
+    },
     ...(local ? {} : { ssl: "require" as const }),
   });
   return drizzle(sql, { schema, casing: "snake_case" });

@@ -53,7 +53,7 @@ export function createWorkerContext(
   env: WorkerEnv = loadWorkerEnv(),
 ): WorkerContext {
   const logger = createLogger(name, config.LOG_LEVEL);
-  const db = createDb(config.DATABASE_URL, APP_POOL_MAX);
+  const db = createDb(config.DATABASE_URL, APP_POOL_MAX, { applicationName: name });
   const redis = createRedis(config.REDIS_URL);
   const objects = config.S3_ARCHIVE_BUCKET
     ? S3ObjectStore.fromEnv(config.S3_ARCHIVE_BUCKET, env.AWS_REGION)
