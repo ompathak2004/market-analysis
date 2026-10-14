@@ -21,6 +21,10 @@ export const SCHEDULES: readonly ScheduleEntry[] = [
   { type: "relationships.fanout", cron: "20,50 * * * *" },
   { type: "relationships.counterparties", cron: "30 2 * * *" },
   { type: "orders.fanout", cron: "30 7 * * *" },
+  { type: "ratings.fanout", cron: "45 7 * * *" },
+  { type: "presentations.fanout", cron: "0 8 * * *" },
+  { type: "relationships.llm", cron: "0 5 * * *" },
+  { type: "relationships.priors", cron: "0 2 * * 0" },
   { type: "intel.fanout", cron: "30 2,14 * * *" },
   { type: "research.fanout", cron: "5,35 * * * *" },
   { type: "broker.fetch", cron: "*/15 * * * *" },
@@ -50,6 +54,13 @@ export const SCHEDULES: readonly ScheduleEntry[] = [
   { type: "influence.governance.fanout", cron: "0 3 * * 0" },
   { type: "influence.rpt.fanout", cron: "30 3 * * 0" },
   { type: "influence.perimeter.fanout", cron: "0 4 * * 0" },
+  { type: "influence.parliament", cron: "30 4 * * 0" },
+  { type: "influence.affidavits", cron: "0 5 1 * *" },
+  { type: "influence.sectors", cron: "30 5 * * 0" },
+  { type: "influence.policy.pib", cron: "25 * * * *" },
+  { type: "influence.policy.prs", cron: "15 6 * * *" },
+  { type: "influence.policy.gazette", cron: "45 6 * * *" },
+  { type: "influence.policy.tag", cron: "55 * * * *" },
 ];
 
 export function scheduleId(entry: ScheduleEntry): string {

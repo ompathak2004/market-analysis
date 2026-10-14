@@ -1,4 +1,4 @@
-import { MINUTE } from "@ma/core";
+import { MINUTE, sha256 } from "@ma/core";
 import { z } from "zod";
 
 export const LANES = ["control", "io", "parse", "compute", "llm", "cache"] as const;
@@ -35,6 +35,10 @@ function job<S extends z.ZodTypeAny>(
 }
 
 const byCompany = (p: { companyId: number }) => String(p.companyId);
+
+const httpsUrl = z.string().url().startsWith("https://").max(500);
+const BOND_URLS_MAX = 20;
+const GAZETTE_URLS_MAX = 50;
 
 const priceSymbol = z.string().min(1).max(40);
 const priceWindow = z
@@ -124,6 +128,27 @@ export const JOB_CONTRACTS = {
   "relationships.rebuild": job("relationships", "control", "fanout", empty, MINUTE, () => "", 1),
   "orders.fanout": job("relationships", "control", "fanout", empty, MINUTE),
   "orders.extract": job("relationships", "io", "unit", companyUnit, 5 * MINUTE, byCompany),
+  "relationships.llm": job("relationships", "control", "fanout", empty, 2 * MINUTE),
+  "relationships.llm.extract": job(
+    "relationships",
+    "llm",
+    "unit",
+    z
+      .object({
+        companyId: z.number().int().positive(),
+        documentId: z.number().int().positive(),
+        revisionId: z.number().int().positive(),
+        source: z.string().min(1).max(40),
+      })
+      .strict(),
+    4 * MINUTE,
+    (p) => `${p.source}:${p.documentId}:${p.revisionId}`,
+  ),
+  "relationships.priors": job("intel", "compute", "unit", empty, 5 * MINUTE),
+  "ratings.fanout": job("relationships", "control", "fanout", empty, MINUTE),
+  "ratings.sync": job("relationships", "io", "unit", companyUnit, 4 * MINUTE, byCompany),
+  "presentations.fanout": job("relationships", "control", "fanout", empty, MINUTE),
+  "presentations.sync": job("relationships", "io", "unit", companyUnit, 3 * MINUTE, byCompany),
   "intel.fanout": job("intel", "control", "fanout", empty, MINUTE),
   "intel.network": job(
     "intel",
@@ -159,6 +184,54 @@ export const JOB_CONTRACTS = {
   "influence.rpt": job("influence", "io", "unit", companyUnit, 3 * MINUTE, byCompany),
   "influence.perimeter.fanout": job("influence", "control", "fanout", empty, MINUTE),
   "influence.perimeter": job("influence", "compute", "unit", companyUnit, 2 * MINUTE, byCompany),
+  "influence.parliament": job("influence", "io", "unit", empty, 10 * MINUTE),
+  "influence.affidavits": job("influence", "io", "fanout", empty, 5 * MINUTE),
+  "influence.affidavit": job(
+    "influence",
+    "io",
+    "unit",
+    z
+      .object({
+        personId: z.number().int().positive(),
+        candidate: z.string().regex(/^[A-Za-z0-9]+:\d+$/),
+      })
+      .strict(),
+    2 * MINUTE,
+    (p) => `${p.personId}:${p.candidate}`,
+  ),
+  "influence.bonds": job(
+    "influence",
+    "io",
+    "unit",
+    z
+      .object({
+        purchaseUrls: z.array(httpsUrl).min(1).max(BOND_URLS_MAX),
+        redemptionUrls: z.array(httpsUrl).min(1).max(BOND_URLS_MAX),
+      })
+      .strict(),
+    45 * MINUTE,
+    (p) => sha256(JSON.stringify([p.purchaseUrls, p.redemptionUrls])).slice(0, 32),
+    1,
+  ),
+  "influence.policy.pib": job("influence", "io", "unit", empty, 10 * MINUTE),
+  "influence.policy.gazette": job(
+    "influence",
+    "io",
+    "unit",
+    z.object({ urls: z.array(httpsUrl).max(GAZETTE_URLS_MAX).optional() }).strict(),
+    15 * MINUTE,
+  ),
+  "influence.policy.prs": job("influence", "io", "unit", empty, 10 * MINUTE),
+  "influence.sectors": job("influence", "compute", "unit", empty, 20 * MINUTE),
+  "influence.policy.tag": job("influence", "control", "fanout", empty, 3 * MINUTE),
+  "influence.policy.tag.event": job(
+    "influence",
+    "llm",
+    "unit",
+    z.object({ policyEventId: z.number().int().positive() }).strict(),
+    2 * MINUTE,
+    (p) => String(p.policyEventId),
+  ),
   "insights.fanout": job("insights", "control", "fanout", empty, MINUTE),
   "insights.company": job("insights", "llm", "unit", companyUnit, 4 * MINUTE, byCompany),
   "insights.digest": job("insights", "llm", "unit", companyUnit, 4 * MINUTE, byCompany),

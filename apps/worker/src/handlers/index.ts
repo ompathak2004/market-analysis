@@ -9,12 +9,14 @@ import { marketHandlers } from "./market.js";
 import { opsHandlers } from "./ops.js";
 import { priceHandlers } from "./prices.js";
 import { relationshipHandlers } from "./relationships.js";
+import { relationshipLlmHandlers } from "./relationships-llm.js";
 import { researchHandlers } from "./research.js";
 
 export const HANDLERS: HandlerMap = {
   ...marketHandlers,
   ...priceHandlers,
   ...relationshipHandlers,
+  ...relationshipLlmHandlers,
   ...intelHandlers,
   ...researchHandlers,
   ...influenceHandlers,
