@@ -75,6 +75,34 @@ describe("segmentLegs", () => {
     expect(summarizeLeg(legs[1] as (typeof legs)[number]).completeness).toBe("enroute");
   });
 
+  it("keeps one leg across a coverage gap at cruise but splits a low-altitude gap", () => {
+    const high = [
+      sample(0, 22.0, 89.0, false, 43_000),
+      sample(12, 22.1, 88.5, false, 43_000),
+      sample(50, 21.0, 79.7, false, 43_000),
+      sample(62, 20.8, 79.0, false, 43_000),
+    ];
+    const joined = segmentLegs(high, { now: new Date(T0 + 2_000 * MIN) });
+    expect(joined).toHaveLength(1);
+    expect(joined[0]?.samples).toHaveLength(4);
+    const tooLong = segmentLegs(
+      [
+        ...high.slice(0, 2),
+        ...high.slice(2).map((p) => ({
+          ...p,
+          ts: new Date(p.ts.getTime() + 30 * MIN),
+        })),
+      ],
+      { now: new Date(T0 + 2_000 * MIN) },
+    );
+    expect(tooLong).toHaveLength(2);
+    const low = segmentLegs(
+      [high[0] as AirSample, { ...(high[1] as AirSample), altFt: 9_000 }, ...high.slice(2)],
+      { now: new Date(T0 + 2_000 * MIN) },
+    );
+    expect(low).toHaveLength(2);
+  });
+
   it("marks the trailing leg open while samples are fresh and drops single-sample blips", () => {
     const legs = segmentLegs([sample(0, 20, 75, false), sample(3, 20.2, 75.1, false)], {
       now: new Date(T0 + 5 * MIN),
