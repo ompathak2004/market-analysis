@@ -1,6 +1,5 @@
 import type { HttpClient } from "../http.js";
 
-export const ADSB_PARSER_VERSION = 1;
 const BASE = "https://api.adsb.lol";
 
 export interface PositionSample {

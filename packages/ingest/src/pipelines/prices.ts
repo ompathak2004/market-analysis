@@ -83,7 +83,6 @@ export type PriceWindowStatus =
   | "calendar_pending"
   | "rebuild_required";
 
-// What the provider returned, independent of whether stored coverage is complete.
 export type PriceSourceStatus = "ok" | "not_found" | "invalid_response" | "identity_mismatch";
 
 export interface PriceWindowResult {
@@ -126,9 +125,6 @@ const emptyResult = (status: PriceWindowStatus): PriceWindowResult => ({
 
 export type PriceWindowOutcome = "complete" | "retry" | "defer" | "exception" | "skipped";
 
-// How a job should settle a window result. Source failures and missing sessions are retried;
-// a calendar that does not yet span the window waits without spending an attempt; a symbol the
-// series cannot prove it owns is a durable series exception, not a retry loop.
 export function windowOutcome(r: PriceWindowResult): PriceWindowOutcome {
   if (r.status === "calendar_pending") return "defer";
   if (r.sourceStatus === "identity_mismatch") return "exception";
@@ -139,7 +135,6 @@ export function windowOutcome(r: PriceWindowResult): PriceWindowOutcome {
   return "complete";
 }
 
-// company_sync.synced_at means the company's prices reach the latest settled session.
 export function priceSynced(r: PriceWindowResult): boolean {
   return windowOutcome(r) === "complete" && r.latestCovered;
 }
@@ -236,8 +231,6 @@ const BLOCKING_EXCEPTIONS: ReadonlySet<PriceSeriesException> = new Set([
   "identity_mismatch",
 ]);
 
-// Series whose identity is missing or contradicted are never fetched; they stay visible in the
-// coverage gate through their exception_reason instead.
 export function fetchable(
   s: PriceSeriesRef,
   reason: PriceSeriesException | null = s.exceptionReason,
@@ -475,8 +468,6 @@ export interface FallbackMerge {
   mismatches: number;
 }
 
-// Fallback bars count as coverage only when the fallback provably agrees with primary-source
-// closes on at least one overlapping session; zero overlap is no evidence at all.
 export function mergeFallback(
   primary: SourcedBar[],
   fallback: DailyBar[],
@@ -600,7 +591,6 @@ export async function syncPriceWindow(
   const generation = unit.generation ?? ref.generation;
   if (staleGeneration(ref.generation, generation, mode)) return emptyResult("stale_generation");
   const window = { from: unit.from, toExclusive: unit.toExclusive };
-  // A unit carrying a symbol the series no longer has was superseded; it must not touch the series.
   if (ref.yahooSymbol !== unit.symbol) return emptyResult("identity_mismatch");
   if (!isCalendarSeries(ref)) {
     const pending = await calendarGap(ctx.db, ref, window);
@@ -642,12 +632,8 @@ function isCalendarSeries(ref: PriceSeriesRef): boolean {
   return ref.kind === "index" && ref.code === CALENDAR_INDEX;
 }
 
-// NSE has never been shut for more than a week, so a longer stretch without sessions (including
-// the stretch to the nearest session outside the window) means calendar windows not yet fetched.
 const CALENDAR_MAX_HOLE_DAYS = 7;
 
-// The calendar spans an interval when it reaches the interval's last day and has no hole longer
-// than any real NSE closure inside it; max(date) alone says nothing about older windows.
 export async function calendarGap(
   db: Queryable,
   ref: PriceSeriesRef,
@@ -908,7 +894,6 @@ async function writeWindow(
             )}
             on conflict do nothing`);
       }
-      // Fetched after its IST calendar day ended, a bar is the settled close for that session.
       const isFinal = (date: string) => date < today;
 
       for (const batch of chunk(bars, 500)) {
@@ -982,7 +967,6 @@ async function writeWindow(
 
 const FLOAT_TOLERANCE = 1e-5;
 
-// Yahoo recomputes adjusted values per request; sub-tick float jitter must not count as a change.
 export function changedSql(table: string, exact: string[], floats: string[]): string {
   const t = (c: string) => `"${table}".${c}`;
   const drift = floats.map(
@@ -1111,8 +1095,6 @@ async function calendarThrough(tx: Queryable): Promise<string | null> {
   return rows[0]?.d ?? null;
 }
 
-// Sessions a rebuild must return before it may replace the current generation: every expected
-// session except those already recorded as gaps (open or exempt) for this series.
 export async function rebuildShortfall(
   tx: Queryable,
   ref: PriceSeriesRef,

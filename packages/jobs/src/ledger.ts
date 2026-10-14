@@ -54,7 +54,6 @@ export function runKey(type: string, unitKey: string): string {
   return `${type}\u0000${unitKey}`;
 }
 
-/** Upserts many runs of one campaign in one statement; keys are `runKey(type, unitKey)`. */
 export async function ensureRuns(db: Executor, inputs: RunInput[]): Promise<Map<string, number>> {
   if (!inputs.length) return new Map();
   const rows = await db
@@ -331,16 +330,6 @@ export async function finalizeCampaigns(db: Executor): Promise<number> {
   const rows = await db.execute<{ id: number }>(sql`
     select id from ingest_runs where kind = 'campaign' and status = 'running'`);
   for (const row of rows) await refreshCampaign(db, Number(row.id));
-  return rows.length;
-}
-
-export async function failStaleLegacyRuns(db: Executor, olderThanMs: number): Promise<number> {
-  const rows = await db.execute(sql`
-    update ingest_runs set status = 'failed', finished_at = now(),
-      error = 'abandoned_legacy_execution'
-    where kind = 'legacy' and status = 'running'
-      and started_at < now() - (${olderThanMs} * interval '1 millisecond')
-    returning id`);
   return rows.length;
 }
 

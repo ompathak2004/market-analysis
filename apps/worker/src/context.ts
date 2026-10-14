@@ -6,6 +6,7 @@ import { API_CACHE } from "@ma/jobs";
 import { createLlmClient, type LlmClient } from "@ma/llm";
 import { z } from "zod";
 import { type BufferedMetrics, createMetrics } from "./metrics.js";
+import { S3ObjectStore } from "./storage.js";
 
 export const APP_POOL_MAX = 2;
 export const QUEUE_POOL_MAX = 1;
@@ -26,6 +27,11 @@ const workerEnvSchema = z.object({
     .optional()
     .transform((v) => v?.trim() || undefined),
   OPS_DIGEST_FROM: z.string().default("Market Analysis <onboarding@resend.dev>"),
+  BACKUP_ENCRYPTION_KEY: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined)
+    .refine((v) => v === undefined || /^[0-9a-f]{64}$/i.test(v), "must be 64 hex characters"),
 });
 
 export type WorkerEnv = z.infer<typeof workerEnvSchema>;
@@ -47,9 +53,12 @@ export function createWorkerContext(
   env: WorkerEnv = loadWorkerEnv(),
 ): WorkerContext {
   const logger = createLogger(name, config.LOG_LEVEL);
-  const db = createDb(config.DATABASE_URL, APP_POOL_MAX);
+  const db = createDb(config.DATABASE_URL, APP_POOL_MAX, { applicationName: name });
   const redis = createRedis(config.REDIS_URL);
-  const ingest = createIngestContext({ db, redis, config, logger });
+  const objects = config.S3_ARCHIVE_BUCKET
+    ? S3ObjectStore.fromEnv(config.S3_ARCHIVE_BUCKET, env.AWS_REGION)
+    : null;
+  const ingest = createIngestContext({ db, redis, config, logger, objects });
   const llm = createLlmClient({
     config,
     redis,

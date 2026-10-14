@@ -1,7 +1,5 @@
 import type { FacilitySeed } from "./types.js";
 
-export const FACILITY_SEED_VERSION = 1;
-
 export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   {
     slug: "ril-jamnagar",

@@ -112,11 +112,6 @@ export interface ManyChild<T extends JobType = JobType> {
   priority?: number;
 }
 
-/**
- * Enqueues the children of one campaign inside `tx` with one job_runs upsert and one pg-boss
- * insert per batch, so a large fan-out holds its transaction for a handful of statements.
- * Children whose singletonKey is already queued are dropped together with their new run row.
- */
 export async function enqueueMany(
   boss: Pick<PgBoss, "insert">,
   campaignId: number,

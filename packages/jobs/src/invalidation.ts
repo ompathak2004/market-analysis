@@ -1,11 +1,11 @@
 import type { Cache } from "@ma/cache";
 import type { Logger } from "@ma/core";
 
-export const API_CACHE = { namespace: "api", version: 2 } as const;
+export const API_CACHE = { namespace: "api", version: 3 } as const;
 
 const BRIEF_INPUTS = "insights:";
 
-export const JOB_INVALIDATIONS: Record<string, readonly string[]> = {
+export const FAMILY_INVALIDATIONS: Record<string, readonly string[]> = {
   universe: ["search:", "company:"],
   prices: ["prices:", "movers:", "quote:", "company:", BRIEF_INPUTS],
   fundamentals: ["financials:", "company:", BRIEF_INPUTS],
@@ -32,6 +32,7 @@ export const JOB_INVALIDATIONS: Record<string, readonly string[]> = {
   "altdata-signals": ["travel:", "logistics:", "altdata:", "signals:", BRIEF_INPUTS],
   fleets: ["logistics:"],
   "altdata-cleanup": ["travel:", "logistics:", "altdata:"],
+  influence: ["influence:"],
 };
 
 export interface InvalidationTarget {
@@ -40,7 +41,7 @@ export interface InvalidationTarget {
 }
 
 export async function invalidateAfterJob(ctx: InvalidationTarget, job: string): Promise<void> {
-  for (const prefix of JOB_INVALIDATIONS[job] ?? []) {
+  for (const prefix of FAMILY_INVALIDATIONS[job] ?? []) {
     await ctx.api
       .invalidatePrefix(prefix)
       .catch((err: unknown) => ctx.logger.warn({ job, prefix, err }, "cache invalidation failed"));

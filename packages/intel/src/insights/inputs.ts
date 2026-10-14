@@ -1,4 +1,4 @@
-import { median } from "@ma/core";
+import { isRoutineAnnouncement, median } from "@ma/core";
 import {
   analystCalls,
   analystRatings,
@@ -31,6 +31,7 @@ import {
 } from "@ma/db";
 import type { AltdataSignal } from "../altdata/types.js";
 import { dupont } from "../risk.js";
+import { activeSignalVersionClause } from "../signal-versions.js";
 import { computeRuleInsights } from "./rules.js";
 import {
   type BrokerThesis,
@@ -40,7 +41,6 @@ import {
   type RuleInsight,
   type VerdictLabel,
 } from "./schemas.js";
-import { isRoutineAnnouncement } from "./triage-rules.js";
 
 const DAY_MS = 86_400_000;
 
@@ -755,7 +755,7 @@ async function loadSupplyChain(
     )
     .leftJoin(documents, eq(documents.id, relationships.sourceDocumentId))
     .where(
-      sql`(${relationships.supplierCompanyId} = ${companyId} or ${relationships.customerCompanyId} = ${companyId}) and ${relationships.validTo} >= ${asOf}`,
+      sql`(${relationships.supplierCompanyId} = ${companyId} or ${relationships.customerCompanyId} = ${companyId}) and ${relationships.validTo} >= ${asOf} and ${relationships.status} in ('active', 'expired')`,
     )
     .orderBy(desc(relationshipEstimates.supplierRevenuePct), desc(relationships.confidence));
   const otherIds = [
@@ -815,7 +815,12 @@ async function loadSupplyChain(
     })
     .from(signals)
     .where(
-      and(eq(signals.companyId, companyId), inArray(signals.kind, kinds), lte(signals.asOf, asOf)),
+      and(
+        eq(signals.companyId, companyId),
+        inArray(signals.kind, kinds),
+        lte(signals.asOf, asOf),
+        activeSignalVersionClause(sql`${signals.kind}`, sql`${signals.modelVersion}`),
+      ),
     )
     .orderBy(signals.kind, desc(signals.asOf), desc(signals.modelVersion));
   const v = (k: string, digits: number) =>
@@ -1324,6 +1329,7 @@ export async function assembleMarketInputs(
     with latest as (
       select distinct on (s.company_id, s.kind) s.company_id, s.kind, s.model_version
       from signals s where s.kind in ('distress_score', 'customer_concentration_pct') and s.as_of <= ${asOf}
+        and ${activeSignalVersionClause(sql`s.kind`, sql`s.model_version`)}
       order by s.company_id, s.kind, s.as_of desc, s.model_version desc
     ), r as (
       select s.company_id, s.kind, s.value, row_number() over (partition by s.company_id, s.kind order by s.as_of desc) rn

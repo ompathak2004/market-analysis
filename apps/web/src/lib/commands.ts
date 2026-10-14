@@ -1,4 +1,15 @@
-export const TABS = ["des", "gp", "fa", "anr", "splc", "news", "jet", "ship", "intl"] as const;
+export const TABS = [
+  "des",
+  "gp",
+  "fa",
+  "anr",
+  "splc",
+  "news",
+  "jet",
+  "ship",
+  "intl",
+  "infl",
+] as const;
 export type Tab = (typeof TABS)[number];
 
 export const TAB_TITLE: Record<Tab, string> = {
@@ -11,6 +22,7 @@ export const TAB_TITLE: Record<Tab, string> = {
   jet: "Management travel",
   ship: "Logistics & ports",
   intl: "Intelligence brief",
+  infl: "Influence",
 };
 
 export function isTab(v: string): v is Tab {

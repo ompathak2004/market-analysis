@@ -170,9 +170,3 @@ export interface Evidence {
   label: string;
   url: string | null;
 }
-
-export type InsightKind =
-  | "company_brief"
-  | "broker_digest"
-  | "market_brief"
-  | "announcement_triage";

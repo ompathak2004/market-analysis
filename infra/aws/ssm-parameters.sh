@@ -10,7 +10,7 @@ region=${AWS_REGION:-ap-south-1}
 prefix="/market-analysis/${environment}"
 
 # Local-only and web-only variables that must not reach the worker.
-skip_re='^(NODE_ENV|LOG_LEVEL|NEXT_ALLOWED_DEV_ORIGINS|NEXT_PUBLIC_.*|API_KEY|CRON_SECRET|ADMIN_API_KEY)$'
+skip_re='^(NODE_ENV|LOG_LEVEL|NEXT_ALLOWED_DEV_ORIGINS|NEXT_PUBLIC_.*|API_KEY|ADMIN_API_KEY)$'
 
 [[ -r "$env_file" ]] || { echo "cannot read $env_file" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }

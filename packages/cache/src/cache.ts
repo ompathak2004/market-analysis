@@ -178,10 +178,6 @@ export class Cache {
   }
 
   private async bump(outcome: CacheOutcome): Promise<void> {
-    try {
-      await this.redis.hincrby(this.metricsKey, outcome, 1);
-    } catch {
-      /* metrics are best effort */
-    }
+    await this.redis.hincrby(this.metricsKey, outcome, 1).catch(() => undefined);
   }
 }

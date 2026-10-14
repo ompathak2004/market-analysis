@@ -139,7 +139,6 @@ export function buildPools(
       const o = v as Record<string, unknown>;
       const ids = [
         ...(typeof o.evidenceId === "string" ? [o.evidenceId] : []),
-        // The root evidence list is the id catalogue, not a citation for the whole input.
         ...(Array.isArray(o.evidence) && v !== inputs ? o.evidence.flatMap(evidenceRef) : []),
       ];
       const scoped = ids.length ? [...targets, ...ids.map(listFor)] : targets;

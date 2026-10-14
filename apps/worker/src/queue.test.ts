@@ -15,7 +15,7 @@ import { ENQUEUE_BATCH, ensureQueues } from "@ma/jobs/queue";
 import type { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FanoutCompletion } from "./execute.js";
-import { canCreateSchema, createBoss, createLedgerPort } from "./queue.js";
+import { canCreateSchema, createBoss, createLedgerPort, sessionLimits } from "./queue.js";
 
 const url = process.env.DATABASE_URL_TEST;
 
@@ -159,6 +159,12 @@ describe.skipIf(!url)("completeFanout (DATABASE_URL_TEST)", () => {
     },
     LEASE_RENEW_MS * 3,
   );
+
+  it("reports the session limits of the connected role", async () => {
+    const limits = await sessionLimits(db);
+    expect(limits.role).not.toBe("");
+    expect(typeof limits.unbounded).toBe("boolean");
+  });
 
   it("rolls the whole fan-out back when the lease is gone", async () => {
     const port = createLedgerPort(db, boss);

@@ -11,10 +11,6 @@ const schema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(12),
 });
 
-/**
- * Public on purpose: the browser command bar calls it without an API key. It only exposes
- * listed-company identifiers already shown on every page and is rate-limited per client IP.
- */
 export const GET = handle(async (req) => {
   const ctx = getContext();
   await limitPublic(ctx, req, "search");

@@ -24,6 +24,22 @@ export async function canCreateSchema(db: Db): Promise<boolean> {
   return rows[0]?.allowed === true;
 }
 
+export type SessionLimits = {
+  role: string;
+  statementTimeout: string;
+  lockTimeout: string;
+  unbounded: boolean;
+};
+
+export async function sessionLimits(db: Db): Promise<SessionLimits> {
+  const [row] = await db.execute<SessionLimits>(sql`
+    select current_user as role,
+      current_setting('statement_timeout') as "statementTimeout",
+      current_setting('lock_timeout') as "lockTimeout",
+      current_setting('statement_timeout') = '0' as unbounded`);
+  return row as SessionLimits;
+}
+
 export function createBoss(
   databaseUrl: string,
   opts: { schedule: boolean; supervise?: boolean; createSchema: boolean },

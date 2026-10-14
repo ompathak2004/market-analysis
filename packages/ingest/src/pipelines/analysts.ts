@@ -29,7 +29,6 @@ const RANK: Record<string, number> = {
   "strong buy": 4,
 };
 
-/** Callers run this inside their own fenced transaction. */
 export async function upsertBrokerCalls(
   db: Db | Tx,
   calls: BrokerCall[],

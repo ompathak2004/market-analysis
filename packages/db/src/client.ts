@@ -1,17 +1,12 @@
 import { chunk, guardCommit, throwIfAborted } from "@ma/core";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import * as schema from "./schema.js";
+import * as schema from "./tables.js";
 
 export type Db = ReturnType<typeof createDb>;
 
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
-/**
- * A business write that commits only if the caller is still allowed to: the signal (and the
- * ambient deadline scope) is not aborted and the scope's commit guard, which the worker sets to
- * its lease fence, passes as the last statement before COMMIT.
- */
 export function fencedTransaction<T>(
   db: Pick<Db, "transaction">,
   fn: (tx: Tx) => Promise<T>,
@@ -25,7 +20,6 @@ export function fencedTransaction<T>(
   });
 }
 
-/** Writes `rows` in fenced transactions of `size`, checking for abort before each batch. */
 export async function fencedBatches<T>(
   db: Pick<Db, "transaction">,
   rows: readonly T[],
@@ -38,13 +32,22 @@ export async function fencedBatches<T>(
   }
 }
 
-export function createDb(url: string, max = 3) {
+export interface DbOptions {
+  applicationName?: string;
+  statementTimeoutMs?: number;
+}
+
+export function createDb(url: string, max = 3, opts: DbOptions = {}) {
   const local = /localhost|127\.0\.0\.1/.test(url);
   const sql = postgres(url, {
     max,
     idle_timeout: 20,
     connect_timeout: 15,
     prepare: false,
+    connection: {
+      ...(opts.applicationName ? { application_name: opts.applicationName } : {}),
+      ...(opts.statementTimeoutMs ? { statement_timeout: opts.statementTimeoutMs } : {}),
+    },
     ...(local ? {} : { ssl: "require" as const }),
   });
   return drizzle(sql, { schema, casing: "snake_case" });

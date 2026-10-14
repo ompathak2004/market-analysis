@@ -3,6 +3,7 @@ import { AnrView } from "./anr";
 import { DesView } from "./des";
 import { FaView } from "./fa";
 import { GpView, parseRange } from "./gp";
+import { InflView } from "./infl";
 import { IntlView } from "./intl";
 import { JetView } from "./jet";
 import { NewsView, parseAnnouncementId } from "./news";
@@ -31,5 +32,7 @@ export function TabView({ symbol, tab, sp }: { symbol: string; tab: Tab; sp: Sea
       return <ShipView symbol={symbol} filter={parseCallFilter(sp.calls)} />;
     case "intl":
       return <IntlView symbol={symbol} />;
+    case "infl":
+      return <InflView symbol={symbol} />;
   }
 }

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance" xmlns:in-capmkt="http://www.sebi.gov.in/xbrl/2024-12-31/in-capmkt" xmlns:in-capmkt-ent="http://www.sebi.gov.in/xbrl/IntegratedGovernance/2024-12-31/in-capmkt/in-capmkt-ent" xmlns:in-capmkt-roles="http://www.sebi.gov.in/xbrl/IntegratedGovernance/2024-12-31/in-capmkt-roles" xmlns:in-capmkt-types="http://www.sebi.gov.in/xbrl/2024-12-31/in-capmkt-types" xmlns:iso4217="http://www.xbrl.org/2003/iso4217" xmlns:link="http://www.xbrl.org/2003/linkbase" xmlns:negated="http://www.xbrl.org/2009/role/negated" xmlns:net="http://www.xbrl.org/2009/role/net" xmlns:nonnum="http://www.xbrl.org/dtr/type/non-numeric" xmlns:num="http://www.xbrl.org/dtr/type/numeric" xmlns:xbrldi="http://xbrl.org/2006/xbrldi" xmlns:xbrldt="http://xbrl.org/2005/xbrldt" xmlns:xl="http://www.xbrl.org/2003/XLink" xmlns:xlink="http://www.w3.org/1999/xlink">
+<xbrli:context id="MainD"><xbrli:entity><xbrli:identifier scheme="https://www.sebi.gov.in/in-capmkt/ScripCode">532540</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:startDate>2026-04-01</xbrli:startDate><xbrli:endDate>2026-06-30</xbrli:endDate></xbrli:period></xbrli:context>
+<xbrli:context id="MainI"><xbrli:entity><xbrli:identifier scheme="https://www.sebi.gov.in/in-capmkt/ScripCode">532540</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2026-06-30</xbrli:instant></xbrli:period></xbrli:context>
+<xbrli:context id="D_CompBOD1"><xbrli:entity><xbrli:identifier scheme="https://www.sebi.gov.in/in-capmkt/ScripCode">532540</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:startDate>2026-04-01</xbrli:startDate><xbrli:endDate>2026-06-30</xbrli:endDate></xbrli:period><xbrli:scenario><xbrldi:typedMember dimension="in-capmkt:CompositionOfBoardOfDirectorsAxis"><in-capmkt:CompositionOfBoardOfDirectorsDomain>CompositionOfBoardOfDirectors1</in-capmkt:CompositionOfBoardOfDirectorsDomain></xbrldi:typedMember></xbrli:scenario></xbrli:context>
+<xbrli:context id="CompBOD1"><xbrli:entity><xbrli:identifier scheme="https://www.sebi.gov.in/in-capmkt/ScripCode">532540</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2026-06-30</xbrli:instant></xbrli:period><xbrli:scenario><xbrldi:typedMember dimension="in-capmkt:CompositionOfBoardOfDirectorsAxis"><in-capmkt:CompositionOfBoardOfDirectorsDomain>CompositionOfBoardOfDirectors1</in-capmkt:CompositionOfBoardOfDirectorsDomain></xbrldi:typedMember></xbrli:scenario></xbrli:context>
+<xbrli:context id="D_CompBOD2"><xbrli:entity><xbrli:identifier scheme="https://www.sebi.gov.in/in-capmkt/ScripCode">532540</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:startDate>2026-04-01</xbrli:startDate><xbrli:endDate>2026-06-30</xbrli:endDate></xbrli:period><xbrli:scenario><xbrldi:typedMember dimension="in-capmkt:CompositionOfBoardOfDirectorsAxis"><in-capmkt:CompositionOfBoardOfDirectorsDomain>CompositionOfBoardOfDirectors2</in-capmkt:CompositionOfBoardOfDirectorsDomain></xbrldi:typedMember></xbrli:scenario></xbrli:context>
+<xbrli:context id="CompBOD2"><xbrli:entity><xbrli:identifier scheme="https://www.sebi.gov.in/in-capmkt/ScripCode">532540</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2026-06-30</xbrli:instant></xbrli:period><xbrli:scenario><xbrldi:typedMember dimension="in-capmkt:CompositionOfBoardOfDirectorsAxis"><in-capmkt:CompositionOfBoardOfDirectorsDomain>CompositionOfBoardOfDirectors2</in-capmkt:CompositionOfBoardOfDirectorsDomain></xbrldi:typedMember></xbrli:scenario></xbrli:context>
+<xbrli:context id="D_CompBOD4"><xbrli:entity><xbrli:identifier scheme="https://www.sebi.gov.in/in-capmkt/ScripCode">532540</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:startDate>2026-04-01</xbrli:startDate><xbrli:endDate>2026-06-30</xbrli:endDate></xbrli:period><xbrli:scenario><xbrldi:typedMember dimension="in-capmkt:CompositionOfBoardOfDirectorsAxis"><in-capmkt:CompositionOfBoardOfDirectorsDomain>CompositionOfBoardOfDirectors4</in-capmkt:CompositionOfBoardOfDirectorsDomain></xbrldi:typedMember></xbrli:scenario></xbrli:context>
+<xbrli:context id="CompBOD4"><xbrli:entity><xbrli:identifier scheme="https://www.sebi.gov.in/in-capmkt/ScripCode">532540</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2026-06-30</xbrli:instant></xbrli:period><xbrli:scenario><xbrldi:typedMember dimension="in-capmkt:CompositionOfBoardOfDirectorsAxis"><in-capmkt:CompositionOfBoardOfDirectorsDomain>CompositionOfBoardOfDirectors4</in-capmkt:CompositionOfBoardOfDirectorsDomain></xbrldi:typedMember></xbrli:scenario></xbrli:context>
+<xbrli:context id="D_CompBOD9"><xbrli:entity><xbrli:identifier scheme="https://www.sebi.gov.in/in-capmkt/ScripCode">532540</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:startDate>2026-04-01</xbrli:startDate><xbrli:endDate>2026-06-30</xbrli:endDate></xbrli:period><xbrli:scenario><xbrldi:typedMember dimension="in-capmkt:CompositionOfBoardOfDirectorsAxis"><in-capmkt:CompositionOfBoardOfDirectorsDomain>CompositionOfBoardOfDirectors9</in-capmkt:CompositionOfBoardOfDirectorsDomain></xbrldi:typedMember></xbrli:scenario></xbrli:context>
+<xbrli:context id="CompBOD9"><xbrli:entity><xbrli:identifier scheme="https://www.sebi.gov.in/in-capmkt/ScripCode">532540</xbrli:identifier></xbrli:entity><xbrli:period><xbrli:instant>2026-06-30</xbrli:instant></xbrli:period><xbrli:scenario><xbrldi:typedMember dimension="in-capmkt:CompositionOfBoardOfDirectorsAxis"><in-capmkt:CompositionOfBoardOfDirectorsDomain>CompositionOfBoardOfDirectors9</in-capmkt:CompositionOfBoardOfDirectorsDomain></xbrldi:typedMember></xbrli:scenario></xbrli:context>
+<xbrli:unit id="pure"><xbrli:measure>xbrli:pure</xbrli:measure></xbrli:unit>
+<in-capmkt:Symbol contextRef="MainI">TCS</in-capmkt:Symbol>
+<in-capmkt:ISIN contextRef="MainI">INE467B01029</in-capmkt:ISIN>
+<in-capmkt:NameOfTheCompany contextRef="MainI">TATA CONSULTANCY SERVICES LIMITED</in-capmkt:NameOfTheCompany>
+<in-capmkt:DateOfEndOfReportingPeriod contextRef="MainI">2026-06-30</in-capmkt:DateOfEndOfReportingPeriod>
+<in-capmkt:Title contextRef="D_CompBOD1">Mr</in-capmkt:Title>
+<in-capmkt:NameOftheDirector contextRef="D_CompBOD1">Chandrasekaran Natarajan</in-capmkt:NameOftheDirector>
+<in-capmkt:PermanentAccountNumberOfDirector contextRef="D_CompBOD1">******</in-capmkt:PermanentAccountNumberOfDirector>
+<in-capmkt:DirectorIdentificationNumberOfDirector contextRef="D_CompBOD1">00121863</in-capmkt:DirectorIdentificationNumberOfDirector>
+<in-capmkt:PositionOfDirectorInBoardOne contextRef="D_CompBOD1">Non-Executive - Non Independent Director</in-capmkt:PositionOfDirectorInBoardOne>
+<in-capmkt:PositionOfDirectorInBoardTwo contextRef="D_CompBOD1">Chairperson related to Promoter</in-capmkt:PositionOfDirectorInBoardTwo>
+<in-capmkt:DateOfBirth contextRef="CompBOD1">1963-06-02</in-capmkt:DateOfBirth>
+<in-capmkt:CurrentStatusDirector contextRef="D_CompBOD1">Active</in-capmkt:CurrentStatusDirector>
+<in-capmkt:DateOfAppointmentOfDirector contextRef="CompBOD1">2007-09-06</in-capmkt:DateOfAppointmentOfDirector>
+<in-capmkt:Title contextRef="D_CompBOD2">Mr</in-capmkt:Title>
+<in-capmkt:NameOftheDirector contextRef="D_CompBOD2">Kunchitham Krithivasan</in-capmkt:NameOftheDirector>
+<in-capmkt:PermanentAccountNumberOfDirector contextRef="D_CompBOD2">******</in-capmkt:PermanentAccountNumberOfDirector>
+<in-capmkt:DirectorIdentificationNumberOfDirector contextRef="D_CompBOD2">10106739</in-capmkt:DirectorIdentificationNumberOfDirector>
+<in-capmkt:PositionOfDirectorInBoardOne contextRef="D_CompBOD2">Executive Director</in-capmkt:PositionOfDirectorInBoardOne>
+<in-capmkt:PositionOfDirectorInBoardTwo contextRef="D_CompBOD2">Not Applicable</in-capmkt:PositionOfDirectorInBoardTwo>
+<in-capmkt:PositionOfDirectorInBoardThree contextRef="D_CompBOD2">CEO-MD</in-capmkt:PositionOfDirectorInBoardThree>
+<in-capmkt:DateOfBirth contextRef="CompBOD2">1964-05-05</in-capmkt:DateOfBirth>
+<in-capmkt:CurrentStatusDirector contextRef="D_CompBOD2">Active</in-capmkt:CurrentStatusDirector>
+<in-capmkt:DateOfAppointmentOfDirector contextRef="CompBOD2">2023-06-01</in-capmkt:DateOfAppointmentOfDirector>
+<in-capmkt:Title contextRef="D_CompBOD4">Mr</in-capmkt:Title>
+<in-capmkt:NameOftheDirector contextRef="D_CompBOD4">Pradeep Kumar Khosla</in-capmkt:NameOftheDirector>
+<in-capmkt:PermanentAccountNumberOfDirector contextRef="D_CompBOD4">******</in-capmkt:PermanentAccountNumberOfDirector>
+<in-capmkt:DirectorIdentificationNumberOfDirector contextRef="D_CompBOD4">03611983</in-capmkt:DirectorIdentificationNumberOfDirector>
+<in-capmkt:PositionOfDirectorInBoardOne contextRef="D_CompBOD4">Non-Executive - Independent Director</in-capmkt:PositionOfDirectorInBoardOne>
+<in-capmkt:PositionOfDirectorInBoardTwo contextRef="D_CompBOD4">Not Applicable</in-capmkt:PositionOfDirectorInBoardTwo>
+<in-capmkt:DateOfBirth contextRef="CompBOD4">1957-03-13</in-capmkt:DateOfBirth>
+<in-capmkt:CurrentStatusDirector contextRef="D_CompBOD4">Active</in-capmkt:CurrentStatusDirector>
+<in-capmkt:DateOfAppointmentOfDirector contextRef="CompBOD4">2018-01-11</in-capmkt:DateOfAppointmentOfDirector>
+<in-capmkt:DateOfReappointmentOfDirector contextRef="CompBOD4">2023-01-11</in-capmkt:DateOfReappointmentOfDirector>
+<in-capmkt:TenureOfDirector contextRef="CompBOD4" decimals="INF" unitRef="pure">101.2</in-capmkt:TenureOfDirector>
+<in-capmkt:Title contextRef="D_CompBOD9">Ms</in-capmkt:Title>
+<in-capmkt:NameOftheDirector contextRef="D_CompBOD9">Asha Former Example</in-capmkt:NameOftheDirector>
+<in-capmkt:PermanentAccountNumberOfDirector contextRef="D_CompBOD9">******</in-capmkt:PermanentAccountNumberOfDirector>
+<in-capmkt:DirectorIdentificationNumberOfDirector contextRef="D_CompBOD9">99887766</in-capmkt:DirectorIdentificationNumberOfDirector>
+<in-capmkt:PositionOfDirectorInBoardOne contextRef="D_CompBOD9">Non-Executive - Non Independent Director</in-capmkt:PositionOfDirectorInBoardOne>
+<in-capmkt:CurrentStatusDirector contextRef="D_CompBOD9">Resigned</in-capmkt:CurrentStatusDirector>
+<in-capmkt:DateOfAppointmentOfDirector contextRef="CompBOD9">2019-04-01</in-capmkt:DateOfAppointmentOfDirector>
+<in-capmkt:DateOfCessationOfDirector contextRef="CompBOD9">2026-05-15</in-capmkt:DateOfCessationOfDirector>
+</xbrli:xbrl>

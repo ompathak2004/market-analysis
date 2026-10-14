@@ -29,7 +29,13 @@ import { executeJob } from "./execute.js";
 import { HANDLERS } from "./handlers/index.js";
 import { reconcile } from "./handlers/ops.js";
 import { DEAD_METRIC } from "./metrics.js";
-import { canCreateSchema, createBoss, createLedgerPort, createRetryPort } from "./queue.js";
+import {
+  canCreateSchema,
+  createBoss,
+  createLedgerPort,
+  createRetryPort,
+  sessionLimits,
+} from "./queue.js";
 import { registerSchedules } from "./schedules.js";
 
 const MODE_POLL_MS = 30_000;
@@ -73,6 +79,9 @@ export class Consumer {
     );
     this.every(LEASE_RENEW_MS, () => this.renew());
     this.every(METRICS_FLUSH_MS, () => this.ctx.metrics.flush());
+    const limits = await sessionLimits(this.ctx.db);
+    if (limits.unbounded) log.warn(limits, "database role has no statement_timeout");
+    else log.info(limits, "database session limits");
 
     const boss = createBoss(this.ctx.config.DATABASE_URL, {
       schedule: this.ctx.env.WORKER_SCHEDULES,

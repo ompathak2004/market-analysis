@@ -60,7 +60,6 @@ const child =
   (type: JobType, priority: number) =>
   (payload: object): ChildJob => ({ type, payload: { ...payload }, priority });
 
-// A source-wide cooldown postpones the unit instead of burning its retry budget.
 async function deferRateLimits<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
@@ -73,9 +72,6 @@ async function deferRateLimits<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-// Rows are already committed when this throws, so the ledger retry with backoff is idempotent and
-// the unit only succeeds once every expected session in its window is covered and the source
-// answered. A calendar that does not span the window yet defers without spending an attempt.
 export function requireComplete(r: PriceWindowResult, now = Date.now()): PriceWindowResult {
   const outcome = windowOutcome(r);
   if (outcome === "defer")
@@ -174,7 +170,6 @@ export const priceHandlers: PriceHandlers = {
     if (payload.parserVersion !== PRICE_PARSER_VERSION) return done({ stale_parser: 1 });
     const mode = payload.mode ?? "backfill";
     const r = await deferRateLimits(() => syncPriceWindow(ctx, payload, mode, signal));
-    // Repair windows re-check known gaps; their next_check_at backoff is the retry, not the ledger.
     if (mode !== "repair" || windowOutcome(r) === "defer") requireComplete(r);
     return done(windowMetrics(r));
   },

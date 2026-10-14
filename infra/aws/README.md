@@ -45,7 +45,7 @@ aws cloudformation deploy --stack-name market-analysis-worker \
   --parameter-overrides DesiredCount=1 ImageTag=$(git rev-parse HEAD)
 ```
 
-`ssm-parameters.sh` skips `NODE_ENV`, `LOG_LEVEL`, `NEXT_*` (the task definition sets the first two) and the web-only `API_KEY`, `CRON_SECRET`, `ADMIN_API_KEY` and stores an empty value as a single space, because SSM cannot hold an empty string and the task cannot start if a referenced parameter is missing. It is idempotent (`--overwrite`); rerun it after rotating a value, then `aws ecs update-service --cluster market-analysis --service market-analysis-worker --force-new-deployment`, since secrets are read only when a task starts.
+`ssm-parameters.sh` skips `NODE_ENV`, `LOG_LEVEL`, `NEXT_*` (the task definition sets the first two) and the web-only `API_KEY`, `ADMIN_API_KEY` and stores an empty value as a single space, because SSM cannot hold an empty string and the task cannot start if a referenced parameter is missing. It is idempotent (`--overwrite`); rerun it after rotating a value, then `aws ecs update-service --cluster market-analysis --service market-analysis-worker --force-new-deployment`, since secrets are read only when a task starts.
 
 ## First-deploy gotchas
 

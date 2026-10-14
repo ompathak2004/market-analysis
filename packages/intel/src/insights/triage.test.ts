@@ -1,6 +1,6 @@
+import { isRoutineAnnouncement } from "@ma/core";
 import { describe, expect, it } from "vitest";
 import { reconcileTriage, type TriageCandidate, triageItemInput } from "./triage.js";
-import { isRoutineAnnouncement } from "./triage-rules.js";
 
 describe("isRoutineAnnouncement", () => {
   it.each([

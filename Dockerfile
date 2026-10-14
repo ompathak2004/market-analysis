@@ -19,7 +19,6 @@ FROM deps AS build
 COPY . .
 RUN pnpm install --offline --frozen-lockfile
 RUN pnpm build && pnpm --filter @ma/worker build
-# pnpm 10 deploys from the shared lockfile only with injected workspace packages; legacy mode re-resolves versions online.
 RUN pnpm --config.inject-workspace-packages=true --filter @ma/worker deploy --prod --offline /out \
  && rm -rf /out/src /out/tsconfig*.json \
       /out/node_modules/.pnpm/@ma+*/node_modules/@ma/*/src \

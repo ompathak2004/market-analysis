@@ -1,7 +1,7 @@
 import { createRedis, type RedisClient } from "@ma/cache";
 import { DeadlineExceededError, withDeadline } from "@ma/core";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { LlmBudget } from "./budget.js";
+import { LLM_BUDGET_CLASSES, LlmBudget, type LlmBudgetClass } from "./budget.js";
 import { LlmBudgetExceeded } from "./errors.js";
 
 const url = process.env.REDIS_URL ?? "redis://localhost:6379";
@@ -12,13 +12,19 @@ beforeAll(async () => {
   await redis.select(9);
 });
 beforeEach(async () => {
-  await redis.del(LlmBudget.key(), "ratelimit:api.cerebras.ai");
+  const classes = Object.keys(LLM_BUDGET_CLASSES) as LlmBudgetClass[];
+  await redis.del(
+    LlmBudget.key(),
+    ...classes.map((c) => LlmBudget.classKey(c)),
+    "ratelimit:api.cerebras.ai",
+  );
 });
 afterAll(async () => {
   await redis.quit();
 });
 
-const budget = (dailyTokens: number) => new LlmBudget(redis, { rpm: 1_000, dailyTokens });
+const budget = (dailyTokens: number, classTokens: Partial<Record<LlmBudgetClass, number>> = {}) =>
+  new LlmBudget(redis, { rpm: 1_000, dailyTokens, classTokens });
 
 describe("LlmBudget", () => {
   it("never lets concurrent reservations exceed the daily cap", async () => {
@@ -55,5 +61,47 @@ describe("LlmBudget", () => {
       DeadlineExceededError,
     );
     expect(await b.usedToday()).toBe(0);
+  });
+
+  it("isolates each class against its own cap", async () => {
+    const b = budget(10_000, { relationships: 2_000 });
+    await b.reserve(2_000, "relationships");
+    const refused = await b.reserve(1, "relationships").catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(LlmBudgetExceeded);
+    expect((refused as LlmBudgetExceeded).details).toEqual({
+      used: 2_000,
+      budget: 2_000,
+      budgetClass: "relationships",
+    });
+    await expect(b.reserve(3_000, "insights")).resolves.toMatchObject({ tokens: 3_000 });
+    expect(await b.usedToday("relationships")).toBe(2_000);
+    expect(await b.usedToday("insights")).toBe(3_000);
+    expect(await b.usedToday()).toBe(5_000);
+    expect(await b.remainingToday("relationships")).toBe(0);
+    expect(await b.remainingToday("insights")).toBe(5_000);
+  });
+
+  it("enforces the shared daily cap across classes", async () => {
+    const b = budget(5_000, { relationships: 4_000, insights: 4_000 });
+    await b.reserve(3_000, "relationships");
+    const refused = await b.reserve(2_500, "insights").catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(LlmBudgetExceeded);
+    expect((refused as LlmBudgetExceeded).details).toMatchObject({ budgetClass: "total" });
+    expect(await b.usedToday("insights")).toBe(0);
+    expect(await b.usedToday()).toBe(3_000);
+  });
+
+  it("settles both the class and the total counters", async () => {
+    const b = budget(10_000);
+    const r = await b.reserve(1_000, "influence");
+    expect(await b.settle(r, 400)).toBe(400);
+    expect(await b.usedToday("influence")).toBe(400);
+  });
+
+  it("defaults class caps to the configured split bounded by the daily cap", () => {
+    expect(budget(800_000).capOf("relationships")).toBe(200_000);
+    expect(budget(800_000).capOf("insights")).toBe(500_000);
+    expect(budget(50_000).capOf("insights")).toBe(50_000);
+    expect(budget(800_000, { influence: 150_000 }).capOf("influence")).toBe(150_000);
   });
 });

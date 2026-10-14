@@ -8,7 +8,7 @@ export interface Binding {
   group: "Command" | "Panes" | "Rows" | "Views" | "Display";
 }
 
-const TAB_KEYS = ["DES", "GP", "FA", "ANR", "SPLC", "NEWS", "JET", "SHIP", "INTL"] as const;
+const TAB_KEYS = ["DES", "GP", "FA", "ANR", "SPLC", "NEWS", "JET", "SHIP", "INTL", "INFL"] as const;
 
 export const KEYMAP: readonly Binding[] = [
   {
@@ -52,7 +52,7 @@ export const KEYMAP: readonly Binding[] = [
   { id: "sort.cycle", keys: ["s"], when: "idle", label: "Cycle table sort", group: "Rows" },
   ...TAB_KEYS.map((code, i) => ({
     id: `tab.${i + 1}`,
-    keys: [String(i + 1)],
+    keys: [String((i + 1) % 10)],
     when: "idle" as const,
     label: `${code} view`,
     group: "Views" as const,

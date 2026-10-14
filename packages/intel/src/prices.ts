@@ -35,8 +35,6 @@ export function istToday(now = Date.now()): string {
   return new Date(now + IST_OFFSET_MS).toISOString().slice(0, 10);
 }
 
-// Only finalized bars of the series' current adjustment generation are comparable; mixing
-// generations or falling back to the unadjusted close silently changes the return basis.
 export async function loadCloses(
   db: Pick<Db, "execute">,
   companyIds: number[],

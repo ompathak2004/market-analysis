@@ -11,11 +11,6 @@ export interface DerivePass {
   resumed: boolean;
 }
 
-/**
- * A derive pass walks ids in ascending order. When the job deadline cuts it short the
- * next run resumes after the last finished id, with the same cursor, so the cursor only
- * advances (to when the pass began) once every candidate has been processed.
- */
 export async function beginPass(
   redis: RedisClient,
   keys: { cursorKey: string; resumeKey: string },

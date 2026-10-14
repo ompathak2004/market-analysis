@@ -13,7 +13,6 @@
     "build:worker": "pnpm build && pnpm --filter @ma/worker build",
     "dev:worker": "pnpm --filter @ma/worker dev",
     "worker:cli": "pnpm --filter @ma/worker cli",
-    "job": "pnpm --filter @ma/web job",
     "db:generate": "pnpm --filter @ma/db generate",
     "db:migrate": "pnpm --filter @ma/db migrate",
     "typecheck": "pnpm -r typecheck",

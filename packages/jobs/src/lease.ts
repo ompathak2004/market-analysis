@@ -24,9 +24,6 @@ export class LeaseLostError extends AppError {
 
 type Executor = Pick<Db, "execute">;
 
-// No row locks: a FOR SHARE lock on worker_leases would block lease renewal for the rest of the
-// transaction. Callers run this as the last statement before commit, and ledger writes carry
-// the same generation predicate in their own UPDATE.
 export async function assertFence(tx: Executor, fence: Fence): Promise<void> {
   const { lease, attemptId } = fence;
   const rows = await tx.execute(sql`

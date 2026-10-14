@@ -505,7 +505,6 @@ export async function sampleAircraftPositions(
   };
 }
 
-/** Builds the events; the caller writes them with the positions and only then advances LAST_KEY. */
 async function buildAirEvents(
   ctx: IngestContext,
   samples: PositionSample[],

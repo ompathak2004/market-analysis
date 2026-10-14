@@ -2,7 +2,6 @@ import { gunzipSync } from "node:zlib";
 import type { RedisClient } from "@ma/cache";
 import type { HttpClient } from "../http.js";
 
-export const AIRCRAFT_DB_PARSER_VERSION = 1;
 export const AIRCRAFT_DB_URL =
   "https://github.com/wiedehopf/tar1090-db/raw/refs/heads/csv/aircraft.csv.gz";
 

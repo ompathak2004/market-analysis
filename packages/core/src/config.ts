@@ -8,6 +8,8 @@ const optionalString = z
     return trimmed ? trimmed : undefined;
   });
 
+const optionalPositiveInt = z.coerce.number().int().positive().optional();
+
 const serviceSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
@@ -20,6 +22,9 @@ const serviceSchema = z.object({
   CEREBRAS_FALLBACK_MODEL: z.string().default("qwen-3.8-27b"),
   CEREBRAS_RPM: z.coerce.number().int().positive().default(5),
   LLM_DAILY_TOKEN_BUDGET: z.coerce.number().int().positive().default(800_000),
+  LLM_BUDGET_RELATIONSHIPS: optionalPositiveInt,
+  LLM_BUDGET_INSIGHTS: optionalPositiveInt,
+  LLM_BUDGET_INFLUENCE: optionalPositiveInt,
   AISSTREAM_API_KEY: optionalString,
   OPENSKY_CLIENT_ID: optionalString,
   OPENSKY_CLIENT_SECRET: optionalString,
@@ -30,6 +35,10 @@ const serviceSchema = z.object({
   ALTDATA_AIS_BURST_SECONDS: z.coerce.number().int().positive().default(45),
   INTEL_UNIVERSE: z.string().default("NIFTY100"),
   DATA_UNIVERSE: z.string().default("NIFTY500"),
+  SPLC_PRESENTATIONS_PILOT: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
   NSE_BASE_URL: z.string().url().default("https://www.nseindia.com"),
   SCRAPE_CONCURRENCY: z.coerce.number().int().positive().default(4),
   RESEND_API_KEY: optionalString,
@@ -38,7 +47,6 @@ const serviceSchema = z.object({
 
 const webSchema = serviceSchema.extend({
   API_KEY: z.string().min(16),
-  CRON_SECRET: z.string().min(16),
   ADMIN_API_KEY: optionalString,
 });
 

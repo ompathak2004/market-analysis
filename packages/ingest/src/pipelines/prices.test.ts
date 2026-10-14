@@ -175,7 +175,6 @@ describe.skipIf(!url)("price series writes (DATABASE_URL_TEST)", () => {
     "1990-01-05",
     "1990-01-08",
   ];
-  // Sessions just outside the series so the calendar around the window has no multi-day hole.
   const fences = ["1989-12-29", "1990-01-09"];
   const window = { from: "1990-01-01", toExclusive: "1990-01-09" };
   let history: YahooHistory;
@@ -380,7 +379,6 @@ describe.skipIf(!url)("price coverage manifest (DATABASE_URL_TEST)", () => {
   beforeAll(async () => {
     db = createDb(url ?? "", 2);
     lock = await db.$client.reserve();
-    // The manifest rewrites every series in the database; the worker price handler test waits.
     await lock`select pg_advisory_lock(${PRICE_TEST_LOCK})`;
     for (const [k, yahoo] of [
       ["listed", `${tag}.NS`],

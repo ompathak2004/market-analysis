@@ -1,20 +1,22 @@
 import { NotFoundError } from "@ma/core";
 import {
   analystCalls,
+  and,
   announcements,
   companies,
+  type counterparties,
   desc,
   eq,
   fundamentals,
-  inArray,
   or,
   PRICE_BASIS,
-  relationshipEstimates,
-  relationships,
+  type relationshipEstimates,
+  type relationships,
   signals,
   sql,
 } from "@ma/db";
 import type { YahooRange } from "@ma/ingest";
+import { activeSignalVersionClause, ESTIMATE_MODEL_VERSION } from "@ma/intel";
 import type { AppContext } from "../context";
 
 const MINUTE = 60_000;
@@ -98,7 +100,12 @@ export async function latestSignals(ctx: AppContext, companyId: number) {
       ctx.db
         .selectDistinctOn([signals.kind])
         .from(signals)
-        .where(eq(signals.companyId, companyId))
+        .where(
+          and(
+            eq(signals.companyId, companyId),
+            activeSignalVersionClause(sql`${signals.kind}`, sql`${signals.modelVersion}`),
+          ),
+        )
         .orderBy(signals.kind, desc(signals.asOf), desc(signals.modelVersion)),
     { ttlMs: 15 * MINUTE, staleMs: HOUR },
   );
@@ -143,9 +150,6 @@ export interface PriceSnapshot {
   meta: PriceHistoryMeta;
 }
 
-// One statement, one snapshot, one cache entry: bars and their coverage metadata always describe
-// the same adjustment generation. Rows left over from an older generation are never served;
-// provisional (not yet final) bars are served but flagged per bar.
 export async function priceSnapshot(
   ctx: AppContext,
   symbol: string,
@@ -328,75 +332,340 @@ export async function latestAnalystCalls(ctx: AppContext, limit = 50) {
   );
 }
 
-export async function supplyChain(ctx: AppContext, symbol: string) {
+export type ValueBasis = (typeof relationships.$inferSelect)["valueBasis"];
+export type CostBucket = (typeof relationships.$inferSelect)["costBucket"];
+export type CounterpartyKind = (typeof counterparties.$inferSelect)["kind"];
+export type EstimateMethod = (typeof relationshipEstimates.$inferSelect)["method"];
+
+export interface Counterparty {
+  id: number;
+  kind: CounterpartyKind;
+  name: string;
+  symbol: string | null;
+}
+
+export interface SupplyChainEvidence {
+  observationId: number;
+  quote: string;
+  page: number | null;
+  documentId: number;
+  source: string;
+  url: string;
+  publishedAt: string | null;
+  extractorFamily: string;
+}
+
+export interface SupplyChainEstimate {
+  method: EstimateMethod;
+  valueBasis: ValueBasis;
+  valueCr: number | null;
+  lowCr: number | null;
+  highCr: number | null;
+  supplierRevenuePct: number | null;
+  customerCostPct: number | null;
+  asOf: string;
+  modelVersion: number;
+}
+
+export interface SupplyChainEdge {
+  id: number;
+  counterparty: Counterparty;
+  valueBasis: ValueBasis;
+  costBucket: CostBucket;
+  disclosedBy: (typeof relationships.$inferSelect)["disclosedBy"];
+  disclosureKind: (typeof relationships.$inferSelect)["disclosureKind"];
+  disclosedPct: number | null;
+  period: { start: string | null; end: string | null; fiscalYear: number | null };
+  confidence: number;
+  status: "active" | "expired";
+  lastDisclosedAt: string | null;
+  validTo: string | null;
+  observationCount: number;
+  estimate: SupplyChainEstimate | null;
+  contractTotalCr: number | null;
+  evidence: SupplyChainEvidence[];
+}
+
+export interface SupplyChainCoverageFamily {
+  family: string;
+  available: number;
+  read: number;
+  lastReadAt: string | null;
+}
+
+export interface SupplyChainCoverage {
+  families: SupplyChainCoverageFamily[];
+  available: number;
+  read: number;
+  lastReadAt: string | null;
+  graphRevision: number | null;
+  rebuiltAt: string | null;
+  extractorVersion: number | null;
+}
+
+export type ChainSignal = NonNullable<Awaited<ReturnType<typeof latestSignals>>>[number];
+
+export interface SupplyChainResponse {
+  schemaVersion: 2;
+  company: { id: number; symbol: string };
+  customers: SupplyChainEdge[];
+  suppliers: SupplyChainEdge[];
+  totals: { customers: number; suppliers: number };
+  coverage: SupplyChainCoverage;
+  signals: ChainSignal[];
+}
+
+const EDGE_LIMIT = 200;
+
+type EdgeRow = {
+  id: number;
+  side: "customer" | "supplier";
+  total: number;
+  counterparty: Counterparty;
+  value_basis: ValueBasis;
+  cost_bucket: CostBucket;
+  disclosed_by: SupplyChainEdge["disclosedBy"];
+  disclosure_kind: SupplyChainEdge["disclosureKind"];
+  disclosed_pct: number | null;
+  disclosed_value: string | null;
+  fiscal_year: number | null;
+  valid_from: string | null;
+  valid_to: string | null;
+  confidence: number;
+  status: "active" | "expired";
+  last_disclosed_at: string | null;
+  observation_count: number;
+  period_start: string | null;
+  period_end: string | null;
+  observed_fiscal_year: number | null;
+  estimate: SupplyChainEstimate | null;
+  contract_cr: string | null;
+  evidence: SupplyChainEvidence[] | null;
+};
+
+function edgeFrom(r: EdgeRow): SupplyChainEdge {
+  const contract = r.contract_cr ?? (r.value_basis === "contract_total" ? r.disclosed_value : null);
+  return {
+    id: Number(r.id),
+    counterparty: r.counterparty,
+    valueBasis: r.value_basis,
+    costBucket: r.cost_bucket,
+    disclosedBy: r.disclosed_by,
+    disclosureKind: r.disclosure_kind,
+    disclosedPct: r.disclosed_pct == null ? null : Number(r.disclosed_pct),
+    period: {
+      start: r.period_start ?? r.valid_from ?? null,
+      end: r.period_end ?? null,
+      fiscalYear: r.observed_fiscal_year ?? r.fiscal_year ?? null,
+    },
+    confidence: Number(r.confidence),
+    status: r.status,
+    lastDisclosedAt: r.last_disclosed_at ?? null,
+    validTo: r.valid_to ?? null,
+    observationCount: Number(r.observation_count),
+    estimate: r.estimate ?? null,
+    contractTotalCr: contract == null ? null : Number(contract),
+    evidence: r.evidence ?? [],
+  };
+}
+
+function coverageFrom(
+  c:
+    | (Omit<SupplyChainCoverage, "available" | "read" | "lastReadAt"> & {
+        documentsAvailable: number | null;
+        documentsRead: number | null;
+      })
+    | undefined,
+): SupplyChainCoverage {
+  const families = c?.families ?? [];
+  const lastReadAt = families.reduce<string | null>(
+    (latest, f) =>
+      f.lastReadAt && (!latest || Date.parse(f.lastReadAt) > Date.parse(latest))
+        ? f.lastReadAt
+        : latest,
+    null,
+  );
+  return {
+    families,
+    available: families.length
+      ? families.reduce((s, f) => s + f.available, 0)
+      : Number(c?.documentsAvailable ?? 0),
+    read: families.length
+      ? families.reduce((s, f) => s + f.read, 0)
+      : Number(c?.documentsRead ?? 0),
+    lastReadAt,
+    graphRevision: c?.graphRevision ?? null,
+    rebuiltAt: c?.rebuiltAt ?? null,
+    extractorVersion: c?.extractorVersion ?? null,
+  };
+}
+
+const LIVE_OBSERVATION = sql.raw(`('pending', 'auto', 'confirmed')`);
+
+export async function supplyChain(ctx: AppContext, symbol: string): Promise<SupplyChainResponse> {
   const company = await findCompany(ctx, symbol);
-  return ctx.api.getOrLoad(
-    `supply-chain:${company.id}`,
+  const chain = await ctx.api.getOrLoad(
+    `${supplyChainKey(company.id)}v2`,
     async () => {
       const today = new Date().toISOString().slice(0, 10);
-      const rows = await ctx.db
-        .select({
-          id: relationships.id,
-          supplierCompanyId: relationships.supplierCompanyId,
-          supplierName: relationships.supplierName,
-          customerCompanyId: relationships.customerCompanyId,
-          customerName: relationships.customerName,
-          costBucket: relationships.costBucket,
-          disclosureKind: relationships.disclosureKind,
-          disclosedPct: relationships.disclosedPct,
-          fiscalYear: relationships.fiscalYear,
-          validFrom: relationships.validFrom,
-          validTo: relationships.validTo,
-          confidence: relationships.confidence,
-          evidence: relationships.evidence,
-          method: relationshipEstimates.method,
-          valueCr: relationshipEstimates.valueCr,
-          valueLowCr: relationshipEstimates.valueLowCr,
-          valueHighCr: relationshipEstimates.valueHighCr,
-          supplierRevenuePct: relationshipEstimates.supplierRevenuePct,
-          customerCostPct: relationshipEstimates.customerCostPct,
-        })
-        .from(relationships)
-        .leftJoin(
-          relationshipEstimates,
-          sql`${relationshipEstimates.relationshipId} = ${relationships.id} and ${relationshipEstimates.id} = (select id from relationship_estimates re where re.relationship_id = ${relationships.id} order by as_of desc, model_version desc limit 1)`,
-        )
-        .where(
-          sql`(${relationships.supplierCompanyId} = ${company.id} or ${relationships.customerCompanyId} = ${company.id}) and ${relationships.validTo} >= ${today}`,
-        )
-        .orderBy(desc(relationshipEstimates.valueCr), desc(relationships.confidence));
-      const counterpartyIds = [
-        ...new Set(
-          rows
-            .flatMap((r) => [r.supplierCompanyId, r.customerCompanyId])
-            .filter((id): id is number => id != null && id !== company.id),
-        ),
-      ];
-      const symbols = counterpartyIds.length
-        ? await ctx.db
-            .select({ id: companies.id, nseSymbol: companies.nseSymbol })
-            .from(companies)
-            .where(inArray(companies.id, counterpartyIds))
-        : [];
-      const symbolById = new Map(symbols.map((s) => [s.id, s.nseSymbol]));
-      const decorate = (r: (typeof rows)[number], otherId: number | null) => ({
-        ...r,
-        counterpartySymbol: otherId ? (symbolById.get(otherId) ?? null) : null,
-      });
+      const [edges, coverage, chainSignals] = await Promise.all([
+        ctx.db.execute<EdgeRow>(sql`
+          with me as (
+            select id from counterparties where company_id = ${company.id}
+          ), e as (
+            select r.*,
+                   case when r.supplier_company_id = ${company.id}
+                          or r.supplier_counterparty_id = (select id from me)
+                        then 'customer' else 'supplier' end as side
+            from relationships r
+            where r.status in ('active', 'expired')
+              and r.supplier_counterparty_id is not null
+              and r.customer_counterparty_id is not null
+              and (r.valid_to is null or r.valid_to >= ${today}::date)
+              and (r.supplier_company_id = ${company.id} or r.customer_company_id = ${company.id}
+                or r.supplier_counterparty_id = (select id from me)
+                or r.customer_counterparty_id = (select id from me))
+          ), ranked as (
+            select e.*, est.estimate, ct.value_cr as contract_cr,
+                   row_number() over (
+                     partition by e.side
+                     order by est.value_cr desc nulls last, e.confidence desc, e.id
+                   ) as rn,
+                   count(*) over (partition by e.side)::int as total
+            from e
+            left join lateral (
+              select x.value_cr, json_build_object(
+                       'method', x.method, 'valueBasis', x.value_basis, 'valueCr', x.value_cr,
+                       'lowCr', x.value_low_cr, 'highCr', x.value_high_cr,
+                       'supplierRevenuePct', x.supplier_revenue_pct,
+                       'customerCostPct', x.customer_cost_pct,
+                       'asOf', x.as_of, 'modelVersion', x.model_version) as estimate
+              from relationship_estimates x
+              where x.relationship_id = e.id and x.value_basis <> 'contract_total'
+              order by (x.model_version = ${ESTIMATE_MODEL_VERSION}) desc, x.as_of desc,
+                       x.model_version desc, x.id desc
+              limit 1
+            ) est on true
+            left join lateral (
+              select x.value_cr
+              from relationship_estimates x
+              where x.relationship_id = e.id and x.value_basis = 'contract_total'
+              order by x.as_of desc, x.model_version desc, x.id desc
+              limit 1
+            ) ct on true
+          )
+          select k.id, k.side, k.total, k.value_basis, k.cost_bucket, k.disclosed_by,
+                 k.disclosure_kind, k.disclosed_pct, k.disclosed_value::text as disclosed_value,
+                 k.fiscal_year, k.valid_from::text as valid_from, k.valid_to::text as valid_to,
+                 k.confidence, k.status, k.last_disclosed_at::text as last_disclosed_at,
+                 k.observation_count, k.estimate, k.contract_cr::text as contract_cr,
+                 b.period_start::text as period_start, b.period_end::text as period_end,
+                 b.fiscal_year as observed_fiscal_year,
+                 json_build_object('id', c.id, 'kind', c.kind, 'name', c.canonical_name,
+                                   'symbol', co.nse_symbol) as counterparty,
+                 ev.evidence
+          from ranked k
+          join counterparties c on c.id = case when k.side = 'customer'
+                                               then k.customer_counterparty_id
+                                               else k.supplier_counterparty_id end
+          left join companies co on co.id = c.company_id
+          left join lateral (
+            select o.period_start, o.period_end, o.fiscal_year
+            from relationship_observations o
+            where o.supplier_counterparty_id = k.supplier_counterparty_id
+              and o.customer_counterparty_id = k.customer_counterparty_id
+              and o.cost_bucket = k.cost_bucket
+              and o.status in ${LIVE_OBSERVATION}
+            order by (o.status = 'confirmed') desc, o.confidence desc,
+                     o.period_end desc nulls last, o.id desc
+            limit 1
+          ) b on true
+          left join lateral (
+            select json_agg(json_build_object(
+                     'observationId', x.id, 'quote', x.quote, 'page', x.page,
+                     'documentId', x.document_id, 'source', x.source, 'url', x.url,
+                     'publishedAt', x.published_at, 'extractorFamily', x.extractor_family)
+                   order by x.ord) as evidence
+            from (
+              select o.id, sp.quote, sp.page, sp.document_id, sp.source, sp.url,
+                     sp.published_at, ex.extractor_family,
+                     row_number() over (
+                       order by (o.status = 'confirmed') desc, o.confidence desc,
+                                sp.published_at desc nulls last, o.id desc
+                     ) as ord
+              from relationship_observations o
+              join relationship_extractions ex on ex.id = o.extraction_id
+              join lateral (
+                select s.quote, s.page, d.id as document_id, d.source, d.url,
+                       coalesce(dr.published_at, d.published_at) as published_at
+                from relationship_observation_evidence oe
+                join evidence_spans s on s.id = oe.evidence_span_id
+                join document_revisions dr on dr.id = s.document_revision_id
+                join documents d on d.id = dr.document_id
+                where oe.observation_id = o.id
+                order by s.id
+                limit 1
+              ) sp on true
+              where o.supplier_counterparty_id = k.supplier_counterparty_id
+                and o.customer_counterparty_id = k.customer_counterparty_id
+                and o.cost_bucket = k.cost_bucket
+                and o.status in ${LIVE_OBSERVATION}
+              order by ord
+              limit 3
+            ) x
+          ) ev on true
+          where k.rn <= ${EDGE_LIMIT}
+          order by k.side, k.rn`),
+        ctx.db.execute<{
+          coverage: Omit<SupplyChainCoverage, "available" | "read" | "lastReadAt"> & {
+            documentsAvailable: number | null;
+            documentsRead: number | null;
+          };
+        }>(sql`
+          select json_build_object(
+                   'families', coalesce((
+                     select json_agg(json_build_object(
+                              'family', f.family, 'available', f.available, 'read', f.read,
+                              'lastReadAt', f.last_read_at) order by f.family)
+                     from (
+                       select s.family::text as family, count(*)::int as available,
+                              count(*) filter (where s.read_revision_id is not null)::int as read,
+                              max(s.last_read_at) as last_read_at
+                       from relationship_sources s
+                       where s.company_id = ${company.id} and s.family <> 'legacy'
+                       group by s.family
+                     ) f
+                   ), '[]'::json),
+                   'documentsAvailable', g.documents_available,
+                   'documentsRead', g.documents_read,
+                   'graphRevision', g.graph_revision,
+                   'rebuiltAt', g.rebuilt_at,
+                   'extractorVersion', g.extractor_version) as coverage
+          from (select 1) one
+          left join company_graph_state g on g.company_id = ${company.id}`),
+        latestSignals(ctx, company.id),
+      ]);
+      const rows = [...edges];
+      const totalFor = (side: EdgeRow["side"]) =>
+        Number(rows.find((r) => r.side === side)?.total ?? 0);
       return {
-        customers: rows
-          .filter((r) => r.supplierCompanyId === company.id)
-          .map((r) => decorate(r, r.customerCompanyId)),
-        suppliers: rows
-          .filter((r) => r.customerCompanyId === company.id)
-          .map((r) => decorate(r, r.supplierCompanyId)),
-        signals: ((await latestSignals(ctx, company.id)) ?? []).filter((s) =>
-          /customer|supplier|distress/.test(s.kind),
-        ),
+        schemaVersion: 2 as const,
+        company: { id: company.id, symbol: company.nseSymbol ?? symbol.toUpperCase() },
+        customers: rows.filter((r) => r.side === "customer").map(edgeFrom),
+        suppliers: rows.filter((r) => r.side === "supplier").map(edgeFrom),
+        totals: { customers: totalFor("customer"), suppliers: totalFor("supplier") },
+        coverage: coverageFrom(coverage[0]?.coverage),
+        signals: (chainSignals ?? []).filter((s) => /customer|supplier|distress/.test(s.kind)),
       };
     },
     { ttlMs: 30 * MINUTE, staleMs: 6 * HOUR },
   );
+  if (!chain) throw new NotFoundError("supply-chain", company.nseSymbol ?? symbol);
+  return chain;
+}
+
+export function supplyChainKey(companyId: number): string {
+  return `supply-chain:${companyId}:`;
 }
 
 export async function companyAnnouncements(ctx: AppContext, symbol: string, limit = 40) {
@@ -435,7 +704,7 @@ export async function signalLeaderboard(
         .from(signals)
         .innerJoin(companies, eq(companies.id, signals.companyId))
         .where(
-          sql`${signals.kind} = ${kind} and (${signals.asOf}, ${signals.modelVersion}) = (select as_of, model_version from signals s2 where s2.company_id = ${signals.companyId} and s2.kind = ${kind} order by as_of desc, model_version desc limit 1)`,
+          sql`${signals.kind} = ${kind} and (${signals.asOf}, ${signals.modelVersion}) = (select as_of, model_version from signals s2 where s2.company_id = ${signals.companyId} and s2.kind = ${kind} and ${activeSignalVersionClause(sql`s2.kind`, sql`s2.model_version`)} order by as_of desc, model_version desc limit 1)`,
         )
         .orderBy(order === "desc" ? desc(signals.value) : signals.value)
         .limit(limit),

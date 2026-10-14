@@ -1,7 +1,6 @@
 import type { Logger } from "@ma/core";
 import type { Box } from "../data/types.js";
 
-export const AIS_PARSER_VERSION = 1;
 const URL = "wss://stream.aisstream.io/v0/stream";
 
 export interface AisPosition {
