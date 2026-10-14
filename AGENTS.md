@@ -36,7 +36,7 @@ pnpm exec tsx --conditions=@ma/source packages/ingest/src/cli.ts universe NIFTY5
 pnpm exec tsx --conditions=@ma/source packages/intel/src/cli.ts momentum
 ```
 
-Load env with `set -a && . ./.env && set +a`. Every package exports `"@ma/source": "./src/index.ts"` so `tsx --conditions=@ma/source` and vitest run from source; `pnpm build` emits `dist/` for the Next.js build.
+Load env with `set -a && . ./.env && set +a`. Every package exports `"@ma/source": "./src/index.ts"` so `tsx --conditions=@ma/source` and vitest run from source; `pnpm build` emits `dist/` for the Next.js build. `vitest.config.ts` splits tests into a parallel `unit` project and a serial `db` project (`*.db.test.ts` plus the listed files that need `DATABASE_URL_TEST`/`REDIS_URL_TEST`; they skip when those are unset). Add a new database-backed test file with the `.db.test.ts` suffix so it runs serially.
 
 ## Jobs and cron
 
