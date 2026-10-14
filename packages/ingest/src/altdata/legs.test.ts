@@ -75,7 +75,7 @@ describe("segmentLegs", () => {
     expect(summarizeLeg(legs[1] as (typeof legs)[number]).completeness).toBe("enroute");
   });
 
-  it("keeps one leg across a coverage gap at cruise but splits a low-altitude gap", () => {
+  it("keeps one leg across a coverage gap that touches cruise but splits a low-altitude gap", () => {
     const high = [
       sample(0, 22.0, 89.0, false, 43_000),
       sample(12, 22.1, 88.5, false, 43_000),
@@ -96,8 +96,13 @@ describe("segmentLegs", () => {
       { now: new Date(T0 + 2_000 * MIN) },
     );
     expect(tooLong).toHaveLength(2);
+    const descent = segmentLegs(
+      [...high.slice(0, 2), { ...(high[2] as AirSample), altFt: 3_700 }, high[3] as AirSample],
+      { now: new Date(T0 + 2_000 * MIN) },
+    );
+    expect(descent).toHaveLength(1);
     const low = segmentLegs(
-      [high[0] as AirSample, { ...(high[1] as AirSample), altFt: 9_000 }, ...high.slice(2)],
+      high.map((p) => ({ ...p, altFt: 9_000 })),
       { now: new Date(T0 + 2_000 * MIN) },
     );
     expect(low).toHaveLength(2);

@@ -60,7 +60,7 @@ export function segmentLegs<S extends AirSample>(
     const prev = current?.samples.at(-1);
     if (current && prev) {
       const silence = s.ts.getTime() - prev.ts.getTime();
-      const limit = cruising(prev) && cruising(s) ? cruiseGap : gap;
+      const limit = cruising(prev) || cruising(s) ? cruiseGap : gap;
       if (silence >= limit) {
         legs.push(current);
         current = null;
