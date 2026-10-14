@@ -67,6 +67,7 @@ export async function syncCounterparties(
   return fencedTransaction(
     db,
     async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('counterparties_sync'))`);
       const existing = await tx
         .select({
           id: counterparties.id,
