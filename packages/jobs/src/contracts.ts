@@ -156,6 +156,8 @@ export const JOB_CONTRACTS = {
   ),
   "relationships.priors": job("intel", "compute", "unit", empty, 5 * MINUTE),
   "relationships.sample": job(null, "control", "unit", precisionSample, 2 * MINUTE, (p) => p.name),
+  "relationships.facts.fanout": job("relationships", "control", "fanout", empty, MINUTE),
+  "relationships.facts": job("relationships", "parse", "unit", companyUnit, 5 * MINUTE, byCompany),
   "ratings.fanout": job("relationships", "control", "fanout", empty, MINUTE),
   "ratings.sync": job("relationships", "io", "unit", companyUnit, 4 * MINUTE, byCompany),
   "presentations.fanout": job("relationships", "control", "fanout", empty, MINUTE),

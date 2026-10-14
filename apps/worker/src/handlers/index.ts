@@ -10,6 +10,7 @@ import { opsHandlers } from "./ops.js";
 import { precisionHandlers } from "./precision.js";
 import { priceHandlers } from "./prices.js";
 import { relationshipHandlers } from "./relationships.js";
+import { relationshipFactHandlers } from "./relationships-facts.js";
 import { relationshipLlmHandlers } from "./relationships-llm.js";
 import { researchHandlers } from "./research.js";
 
@@ -19,6 +20,7 @@ export const HANDLERS: HandlerMap = {
   ...relationshipHandlers,
   ...relationshipLlmHandlers,
   ...precisionHandlers,
+  ...relationshipFactHandlers,
   ...intelHandlers,
   ...researchHandlers,
   ...influenceHandlers,
