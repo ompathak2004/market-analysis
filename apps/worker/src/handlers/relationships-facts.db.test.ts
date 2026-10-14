@@ -184,4 +184,16 @@ describe.skipIf(!url)("relationships.facts handlers (DATABASE_URL_TEST)", () => 
       },
     ]);
   });
+
+  it("drops metrics the newest revision no longer states", async () => {
+    const withoutCashFlow = report("2,700.00").split("Consolidated Statement of Cash Flows")[0];
+    await docs.putInline(docUrl, withoutCashFlow ?? "", {
+      source: "annual_report",
+      companyId: ids.company,
+    });
+    expect(await sync()).toMatchObject({ documents: 1, parsed: 1, facts: 3 });
+    const rows = await facts();
+    expect(rows.map((r) => r.metric)).toEqual(["cogs", "purchases", "revenue"]);
+    expect(new Set(rows.map((r) => r.revision)).size).toBe(1);
+  });
 });

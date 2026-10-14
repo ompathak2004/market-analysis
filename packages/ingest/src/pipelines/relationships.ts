@@ -352,6 +352,11 @@ function publishedFromLabel(src: RelationshipSource): Date | null {
 }
 
 export function fiscalYearFromLabel(label: string): number | null {
+  const range = /\b(20\d{2})\s*[-–/]\s*(20\d{2}|\d{2})\b/.exec(label);
+  if (range) {
+    const start = Number(range[1]);
+    if (Number(range[2]) % 100 === (start + 1) % 100) return start + 1;
+  }
   const fy = /\b(?:FY\s?'?(\d{2,4})|(20\d{2}))\b/i.exec(label);
   if (!fy) return null;
   const n = Number(fy[1] ?? fy[2]);

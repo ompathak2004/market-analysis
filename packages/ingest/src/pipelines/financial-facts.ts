@@ -16,8 +16,6 @@ export interface FinancialFactsSyncResult {
   facts: number;
 }
 
-const FY_RANGE = /\b(20\d{2})\s*[-–/]\s*(20\d{2}|\d{2})\b/;
-
 const ANNUAL_REPORTS = sql`
   select rs.company_id, d.id as document_id, d.current_revision_id as revision_id,
     d.content_type, rs.label
@@ -58,7 +56,7 @@ export async function syncFinancialFacts(
   };
   for (const row of rows) {
     throwIfAborted(signal);
-    const fy = row.label ? fiscalYearOf(row.label) : null;
+    const fy = row.label ? fiscalYearFromLabel(row.label) : null;
     if (fy === null) {
       result.unparsed++;
       continue;
@@ -88,14 +86,13 @@ export async function syncFinancialFacts(
     await fencedTransaction(
       ctx.db,
       async (tx) => {
-        await tx
-          .delete(relationshipFinancialFacts)
-          .where(
-            and(
-              eq(relationshipFinancialFacts.companyId, companyId),
-              eq(relationshipFinancialFacts.sourceRevisionId, revisionId),
-            ),
-          );
+        await tx.delete(relationshipFinancialFacts).where(
+          and(
+            eq(relationshipFinancialFacts.companyId, companyId),
+            sql`${relationshipFinancialFacts.sourceRevisionId} in (
+              select r.id from document_revisions r where r.document_id = ${row.document_id})`,
+          ),
+        );
         await tx
           .insert(relationshipFinancialFacts)
           .values(
@@ -142,13 +139,4 @@ export async function syncFinancialFacts(
     );
   }
   return result;
-}
-
-function fiscalYearOf(label: string): number | null {
-  const range = FY_RANGE.exec(label);
-  if (range) {
-    const start = Number(range[1]);
-    if (Number(range[2]) % 100 === (start + 1) % 100) return start + 1;
-  }
-  return fiscalYearFromLabel(label);
 }
