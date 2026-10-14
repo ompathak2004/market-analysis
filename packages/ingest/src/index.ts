@@ -13,6 +13,7 @@ export * from "./data/mid-flags.js";
 export * from "./data/policy-sectors.js";
 export * from "./data/types.js";
 export * from "./documents.js";
+export * from "./extract/financial-facts.js";
 export * from "./extract/relationships.js";
 export * from "./extract/text.js";
 export * from "./firecrawl.js";
