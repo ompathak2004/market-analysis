@@ -553,6 +553,47 @@ export async function supplyChain(ctx: AppContext, symbol: string): Promise<Supp
               order by x.as_of desc, x.model_version desc, x.id desc
               limit 1
             ) ct on true
+          ), picked as (
+            select k.* from ranked k where k.rn <= ${EDGE_LIMIT}
+          ), obs as (
+            select o.id, o.supplier_counterparty_id, o.customer_counterparty_id, o.cost_bucket,
+                   o.status, o.confidence, ex.extractor_family
+            from relationship_observations o
+            join relationship_extractions ex on ex.id = o.extraction_id
+            where o.status in ${LIVE_OBSERVATION}
+              and (o.supplier_counterparty_id, o.customer_counterparty_id, o.cost_bucket) in (
+                select p.supplier_counterparty_id, p.customer_counterparty_id, p.cost_bucket
+                from picked p)
+          ), spans as (
+            select distinct on (oe.observation_id)
+                   oe.observation_id, s.quote, s.page, d.id as document_id, d.source, d.url,
+                   coalesce(dr.published_at, d.published_at) as published_at
+            from relationship_observation_evidence oe
+            join evidence_spans s on s.id = oe.evidence_span_id
+            join document_revisions dr on dr.id = s.document_revision_id
+            join documents d on d.id = dr.document_id
+            where oe.observation_id in (select id from obs)
+            order by oe.observation_id, s.id
+          ), evidence as (
+            select x.supplier_counterparty_id, x.customer_counterparty_id, x.cost_bucket,
+                   json_agg(json_build_object(
+                     'observationId', x.id, 'quote', x.quote, 'page', x.page,
+                     'documentId', x.document_id, 'source', x.source, 'url', x.url,
+                     'publishedAt', x.published_at, 'extractorFamily', x.extractor_family)
+                   order by x.ord) as evidence
+            from (
+              select o.*, sp.quote, sp.page, sp.document_id, sp.source, sp.url, sp.published_at,
+                     row_number() over (
+                       partition by o.supplier_counterparty_id, o.customer_counterparty_id,
+                                    o.cost_bucket
+                       order by (o.status = 'confirmed') desc, o.confidence desc,
+                                sp.published_at desc nulls last, o.id desc
+                     ) as ord
+              from obs o
+              join spans sp on sp.observation_id = o.id
+            ) x
+            where x.ord <= 3
+            group by x.supplier_counterparty_id, x.customer_counterparty_id, x.cost_bucket
           )
           select k.id, k.side, k.total, k.value_basis, k.cost_bucket, k.disclosed_by,
                  k.disclosure_kind, k.disclosed_pct, k.disclosed_value::text as disclosed_value,
@@ -564,7 +605,7 @@ export async function supplyChain(ctx: AppContext, symbol: string): Promise<Supp
                  json_build_object('id', c.id, 'kind', c.kind, 'name', c.canonical_name,
                                    'symbol', co.nse_symbol) as counterparty,
                  ev.evidence
-          from ranked k
+          from picked k
           join counterparties c on c.id = case when k.side = 'customer'
                                                then k.customer_counterparty_id
                                                else k.supplier_counterparty_id end
@@ -580,41 +621,10 @@ export async function supplyChain(ctx: AppContext, symbol: string): Promise<Supp
                      o.period_end desc nulls last, o.id desc
             limit 1
           ) b on true
-          left join lateral (
-            select json_agg(json_build_object(
-                     'observationId', x.id, 'quote', x.quote, 'page', x.page,
-                     'documentId', x.document_id, 'source', x.source, 'url', x.url,
-                     'publishedAt', x.published_at, 'extractorFamily', x.extractor_family)
-                   order by x.ord) as evidence
-            from (
-              select o.id, sp.quote, sp.page, sp.document_id, sp.source, sp.url,
-                     sp.published_at, ex.extractor_family,
-                     row_number() over (
-                       order by (o.status = 'confirmed') desc, o.confidence desc,
-                                sp.published_at desc nulls last, o.id desc
-                     ) as ord
-              from relationship_observations o
-              join relationship_extractions ex on ex.id = o.extraction_id
-              join lateral (
-                select s.quote, s.page, d.id as document_id, d.source, d.url,
-                       coalesce(dr.published_at, d.published_at) as published_at
-                from relationship_observation_evidence oe
-                join evidence_spans s on s.id = oe.evidence_span_id
-                join document_revisions dr on dr.id = s.document_revision_id
-                join documents d on d.id = dr.document_id
-                where oe.observation_id = o.id
-                order by s.id
-                limit 1
-              ) sp on true
-              where o.supplier_counterparty_id = k.supplier_counterparty_id
-                and o.customer_counterparty_id = k.customer_counterparty_id
-                and o.cost_bucket = k.cost_bucket
-                and o.status in ${LIVE_OBSERVATION}
-              order by ord
-              limit 3
-            ) x
-          ) ev on true
-          where k.rn <= ${EDGE_LIMIT}
+          left join evidence ev
+            on ev.supplier_counterparty_id = k.supplier_counterparty_id
+           and ev.customer_counterparty_id = k.customer_counterparty_id
+           and ev.cost_bucket = k.cost_bucket
           order by k.side, k.rn`),
         ctx.db.execute<{
           coverage: Omit<SupplyChainCoverage, "available" | "read" | "lastReadAt"> & {
