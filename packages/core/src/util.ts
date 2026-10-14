@@ -15,6 +15,16 @@ export function chunk<T>(items: readonly T[], size: number): T[][] {
   return out;
 }
 
+export function uniqueBy<T>(items: readonly T[], key: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const k = key(item);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 export async function mapLimit<T, R>(
   items: readonly T[],
   limit: number,
