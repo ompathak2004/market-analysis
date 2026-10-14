@@ -63,6 +63,25 @@ curl -s -X POST -H "x-admin-key: $ADMIN_API_KEY" -H "content-type: application/j
 
 `GET` returns `{items, nextCursor}`; `POST` takes `decision` `confirm`, `reject` or `block` and returns `{reviewId, observationStatus, relationshipId}`. Errors use `{error: {code, message}}`: 400 for a bad body or cursor, 401 for a missing or wrong key, 404 for an unknown observation or when review is disabled.
 
+## SPLC precision gate
+
+Legacy SPLC rows are deleted only after a labelled sample of the rebuilt graph shows at least 90 % precision. A sample is a frozen, seeded draw of `relationship_observations` in status `auto`, `confirmed` or `rejected` whose supplier, customer and cost bucket match an `active` edge.
+
+```bash
+pnpm --filter @ma/worker cli run relationships.sample '{"name":"gate-2026-10","size":100}' --wait
+pnpm --filter @ma/worker cli run relationships.sample '{"name":"gate-2026-10-ar","size":100,"family":"annual_report"}' --wait
+```
+
+`name` (`[a-z0-9_-]`, up to 64 characters) is required and unique; rerunning with an existing name returns the stored sample (`created: 0`) without drawing again. `size` defaults to 100 (max 500), `family` limits the draw to one extractor family, and `seed` (default: the name) fixes the order. The job fails without retry when no observation qualifies.
+
+Review the sample at `/admin/review?sample=gate-2026-10`. The SPLC pane lists only the sample's undecided items in draw order, with the same keys as the normal queue, and a gate line above them shows the counts, the precision, the Wilson 95 % lower bound and PASS or FAIL. An item counts as decided by its latest review; items blocked through another observation's pair block count as blocked. Rejected and blocked items count against precision.
+
+```bash
+curl -s -H "x-admin-key: $ADMIN_API_KEY" "$WEB_URL/api/v1/admin/relationships/precision?sample=gate-2026-10"
+```
+
+It returns `{sample, counts: {items, reviewed, confirmed, rejected, blocked, unreviewed}, precision, lowerBound, gate, passes}` and 404 for an unknown sample. `passes` is true only when every one of the `size` drawn items has a decision and `lowerBound` ≥ 0.9; with 100 items that needs 96 confirmations (95 gives 0.888). If observations are deleted after the draw (`counts.items` < `sample.size`), the sample can no longer pass; draw a new one under a new name.
+
 ## Pause, resume, enqueue
 
 The authoritative switch is the `job_control` row (`paused` = nobody claims work, `worker` = the ECS worker runs schedules and jobs; migration `0011` removed `legacy`). Changing it does not need a deploy. `GET /api/v1/ops/jobs` (`x-admin-key: $ADMIN_API_KEY`) returns the same picture from the web app: mode, lease, `job_runs` by type and status for the last 24 h, `job_daily_stats`, running campaigns and unresolved `ops_alerts`.
