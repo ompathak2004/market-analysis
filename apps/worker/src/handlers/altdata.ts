@@ -3,6 +3,7 @@ import {
   airportByIcao,
   CHOKEPOINTS,
   cleanupAltdataPositions,
+  collectAircraftTraces,
   collectVesselPositions,
   DEAL_HUBS,
   deriveAircraftFlights,
@@ -23,6 +24,7 @@ const PRICE_TTL_MS = 15 * MINUTE;
 type AltdataType =
   | "aircraft.registry"
   | "aircraft.sample"
+  | "aircraft.trace"
   | "ais.collect"
   | "altdata.derive"
   | "altdata.signals"
@@ -72,6 +74,11 @@ export const altdataHandlers: Pick<HandlerMap, AltdataType> = {
   }),
   "aircraft.sample": gated(async ({ ctx, deadline, signal }) =>
     numericMetrics(await sampleAircraftPositions(ctx, { deadline: deadline - 5_000, signal })),
+  ),
+  "aircraft.trace": gated(async ({ ctx, payload, deadline, signal }) =>
+    numericMetrics(
+      await collectAircraftTraces(ctx, { day: payload.day, deadline: deadline - 15_000, signal }),
+    ),
   ),
   "ais.collect": gated(async ({ ctx, deadline, signal }) => {
     const apiKey = ctx.config.AISSTREAM_API_KEY;

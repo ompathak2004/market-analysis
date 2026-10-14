@@ -1,6 +1,9 @@
 import type { HttpClient } from "../http.js";
 
 const BASE = "https://api.adsb.lol";
+const TRACE_BASE = "https://adsb.lol";
+const TRACE_STALE = 1;
+export const TRACE_MIN_SPACING_MS = 30_000;
 
 export interface PositionSample {
   hex: string;
@@ -62,6 +65,64 @@ export function normalizeAdsb(body: AdsbLolResponse, nowMs = Date.now()): Positi
   return out;
 }
 
+type TracePoint = [
+  number,
+  number,
+  number,
+  number | "ground" | null,
+  number | null,
+  number | null,
+  number,
+  number | null,
+  { flight?: string; squawk?: string } | null,
+  ...unknown[],
+];
+
+export interface AdsbLolTrace {
+  icao?: string;
+  r?: string;
+  t?: string;
+  timestamp?: number;
+  trace?: TracePoint[];
+}
+
+export function normalizeTrace(body: AdsbLolTrace, hex: string): PositionSample[] {
+  const base = body.timestamp;
+  if (typeof base !== "number" || !Array.isArray(body.trace)) return [];
+  const out: PositionSample[] = [];
+  let kept: PositionSample | null = null;
+  for (const [i, p] of body.trace.entries()) {
+    if (typeof p[1] !== "number" || typeof p[2] !== "number" || p[6] & TRACE_STALE) continue;
+    const onGround = p[3] === "ground";
+    const sample: PositionSample = {
+      hex,
+      ts: new Date(Math.round(base + p[0]) * 1000),
+      lat: p[1],
+      lon: p[2],
+      altFt: typeof p[3] === "number" ? Math.round(p[3]) : null,
+      gsKt: p[4] ?? null,
+      track: p[5] ?? null,
+      onGround,
+      squawk: p[8]?.squawk ?? kept?.squawk ?? null,
+      registration: body.r?.toUpperCase() ?? null,
+      icaoType: body.t?.toUpperCase() ?? null,
+      callsign: p[8]?.flight?.trim() || kept?.callsign || null,
+    };
+    const transition = kept !== null && kept.onGround !== onGround;
+    const spaced = kept === null || sample.ts.getTime() - kept.ts.getTime() >= TRACE_MIN_SPACING_MS;
+    if (!transition && !spaced && i < body.trace.length - 1) continue;
+    if (kept && sample.ts.getTime() === kept.ts.getTime()) out.pop();
+    out.push(sample);
+    kept = sample;
+  }
+  return out;
+}
+
+export function traceDay(now: Date, daysAgo: number): string {
+  const d = new Date(now.getTime() - daysAgo * 86_400_000);
+  return d.toISOString().slice(0, 10);
+}
+
 export class AdsbSource {
   constructor(private readonly http: HttpClient) {}
 
@@ -77,6 +138,20 @@ export class AdsbSource {
   point(lat: number, lon: number, radiusNm: number): Promise<PositionSample[]> {
     const nm = Math.min(250, Math.max(1, Math.round(radiusNm)));
     return this.fetch(`/v2/point/${lat.toFixed(4)}/${lon.toFixed(4)}/${nm}`);
+  }
+
+  async trace(hex: string, day: string | null): Promise<PositionSample[]> {
+    const h = hex.toLowerCase();
+    const file = `traces/${h.slice(-2)}/trace_full_${h}.json`;
+    const url = day
+      ? `${TRACE_BASE}/globe_history/${day.replaceAll("-", "/")}/${file}`
+      : `${TRACE_BASE}/data/${file}`;
+    const res = await this.http.get(url, {
+      headers: { accept: "application/json" },
+      timeoutMs: 20_000,
+    });
+    if (res.status !== 200) return [];
+    return normalizeTrace(JSON.parse(res.text()) as AdsbLolTrace, h);
   }
 
   private async fetch(path: string): Promise<PositionSample[]> {

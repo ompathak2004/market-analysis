@@ -34,6 +34,7 @@ export const HOST_LIMITS = {
   "api.moneycontrol.com": { capacity: 10, perMs: 10_000 },
   "images.moneycontrol.com": { capacity: 5, perMs: 10_000 },
   "api.adsb.lol": { capacity: 30, perMs: 60_000 },
+  "adsb.lol": { capacity: 20, perMs: 60_000 },
   "api.adsbdb.com": { capacity: 30, perMs: 60_000 },
   "opensky-network.org": { capacity: 20, perMs: 60_000 },
   "auth.opensky-network.org": { capacity: 5, perMs: 60_000 },

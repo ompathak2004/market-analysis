@@ -21,8 +21,16 @@ export interface Leg<S extends AirSample = AirSample> {
 export interface SegmentOptions {
   now?: Date;
   gapMs?: number;
+  cruiseGapMs?: number;
   minSamples?: number;
   minDurationMs?: number;
+}
+
+export const CRUISE_ALT_FT = 18_000;
+export const CRUISE_GAP_MS = 60 * MINUTE;
+
+function cruising(s: AirSample): boolean {
+  return !s.onGround && s.altFt !== null && s.altFt >= CRUISE_ALT_FT;
 }
 
 export function segmentLegs<S extends AirSample>(
@@ -30,6 +38,7 @@ export function segmentLegs<S extends AirSample>(
   opts: SegmentOptions = {},
 ): Leg<S>[] {
   const gap = opts.gapMs ?? 20 * MINUTE;
+  const cruiseGap = opts.cruiseGapMs ?? CRUISE_GAP_MS;
   const minSamples = opts.minSamples ?? 2;
   const minDuration = opts.minDurationMs ?? 10 * MINUTE;
   const now = (opts.now ?? new Date()).getTime();
@@ -49,9 +58,13 @@ export function segmentLegs<S extends AirSample>(
       continue;
     }
     const prev = current?.samples.at(-1);
-    if (current && prev && s.ts.getTime() - prev.ts.getTime() >= gap) {
-      legs.push(current);
-      current = null;
+    if (current && prev) {
+      const silence = s.ts.getTime() - prev.ts.getTime();
+      const limit = cruising(prev) || cruising(s) ? cruiseGap : gap;
+      if (silence >= limit) {
+        legs.push(current);
+        current = null;
+      }
     }
     if (current) {
       current.samples.push(s);
@@ -159,6 +172,22 @@ export function replayFrom(flights: readonly StoredFlight[], now: Date, maxMs: n
       ? Math.max(...arrived.map((d) => d.getTime()))
       : floor;
   return new Date(Math.max(floor, start));
+}
+
+export function replayStart(
+  flights: readonly StoredFlight[],
+  requested: Date | null,
+  now: Date,
+  maxMs: number,
+): Date {
+  const floor = now.getTime() - maxMs;
+  let start = replayFrom(flights, now, maxMs).getTime();
+  if (requested && requested.getTime() < start) start = Math.max(floor, requested.getTime());
+  for (const f of flights) {
+    if (!f.departedAt || f.departedAt.getTime() >= start) continue;
+    if ((f.arrivedAt ?? now).getTime() > start) start = Math.max(floor, f.departedAt.getTime());
+  }
+  return new Date(start);
 }
 
 export function supersededFlights(

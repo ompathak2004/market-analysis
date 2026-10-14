@@ -5,6 +5,7 @@ import {
   endpointAirport,
   legDedupeKey,
   replayFrom,
+  replayStart,
   type StoredFlight,
   segmentLegs,
   summarizeLeg,
@@ -75,6 +76,39 @@ describe("segmentLegs", () => {
     expect(summarizeLeg(legs[1] as (typeof legs)[number]).completeness).toBe("enroute");
   });
 
+  it("keeps one leg across a coverage gap that touches cruise but splits a low-altitude gap", () => {
+    const high = [
+      sample(0, 22.0, 89.0, false, 43_000),
+      sample(12, 22.1, 88.5, false, 43_000),
+      sample(50, 21.0, 79.7, false, 43_000),
+      sample(62, 20.8, 79.0, false, 43_000),
+    ];
+    const joined = segmentLegs(high, { now: new Date(T0 + 2_000 * MIN) });
+    expect(joined).toHaveLength(1);
+    expect(joined[0]?.samples).toHaveLength(4);
+    const tooLong = segmentLegs(
+      [
+        ...high.slice(0, 2),
+        ...high.slice(2).map((p) => ({
+          ...p,
+          ts: new Date(p.ts.getTime() + 30 * MIN),
+        })),
+      ],
+      { now: new Date(T0 + 2_000 * MIN) },
+    );
+    expect(tooLong).toHaveLength(2);
+    const descent = segmentLegs(
+      [...high.slice(0, 2), { ...(high[2] as AirSample), altFt: 3_700 }, high[3] as AirSample],
+      { now: new Date(T0 + 2_000 * MIN) },
+    );
+    expect(descent).toHaveLength(1);
+    const low = segmentLegs(
+      high.map((p) => ({ ...p, altFt: 9_000 })),
+      { now: new Date(T0 + 2_000 * MIN) },
+    );
+    expect(low).toHaveLength(2);
+  });
+
   it("marks the trailing leg open while samples are fresh and drops single-sample blips", () => {
     const legs = segmentLegs([sample(0, 20, 75, false), sample(3, 20.2, 75.1, false)], {
       now: new Date(T0 + 5 * MIN),
@@ -82,6 +116,30 @@ describe("segmentLegs", () => {
     expect(legs).toHaveLength(1);
     expect(legs[0]?.open).toBe(true);
     expect(segmentLegs([sample(0, 20, 75, false)], { now: new Date(T0 + 500 * MIN) })).toEqual([]);
+  });
+
+  it("rewinds a replay to the start of the stored flight it cuts through", () => {
+    const now = new Date(T0 + 600 * MIN);
+    const stored = [
+      { id: 1, dedupeKey: "a", departedAt: new Date(T0), arrivedAt: new Date(T0 + 120 * MIN) },
+      {
+        id: 2,
+        dedupeKey: "b",
+        departedAt: new Date(T0 + 300 * MIN),
+        arrivedAt: new Date(T0 + 420 * MIN),
+      },
+    ];
+    const maxMs = 48 * 60 * MIN;
+    expect(replayStart(stored, null, now, maxMs)).toEqual(new Date(T0 + 420 * MIN));
+    expect(replayStart(stored, new Date(T0 + 360 * MIN), now, maxMs)).toEqual(
+      new Date(T0 + 300 * MIN),
+    );
+    expect(replayStart(stored, new Date(T0 + 200 * MIN), now, maxMs)).toEqual(
+      new Date(T0 + 200 * MIN),
+    );
+    expect(replayStart(stored, new Date(T0 - 5_000 * MIN), now, maxMs)).toEqual(
+      new Date(now.getTime() - maxMs),
+    );
   });
 
   it("buckets dedupe keys by half hour", () => {
