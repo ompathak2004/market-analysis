@@ -1045,7 +1045,7 @@ export const jobStatus = pgEnum("job_status", [
   "deferred",
   "abandoned",
 ]);
-export const jobMode = pgEnum("job_mode", ["legacy", "paused", "worker"]);
+export const jobMode = pgEnum("job_mode", ["paused", "worker"]);
 
 export const jobRuns = pgTable(
   "job_runs",
@@ -1122,7 +1122,7 @@ export const jobControl = pgTable(
   "job_control",
   {
     id: smallint("id").primaryKey().default(1),
-    mode: jobMode("mode").notNull().default("legacy"),
+    mode: jobMode("mode").notNull().default("paused"),
     updatedAt: timestamps.updatedAt,
   },
   (t) => [check("job_control_singleton", sql`${t.id} = 1`)],

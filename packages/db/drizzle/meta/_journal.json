@@ -78,6 +78,13 @@
       "when": 1791969810331,
       "tag": "0010_influence",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791984314400,
+      "tag": "0011_job_mode_worker_only",
+      "breakpoints": true
     }
   ]
 }

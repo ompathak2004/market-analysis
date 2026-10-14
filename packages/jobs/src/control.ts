@@ -1,6 +1,6 @@
 import { type Db, eq, jobControl } from "@ma/db";
 
-export const JOB_MODES = ["legacy", "paused", "worker"] as const;
+export const JOB_MODES = ["paused", "worker"] as const;
 export type JobMode = (typeof JOB_MODES)[number];
 
 export function isJobMode(value: string): value is JobMode {
@@ -13,7 +13,7 @@ export async function getJobMode(db: Db): Promise<JobMode> {
     .from(jobControl)
     .where(eq(jobControl.id, 1))
     .limit(1);
-  return row?.mode ?? "legacy";
+  return row?.mode ?? "paused";
 }
 
 export async function setJobMode(db: Db, mode: JobMode): Promise<void> {

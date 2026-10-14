@@ -44,8 +44,8 @@ const WAIT_POLL_MS = 3_000;
 const WAIT_MAX_MS = 30 * 60_000;
 
 const USAGE = `usage:
-  cli run <job-type|legacy-name> [payload-json] [--wait]
-  cli mode [legacy|paused|worker]
+  cli run <job-type|family-alias> [payload-json] [--wait]
+  cli mode [paused|worker]
   cli status
   cli schedules
   cli types`;
