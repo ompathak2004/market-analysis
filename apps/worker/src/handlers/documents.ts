@@ -30,7 +30,7 @@ export const SPLC_DOCUMENT_SOURCES = [
   "presentation",
 ] as const;
 
-export async function objectMatches(
+async function objectMatches(
   objects: ObjectStore,
   key: string,
   textSha256: string,
