@@ -1,4 +1,5 @@
-import { chunk, DAY, throwIfAborted } from "@ma/core";
+import { gunzipSync } from "node:zlib";
+import { chunk, DAY, type ObjectStore, sha256, throwIfAborted } from "@ma/core";
 import {
   and,
   documentRevisions,
@@ -28,6 +29,20 @@ export const SPLC_DOCUMENT_SOURCES = [
   "rating_rationale",
   "presentation",
 ] as const;
+
+export async function objectMatches(
+  objects: ObjectStore,
+  key: string,
+  textSha256: string,
+): Promise<boolean> {
+  const body = await objects.get(key);
+  if (!body) return false;
+  try {
+    return sha256(gunzipSync(body).toString("utf8")) === textSha256;
+  } catch {
+    return false;
+  }
+}
 
 type DocumentHandlers = Pick<
   HandlerMap,
@@ -102,7 +117,7 @@ export const documentHandlers: DocumentHandlers = {
       .select({
         id: documents.id,
         key: documentRevisions.textS3Key,
-        bytes: storageObjects.bytes,
+        sha256: storageObjects.sha256,
       })
       .from(documents)
       .innerJoin(documentRevisions, eq(documentRevisions.id, documents.currentRevisionId))
@@ -127,9 +142,7 @@ export const documentHandlers: DocumentHandlers = {
     for (const row of rows) {
       throwIfAborted(signal);
       if (expired(RELEASE_RESERVE_MS)) break;
-      if (!row.key) continue;
-      const head = await objects.head(row.key);
-      if (!head || head.bytes !== row.bytes) {
+      if (!row.key || !(await objectMatches(objects, row.key, row.sha256))) {
         metrics.unverified = (metrics.unverified ?? 0) + 1;
         continue;
       }
