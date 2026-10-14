@@ -17,7 +17,7 @@ A Bloomberg-like terminal for Indian equities with a genuine intelligence layer:
 | Web platform: `/api/v1` route handlers, read models, admin ops summary; the legacy `/api/cron/[job]` runner is retired (410) | done | `apps/web/src/server` |
 | Moneycontrol research: shareholding, ratings, consensus, estimates, targets, surprises, broker report PDFs | done | `packages/ingest/src/sources/moneycontrol.ts`, `pipelines/research.ts` |
 | Cerebras intelligence layer: rule insights, company brief, broker digest, market brief, triage, broker theses | done | `packages/llm`, `packages/intel/src/insights` |
-| Alt-data: aircraft registry + adsb.lol/OpenSky sampling, AISStream collection, travel and logistics signals | done | `packages/ingest/src/altdata`, `packages/intel/src/altdata` |
+| Alt-data: aircraft registry + adsb.lol sampling and full traces, OpenSky merge, AISStream collection, travel and logistics signals | done | `packages/ingest/src/altdata`, `packages/intel/src/altdata` |
 | Gloomberg-style terminal UI (home, DES/GP/FA/ANR/SPLC/NEWS/JET/SHIP/INTL, SIG, MOV, custom scrollbars) | done | `apps/web/src/{app,components,styles}` |
 | Vercel deployment (read-only web app) against Aiven Postgres + managed Redis | in progress (move `DATABASE_URL` to `ma_web`, drop `CRON_SECRET`) | project `market-analysis` |
 | Widen data: NIFTY500 prices/fundamentals/relationships | partial | run jobs repeatedly |
@@ -48,7 +48,8 @@ pnpm worker:cli run broker-theses          # summarise fetched broker reports in
 pnpm worker:cli run market-brief           # pre-open and post-close market read
 pnpm worker:cli run triage                 # classify new announcements
 pnpm worker:cli run aircraft-registry      # seed corporate aircraft and link to companies
-pnpm worker:cli run aircraft-sample        # sample positions from adsb.lol / OpenSky
+pnpm worker:cli run aircraft-sample        # sample live positions from adsb.lol
+pnpm worker:cli run aircraft-trace '{"day":"yesterday"}'  # full adsb.lol traces (today by default)
 pnpm worker:cli run ais-collect            # AISStream burst over watched zones
 pnpm worker:cli run altdata-derive         # legs, calls, transits from positions
 pnpm worker:cli run altdata-signals        # travel + logistics signals
@@ -84,7 +85,7 @@ Every name above is a family alias for a worker job type (`pnpm worker:cli types
    - eGazette: incomplete TLS chain (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`) and WebForms `RecentUploads.aspx` postbacks that redirect to `error.aspx`; add the intermediate certificate to the trust store and a listing parser, then let `influence.policy.gazette` discover PDFs itself.
    - ECI's bond disclosure page returns 406 from its WAF; bond PDFs are passed by hand.
    - Map sectors from annual-report segment notes as a second source next to the NSE industry.
-2. **Alt-data coverage**: Indian port geofences see almost no AISStream traffic; measure `altdata_coverage` over 24–72 h and either widen the watched zones or gate the SHIP pane on a coverage threshold. Jets depend on `aircraft-registry` links, which are provisional until confirmed from filings.
+2. **Alt-data coverage**: Indian port geofences see almost no AISStream traffic; measure `altdata_coverage` over 24–72 h and either widen the watched zones or gate the SHIP pane on a coverage threshold. Jets depend on `aircraft-registry` links, which are provisional until confirmed from filings. Leg endpoints stay `unknown` where no adsb.lol feeder covers the airport (most departures abroad and small Indian fields); OpenSky, the only other source, has been unreachable from ECS and is disabled for 6 h after each failure.
 3. **Relationship recall**: add a sentence classifier behind `extractNamedMentions` to catch mentions without lexical cues; keep the regex path as a fast pre-filter.
 4. **BSE announcements** as a second filings source; **NSE corporate actions**.
 5. **Watchlists and alerts**: user-defined lists in the UI, notify on new analyst calls, signal threshold crossings and verdict changes.

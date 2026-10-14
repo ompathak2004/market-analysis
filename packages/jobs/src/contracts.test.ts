@@ -16,6 +16,7 @@ describe("job contracts", () => {
   it("keys company units by company id and singletons by type", () => {
     expect(unitKey("prices.sync", { companyId: 7 })).toBe("prices.sync:7");
     expect(unitKey("aircraft.sample", {})).toBe("aircraft.sample");
+    expect(unitKey("aircraft.trace", { day: "yesterday" })).toBe("aircraft.trace:yesterday");
   });
 
   it("keys price units by symbol, window, generation and parser version", () => {

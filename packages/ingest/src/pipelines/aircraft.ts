@@ -38,7 +38,7 @@ import {
 import type { SymbolLink } from "../data/types.js";
 import { matchCompanies } from "../extract/relationships.js";
 import { airportByIcao, nearestAirport } from "../geo.js";
-import { AdsbSource, type PositionSample } from "../sources/adsb.js";
+import { AdsbSource, type PositionSample, traceDay } from "../sources/adsb.js";
 import { type AircraftDbRow, downloadAircraftDb, lookupAdsbdb } from "../sources/aircraft-db.js";
 import type { OpenSkySource } from "../sources/opensky.js";
 import { loadAliasMatcher } from "./relationships.js";
@@ -49,6 +49,8 @@ const TRIED_KEY = "altdata:adsbdb:tried";
 const MISMATCH_KEY = "altdata:adsbdb:mismatch";
 const DERIVE_CURSOR = "altdata:air:derive_from";
 const DERIVE_RESUME = "altdata:air:derive_resume";
+const REPLAY_KEY = "altdata:air:replay";
+const TRACE_CONCURRENCY = 2;
 const REPLAY_MAX_MS = 48 * HOUR;
 const HEX_BATCH = 100;
 
@@ -378,6 +380,107 @@ async function applyOverrides(
   return applied;
 }
 
+export interface TraceOptions extends Deadline {
+  day?: "today" | "yesterday";
+  now?: Date;
+}
+
+export async function collectAircraftTraces(
+  ctx: IngestContext,
+  opts: TraceOptions = {},
+): Promise<Record<string, number>> {
+  const now = opts.now ?? new Date();
+  const day = opts.day === "yesterday" ? traceDay(now, 1) : null;
+  const fleet = await loadActiveAircraft(ctx);
+  const adsb = new AdsbSource(ctx.http);
+  const stats = { aircraft: fleet.length, requests: 0, failures: 0, traced: 0, positions: 0 };
+  await mapLimit(fleet, TRACE_CONCURRENCY, async (a) => {
+    if (expired(opts, 15_000)) return;
+    stats.requests++;
+    let samples: PositionSample[];
+    try {
+      samples = await adsb.trace(a.hex, day);
+    } catch (err) {
+      stats.failures++;
+      ctx.logger.warn({ err, hex: a.hex, day }, "adsb.lol trace failed");
+      return;
+    }
+    if (!samples.length) return;
+    throwIfAborted(opts.signal);
+    const inserted = await storeTrace(ctx, a.hex, samples, opts.signal);
+    stats.traced++;
+    stats.positions += inserted;
+  });
+  await fencedTransaction(
+    ctx.db,
+    (tx) =>
+      recordCoverage(
+        tx,
+        "air",
+        day ? "air:trace:history" : "air:trace",
+        stats.positions,
+        stats.traced,
+        now,
+      ),
+    opts.signal,
+  );
+  return stats;
+}
+
+async function storeTrace(
+  ctx: IngestContext,
+  hex: string,
+  samples: PositionSample[],
+  signal: AbortSignal | undefined,
+): Promise<number> {
+  const first = samples[0] as PositionSample;
+  const last = samples.at(-1) as PositionSample;
+  const inserted = await fencedTransaction(
+    ctx.db,
+    async (tx) => {
+      let count = 0;
+      for (const batch of chunk(samples, 500)) {
+        const res = await tx
+          .insert(aircraftPositions)
+          .values(
+            batch.map((s) => ({
+              hex,
+              ts: s.ts,
+              lat: s.lat,
+              lon: s.lon,
+              altFt: s.onGround ? null : s.altFt,
+              gsKt: s.gsKt,
+              track: s.track,
+              onGround: s.onGround,
+              squawk: s.squawk,
+              source: "adsb_lol_trace",
+            })),
+          )
+          .onConflictDoNothing()
+          .returning({ hex: aircraftPositions.hex });
+        count += res.length;
+      }
+      await tx.execute(sql`
+        update corporate_aircraft a set
+          last_seen_at = greatest(a.last_seen_at, ${last.ts.toISOString()}::timestamptz),
+          first_seen_at = least(a.first_seen_at, ${first.ts.toISOString()}::timestamptz),
+          updated_at = now()
+        where a.icao_hex = ${hex}`);
+      return count;
+    },
+    signal,
+  );
+  if (inserted) await markReplay(ctx, hex, first.ts);
+  return inserted;
+}
+
+async function markReplay(ctx: IngestContext, hex: string, from: Date): Promise<void> {
+  const current = await ctx.redis.hget(REPLAY_KEY, hex);
+  if (current === null || Number(current) > from.getTime()) {
+    await ctx.redis.hset(REPLAY_KEY, hex, String(from.getTime()));
+  }
+}
+
 type ActiveAircraft = {
   id: number;
   hex: string;
@@ -608,6 +711,8 @@ export async function deriveAircraftFlights(
     new Date(now.getTime() - REPLAY_MAX_MS),
   );
   const seenFrom = new Date(pass.cursor.getTime() - 3 * HOUR);
+  const replay = await ctx.redis.hgetall(REPLAY_KEY);
+  const replayHexes = Object.keys(replay);
   const fleet = await ctx.db
     .select({ id: corporateAircraft.id, hex: corporateAircraft.icaoHex })
     .from(corporateAircraft)
@@ -618,6 +723,7 @@ export async function deriveAircraftFlights(
           gte(corporateAircraft.lastSeenAt, seenFrom),
           sql`exists (select 1 from ${aircraftFlights} f where f.aircraft_id = ${corporateAircraft.id}
             and f.arrived_at is null and f.source in ('sampled', 'merged'))`,
+          ...(replayHexes.length ? [inArray(corporateAircraft.icaoHex, replayHexes)] : []),
         ),
       ),
     )
@@ -651,7 +757,9 @@ export async function deriveAircraftFlights(
           sql`coalesce(${aircraftFlights.arrivedAt}, ${aircraftFlights.departedAt}) >= ${new Date(now.getTime() - REPLAY_MAX_MS).toISOString()}`,
         ),
       );
-    const from = replayFrom(stored, now, REPLAY_MAX_MS);
+    const floor = new Date(now.getTime() - REPLAY_MAX_MS);
+    const requested = replay[a.hex] ? new Date(Number(replay[a.hex])) : null;
+    const from = earliest(replayFrom(stored, now, REPLAY_MAX_MS), requested, floor);
     const rows = await ctx.db
       .select()
       .from(aircraftPositions)
@@ -718,6 +826,7 @@ export async function deriveAircraftFlights(
       },
       opts.signal,
     );
+    if (requested) await ctx.redis.hdel(REPLAY_KEY, a.hex);
     lastId = a.id;
     stats.processed++;
   }
@@ -727,6 +836,11 @@ export async function deriveAircraftFlights(
   }
   await fencedTransaction(ctx.db, updateHomeAirports, opts.signal);
   return stats;
+}
+
+function earliest(derived: Date, requested: Date | null, floor: Date): Date {
+  if (!requested || requested >= derived) return derived;
+  return requested > floor ? requested : floor;
 }
 
 async function mergeOpenSky(

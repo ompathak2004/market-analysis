@@ -40,6 +40,13 @@ export const SCHEDULES: readonly ScheduleEntry[] = [
     payload: { slot: "close" },
   },
   { type: "aircraft.sample", cron: "*/5 * * * *" },
+  { type: "aircraft.trace", cron: "12 * * * *", id: "aircraft.trace.today" },
+  {
+    type: "aircraft.trace",
+    cron: "40 5 * * *",
+    id: "aircraft.trace.yesterday",
+    payload: { day: "yesterday" },
+  },
   { type: "ais.collect", cron: "*/10 * * * *" },
   { type: "altdata.derive", cron: "*/30 * * * *" },
   { type: "altdata.signals", cron: "15 * * * *" },
