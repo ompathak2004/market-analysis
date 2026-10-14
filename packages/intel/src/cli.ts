@@ -1,5 +1,6 @@
 import { createLogger, isoDate, loadServiceConfig } from "@ma/core";
 import { closeDb, companies, createDb } from "@ma/db";
+import { refreshConcentrationSignals } from "./concentration.js";
 import { refreshEstimates } from "./estimates.js";
 import { eventImpact } from "./exposure.js";
 import { refreshMomentumSignals } from "./momentum.js";
@@ -14,12 +15,21 @@ const asOf = isoDate(new Date());
 try {
   switch (cmd) {
     case "estimates":
-      logger.info({ written: await refreshEstimates(db, asOf) }, "estimates refreshed");
+      logger.info(
+        { written: await refreshEstimates(db, asOf, config.INTEL_UNIVERSE) },
+        "estimates refreshed",
+      );
       break;
     case "momentum":
       logger.info(
         { written: await refreshMomentumSignals(db, asOf) },
         "momentum signals refreshed",
+      );
+      break;
+    case "concentration":
+      logger.info(
+        { written: await refreshConcentrationSignals(db, asOf) },
+        "concentration signals refreshed",
       );
       break;
     case "risk": {
@@ -35,7 +45,7 @@ try {
       break;
     }
     default:
-      console.log("usage: cli <estimates|momentum|risk|event> [args]");
+      console.log("usage: cli <estimates|momentum|concentration|risk|event> [args]");
   }
 } finally {
   await closeDb(db);

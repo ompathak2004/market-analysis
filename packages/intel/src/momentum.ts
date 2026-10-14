@@ -7,11 +7,13 @@ import {
   fencedBatches,
   gte,
   lte,
+  ne,
   relationshipEstimates,
   relationships,
   signals,
   sql,
 } from "@ma/db";
+import { ESTIMATE_MODEL_VERSION } from "./estimates.js";
 import {
   type CoverageReason,
   coverageCounts,
@@ -20,7 +22,6 @@ import {
   seriesReturn,
   shiftDays,
 } from "./prices.js";
-import { hhi } from "./stats.js";
 
 export const MOMENTUM_MODEL_VERSION = 2;
 
@@ -32,6 +33,7 @@ export interface WeightedLink {
   counterpartyId: number;
   counterpartyName: string;
   weight: number;
+  valueCr: number | null;
   method: string;
 }
 
@@ -54,14 +56,13 @@ export async function loadActiveLinks(
       relationshipEstimates,
       and(
         eq(relationshipEstimates.relationshipId, relationships.id),
-        eq(
-          relationshipEstimates.modelVersion,
-          sql`(select max(model_version) from relationship_estimates re where re.relationship_id = ${relationships.id} and re.as_of <= ${asOf})`,
-        ),
+        eq(relationshipEstimates.modelVersion, ESTIMATE_MODEL_VERSION),
+        ne(relationshipEstimates.valueBasis, "contract_total"),
       ),
     )
     .where(
       and(
+        eq(relationships.status, "active"),
         lte(relationships.validFrom, asOf),
         gte(relationships.validTo, asOf),
         lte(relationshipEstimates.asOf, asOf),
@@ -77,12 +78,14 @@ export async function loadActiveLinks(
     const key = `${r.supplierId}:${r.customerId}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const weight = r.valueCr != null ? Number(r.valueCr) : (r.supplierRevenuePct ?? 1);
+    const valueCr = r.valueCr != null ? Number(r.valueCr) : null;
+    const weight = valueCr ?? r.supplierRevenuePct ?? 1;
     push(bySupplier, r.supplierId, {
       companyId: r.supplierId,
       counterpartyId: r.customerId,
       counterpartyName: r.customerName,
       weight,
+      valueCr,
       method: r.method,
     });
     push(byCustomer, r.customerId, {
@@ -90,6 +93,7 @@ export async function loadActiveLinks(
       counterpartyId: r.supplierId,
       counterpartyName: r.supplierName,
       weight,
+      valueCr,
       method: r.method,
     });
   }
@@ -179,18 +183,6 @@ export async function refreshMomentumSignals(db: Db, asOf: string): Promise<numb
               missing: coverageCounts(missing.values()),
             },
           });
-      }
-      if (prefix === "customer_momentum") {
-        const total = links.reduce((s, l) => s + l.weight, 0);
-        if (total > 0) {
-          write(companyId, "customer_hhi", hhi(links.map((l) => l.weight / total)), {
-            customers: links.map((l) => ({
-              id: l.counterpartyId,
-              name: l.counterpartyName,
-              share: l.weight / total,
-            })),
-          });
-        }
       }
     }
   }
