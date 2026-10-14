@@ -1,0 +1,54 @@
+{
+  "_metadata": {
+    "currentPageNumber": 1,
+    "perPageSize": 300,
+    "totalElements": 2,
+    "totalPages": 1
+  },
+  "records": [
+    {
+      "mpsno": 1929,
+      "name": "Abdul Wahab, Shri ",
+      "gender": "Male",
+      "party": "Indian Union Muslim League",
+      "state": "Keralam                                                     ",
+      "mpFlag": 1,
+      "partyCode": "IUML",
+      "age": 76,
+      "dob": "01/07/1950",
+      "term": "2021-2027",
+      "termCount": 3,
+      "status": "Sitting",
+      "notificationDate": "24/04/2021",
+      "expirationDate": "23/04/2027",
+      "lastName": "Abdul Wahab                                                 ",
+      "currentMinister": false,
+      "firstName": "                                                            ",
+      "createdAt": null,
+      "updatedAt": "2026-04-13 16:21:46.817",
+      "initial": "Shri                "
+    },
+    {
+      "mpsno": 2248,
+      "name": "Athawale, Shri Ramdas Bandu",
+      "gender": "Male",
+      "party": "Republican Party of India (ATHAWALE)",
+      "state": "Maharashtra                                                 ",
+      "mpFlag": 1,
+      "partyCode": "RPI (ATWL)",
+      "age": 66,
+      "dob": "25/12/1959",
+      "term": "2026-2032",
+      "termCount": 3,
+      "status": "Sitting",
+      "notificationDate": "03/04/2026",
+      "expirationDate": "02/04/2032",
+      "lastName": "Athawale                                                    ",
+      "currentMinister": true,
+      "firstName": "Ramdas Bandu                                                ",
+      "createdAt": null,
+      "updatedAt": "2026-08-12 17:22:07.183",
+      "initial": "Shri                "
+    }
+  ]
+}

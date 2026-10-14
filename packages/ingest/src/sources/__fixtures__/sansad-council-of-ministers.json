@@ -1,0 +1,23 @@
+[
+  {
+    "mpsno": 4589,
+    "fullName": "Shri Narendra Modi",
+    "house": "LS",
+    "lastLoksabha": 18,
+    "position": "Prime Minister"
+  },
+  {
+    "mpsno": 4268,
+    "fullName": "Shri Rajnath Singh",
+    "house": "LS",
+    "lastLoksabha": 18,
+    "position": "Cabinet Minister"
+  },
+  {
+    "mpsno": 2248,
+    "fullName": "Shri Ramdas Bandu Athawale",
+    "house": "RS",
+    "lastLoksabha": null,
+    "position": "Minister of State"
+  }
+]
