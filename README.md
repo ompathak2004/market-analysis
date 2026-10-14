@@ -13,11 +13,11 @@ Bloomberg-like intelligence terminal for Indian equities: supply-chain relations
 cp .env.example .env      # fill DATABASE_URL, REDIS_URL, API_KEY, FIRECRAWL_API_KEY, CEREBRAS_API_KEY
 pnpm install
 pnpm db:migrate
-pnpm dev:web              # terminal UI, /api/v1 and /api/cron on :3000
-pnpm job universe         # run one job once; see docs/plan.md for the full runbook
+pnpm dev:web              # terminal UI and /api/v1 on :3000
+pnpm dev:worker           # queue consumer; `pnpm worker:cli run universe --wait` enqueues one job
 ```
 
-Deploy `apps/web` to Vercel; `apps/web/vercel.json` schedules every job through `/api/cron/<job>`.
+Deploy `apps/web` to Vercel and `apps/worker` to ECS (`docs/ops.md`); the worker owns every schedule.
 
 ## Terminal commands
 

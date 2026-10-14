@@ -65,18 +65,18 @@ curl -s -X POST -H "x-admin-key: $ADMIN_API_KEY" -H "content-type: application/j
 
 ## Pause, resume, enqueue
 
-The authoritative switch is the `job_control` row (`legacy` = old Vercel crons, `paused` = nobody claims work, `worker` = the ECS worker runs schedules and jobs). Changing it does not need a deploy.
+The authoritative switch is the `job_control` row (`paused` = nobody claims work, `worker` = the ECS worker runs schedules and jobs; migration `0011` removed `legacy`). Changing it does not need a deploy. `GET /api/v1/ops/jobs` (`x-admin-key: $ADMIN_API_KEY`) returns the same picture from the web app: mode, lease, `job_runs` by type and status for the last 24 h, `job_daily_stats`, running campaigns and unresolved `ops_alerts`.
 
 From a laptop with the production `.env` loaded (`set -a && . ./.env && set +a`):
 
 ```bash
-pnpm --filter @ma/worker cli control paused     # stop claiming new work; in-flight units finish
-pnpm --filter @ma/worker cli control worker     # resume
+pnpm --filter @ma/worker cli mode paused     # stop claiming new work; in-flight units finish
+pnpm --filter @ma/worker cli mode worker     # resume
 pnpm --filter @ma/worker cli status             # mode, lease holder, queue depth, recent failures
 pnpm --filter @ma/worker cli enqueue prices.sync '{"companyId":123}'
 ```
 
-The same commands inside the running task (see `infra/aws/README.md`, "Exec into the running task") are `node dist/cli.js control paused` and so on.
+The same commands inside the running task (see `infra/aws/README.md`, "Exec into the running task") are `node dist/cli.js mode paused` and so on.
 
 To stop the container entirely: `aws ecs update-service --cluster market-analysis --service market-analysis-worker --desired-count 0` (alarms `worker-not-running` and `worker-no-heartbeat` will fire; that is expected). Set it back to `1` to resume.
 
@@ -92,7 +92,7 @@ pnpm --filter @ma/worker cli run prices.backfill --wait     # alias: prices-back
 
 The fanout writes one `prices.window` unit per series per annual window: (companies + 7 indices) x 5, so about 2,675 units for the 528-company campaign universe (2,540 against the 501 companies in the local test database). Yahoo history calls share the `yahoo:history` bucket (5 per 10 s), so expect about 1.5 to 3 hours end to end. Queue priority is calendar index (`^NSEI`, which populates `trading_sessions`) 3, other indices 2, rebuild 1, daily 0, equity backfill -1. The priority is carried in the job envelope and re-sent on every app-managed retry and deferral, so a retried calendar window stays ahead of equity windows. Priority only orders the queue, so an equity window also checks the calendar before it fetches: the calendar must reach the window end and have no stretch of more than 7 days without a session across the window, counting to the nearest session on each side. If it does not, the unit is deferred 3 minutes (`calendar_pending`) without spending an attempt, up to 60 deferrals before it fails. Units are keyed by symbol, window, generation and parser version. Rerunning the backfill refetches every window, but unchanged rows are not rewritten (a replay reports `unchanged`). Every company gets a `price_series_state` row. Companies without a Yahoo symbol (`no_yahoo_symbol`), missing from the NSE equity list while not delisted (`not_in_nse_equity_list`) or with a different ISIN there (`isin_mismatch`) get `exception_reason` set and `quality_status = 'exception'`, and are not enqueued (daily, rebuild, repair and `prices.sync` skip them too). `listing_source_unavailable` (NSE list down) is recorded but still fetched. Each backfill run freezes a manifest in one transaction: a `price_manifests` row (`kind = 'backfill'`, desired window, company and unit counts) and one `price_manifest_companies` row per company with its series, symbol, unit count and exception. The campaign metrics carry `manifestId`.
 
-A unit succeeds only when every expected session in its window is stored or explained. Otherwise the rows that did arrive are committed, the result is `incomplete` (the detail is on `price_series_state.detail`) and the unit fails with `price_incomplete`, so the ledger retries it with backoff and finally marks it `dead` (alarm `worker-dead-jobs`). Sessions before Yahoo's first trade date are recorded as `prelisting` gaps and do not fail the unit. The result carries the source's answer separately from coverage, as `sourceStatus` (metric `source_<status>`). `not_found` (Yahoo returned nothing for a window that has expected sessions) and `invalid_response` (the bars failed validation, recorded as an `invalid_bars` gap) also fail the unit with `price_incomplete` and retry, even when earlier runs already stored every row. `identity_mismatch` (the Yahoo symbol is not uniquely owned by this series in `market_symbols`) is not retried: nothing is fetched, the series gets `exception_reason = 'identity_mismatch'` and `quality_status = 'exception'`, and every later unit skips it until the identity is fixed by hand (see `docs/plan.md`). `prices.window` units in `repair` mode are the exception to retrying: a gap that is still missing just moves its `next_check_at` (a calendar deferral still defers). A company is marked price-synced (by `prices.daily`, `prices.sync` or the legacy web `prices` cron) only when its window is complete, the source answered, and coverage reaches the latest finalized session (`desired_to`, the last NSE session before today). A company with no fetchable series is never marked synced.
+A unit succeeds only when every expected session in its window is stored or explained. Otherwise the rows that did arrive are committed, the result is `incomplete` (the detail is on `price_series_state.detail`) and the unit fails with `price_incomplete`, so the ledger retries it with backoff and finally marks it `dead` (alarm `worker-dead-jobs`). Sessions before Yahoo's first trade date are recorded as `prelisting` gaps and do not fail the unit. The result carries the source's answer separately from coverage, as `sourceStatus` (metric `source_<status>`). `not_found` (Yahoo returned nothing for a window that has expected sessions) and `invalid_response` (the bars failed validation, recorded as an `invalid_bars` gap) also fail the unit with `price_incomplete` and retry, even when earlier runs already stored every row. `identity_mismatch` (the Yahoo symbol is not uniquely owned by this series in `market_symbols`) is not retried: nothing is fetched, the series gets `exception_reason = 'identity_mismatch'` and `quality_status = 'exception'`, and every later unit skips it until the identity is fixed by hand (see `docs/plan.md`). `prices.window` units in `repair` mode are the exception to retrying: a gap that is still missing just moves its `next_check_at` (a calendar deferral still defers). A company is marked price-synced (by `prices.daily` or `prices.sync`) only when its window is complete, the source answered, and coverage reaches the latest finalized session (`desired_to`, the last NSE session before today). A company with no fetchable series is never marked synced.
 
 Rebuilds are automatic: a window that sees a new or corrected split or dividend marks the series `rebuild_required` and the next fanout or repair enqueues `prices.rebuild`. To force one: `pnpm --filter @ma/worker cli run prices.rebuild '{"seriesId":72,"symbol":"RELIANCE.NS","generation":3,"parserVersion":1}'`, where `generation` is the current `price_series_state.adjustment_generation` + 1. A stale generation is refused with `stale_generation`. A rebuild must return every expected session that is not already an open or exempt gap. If it does not, nothing is written or deleted, the old generation stays served, the result is `rebuild_incomplete` with the missing range in `price_series_state.detail`, and the unit retries. An empty or failed source response is refused the same way (`source returned no bars`).
 
@@ -271,7 +271,7 @@ Fargate Spot sends SIGTERM with a two-minute warning; the task definition's `sto
 
 ## Rollback
 
-1. `pnpm --filter @ma/worker cli control paused` if the bad release is writing bad data.
+1. `pnpm --filter @ma/worker cli mode paused` if the bad release is writing bad data.
 2. Redeploy the previous task definition revision (the image is pinned by sha in each revision):
 
    ```bash
@@ -281,9 +281,9 @@ Fargate Spot sends SIGTERM with a two-minute warning; the task definition's `sto
    aws ecs wait services-stable --cluster market-analysis --services market-analysis-worker
    ```
 
-3. `cli control worker` once the old version is running.
+3. `cli mode worker` once the old version is running.
 
-Migrations are additive (expand/contract), so the previous image runs against the new schema; never downgrade the schema by hand. The deployment circuit breaker already rolls back automatically when a new revision cannot reach a running state. Never re-enable the Vercel crons as a rollback.
+Migrations are additive (expand/contract), so the previous image runs against the new schema; never downgrade the schema by hand. The deployment circuit breaker already rolls back automatically when a new revision cannot reach a running state. The web cron routes answer 410 and the legacy runner no longer exists, so there is no web-side fallback: rollback is always a previous worker image.
 
 ## Cost
 
