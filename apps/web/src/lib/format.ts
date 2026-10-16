@@ -143,6 +143,7 @@ const SIGNAL_LABEL: Record<string, string> = {
   travel_colocation: "CO-LOCATION",
   travel_event_window: "EVENT WINDOW",
   travel_coverage: "TRAVEL COVERAGE",
+  travel_operating_site_arrivals_30d: "OPERATING-SITE ARRIVALS",
   logistics_arrivals_7d: "ARRIVALS 7D",
   logistics_throughput_proxy: "THROUGHPUT PROXY",
   logistics_chokepoint_exposure: "CHOKEPOINT EXPOSURE",
@@ -150,6 +151,7 @@ const SIGNAL_LABEL: Record<string, string> = {
   logistics_export_departures_7d: "EXPORT DEPARTURES 7D",
   logistics_fleet_activity: "FLEET ACTIVITY",
   logistics_coverage: "AIS COVERAGE",
+  logistics_dwell_change: "DWELL CHANGE %",
 };
 
 export function signalLabel(kind: string): string {

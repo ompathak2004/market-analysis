@@ -46,6 +46,7 @@ function call(daysAgo: number, cls = "tanker"): LogisticsCall {
     leftMs: entered + 0.5 * DAY_MS,
     dwellMin: 720,
     cargoDirection: "import",
+    endedBy: "exit",
   };
 }
 
@@ -74,7 +75,7 @@ describe("cargo value", () => {
     expect(v.cargoBbl).toBe(1_900_000);
     expect(v.estValueUsd).toBe(152_000_000);
     expect(v.estValueCr).toBe(1276.8);
-    expect(v.basis).toBe("dwt_est × 0.95 fill × Brent × USDINR");
+    expect(v.basis).toBe("class-typical barrels × 0.95 fill × Brent × USDINR");
   });
 
   it("applies the product crack and falls back to qualitative without prices", () => {
@@ -99,6 +100,25 @@ describe("cargo value", () => {
 });
 
 describe("computeLogisticsSignals", () => {
+  it("compares observed completed dwell and excludes coverage timeouts", () => {
+    const calls = [
+      ...Array.from({ length: 5 }, (_, i) => ({ ...call(1 + i), dwellMin: 1440 })),
+      ...Array.from({ length: 5 }, (_, i) => ({ ...call(10 + i), dwellMin: 720 })),
+      ...Array.from({ length: 10 }, () => ({ ...call(1), endedBy: "timeout", dwellMin: 99999 })),
+    ];
+    const result = computeLogisticsSignals(
+      input({ calls, coverage: new Map([["facility:2", coverage(48, 30, 70)]]) }),
+    );
+    const dwell = result.signals.find((s) => s.kind === "logistics_dwell_change");
+    expect(dwell?.value).toBe(100);
+    expect(dwell?.inputs.recentCalls).toBe(5);
+    expect(dwell?.inputs.baselineMedianHours).toBe(12);
+    expect(
+      computeLogisticsSignals(input({ calls })).signals.some(
+        (s) => s.kind === "logistics_dwell_change",
+      ),
+    ).toBe(false);
+  });
   const kinds = (over: Partial<LogisticsInput>) =>
     computeLogisticsSignals(input(over))
       .signals.map((s) => s.kind)

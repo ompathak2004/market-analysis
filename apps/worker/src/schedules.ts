@@ -41,6 +41,7 @@ export const SCHEDULES: readonly ScheduleEntry[] = [
   },
   { type: "aircraft.sample", cron: "*/5 * * * *" },
   { type: "aircraft.trace", cron: "12 * * * *", id: "aircraft.trace.today" },
+  { type: "aircraft.repair", cron: "40 2 * * *" },
   {
     type: "aircraft.trace",
     cron: "40 5 * * *",
@@ -63,6 +64,7 @@ export const SCHEDULES: readonly ScheduleEntry[] = [
   { type: "influence.rpt.fanout", cron: "30 3 * * 0" },
   { type: "influence.perimeter.fanout", cron: "0 4 * * 0" },
   { type: "influence.parliament", cron: "30 4 * * 0" },
+  { type: "influence.states", cron: "20 4 * * *" },
   { type: "influence.affidavits", cron: "0 5 1 * *" },
   { type: "influence.sectors", cron: "30 5 * * 0" },
   { type: "influence.policy.pib", cron: "25 * * * *" },

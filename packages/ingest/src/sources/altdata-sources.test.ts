@@ -53,6 +53,12 @@ describe("normalizeTrace", () => {
   it("names the UTC day of a history trace", () => {
     expect(traceDay(new Date("2026-10-14T00:30:00Z"), 1)).toBe("2026-10-13");
   });
+
+  it("refuses a trace returned for a different aircraft", () => {
+    expect(() => normalizeTrace({ icao: "801111", timestamp: base, trace: [] }, "802222")).toThrow(
+      /identity/,
+    );
+  });
 });
 
 describe("normalizeAdsb", () => {

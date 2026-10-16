@@ -28,6 +28,7 @@ export interface SegmentOptions {
 
 export const CRUISE_ALT_FT = 18_000;
 export const CRUISE_GAP_MS = 60 * MINUTE;
+export const AIRCRAFT_LEG_PARSER_VERSION = 2;
 
 function cruising(s: AirSample): boolean {
   return !s.onGround && s.altFt !== null && s.altFt >= CRUISE_ALT_FT;
@@ -42,7 +43,9 @@ export function segmentLegs<S extends AirSample>(
   const minSamples = opts.minSamples ?? 2;
   const minDuration = opts.minDurationMs ?? 10 * MINUTE;
   const now = (opts.now ?? new Date()).getTime();
-  const sorted = [...samples].sort((a, b) => a.ts.getTime() - b.ts.getTime());
+  const sorted = samples
+    .filter((s) => Number.isFinite(s.ts.getTime()) && s.ts.getTime() <= now)
+    .sort((a, b) => a.ts.getTime() - b.ts.getTime());
   const legs: Leg<S>[] = [];
   let current: Leg<S> | null = null;
   let lastGround: S | null = null;
@@ -50,7 +53,8 @@ export function segmentLegs<S extends AirSample>(
   for (const s of sorted) {
     if (s.onGround) {
       if (current) {
-        current.groundAfter = s;
+        const last = current.samples.at(-1) as S;
+        if (s.ts.getTime() - last.ts.getTime() < gap) current.groundAfter = s;
         legs.push(current);
         current = null;
       }
@@ -94,19 +98,49 @@ export const GROUND_MATCH_KM = 10;
 export const LOW_ALT_MATCH_KM = 40;
 
 export function endpointAirport(sample: AirSample | null, ground: boolean): Airport | null {
-  if (!sample || sample.lat === null || sample.lon === null) return null;
+  if (
+    !sample ||
+    sample.lat === null ||
+    sample.lon === null ||
+    !Number.isFinite(sample.lat) ||
+    !Number.isFinite(sample.lon) ||
+    Math.abs(sample.lat) > 90 ||
+    Math.abs(sample.lon) > 180
+  )
+    return null;
   if (ground || sample.onGround) {
     return nearestAirport(sample.lat, sample.lon, GROUND_MATCH_KM)?.airport ?? null;
   }
-  const low = (sample.altFt !== null && sample.altFt < 8_000) || (sample.gsKt ?? 999) < 200;
+  const low =
+    sample.altFt !== null && sample.altFt < 8_000 && (sample.gsKt === null || sample.gsKt < 250);
   if (!low) return null;
   return (
-    nearestAirport(sample.lat, sample.lon, LOW_ALT_MATCH_KM, { excludeSmall: true })?.airport ??
-    null
+    nearestAirport(sample.lat, sample.lon, LOW_ALT_MATCH_KM, { excludeSmall: true, ambiguityKm: 8 })
+      ?.airport ?? null
   );
 }
 
 export type Completeness = "full" | "departure_only" | "arrival_only" | "enroute";
+export type EndpointMethod = "ground" | "low_altitude";
+
+function resolveEndpoint(
+  leg: Leg,
+  arrival: boolean,
+): { airport: Airport; method: EndpointMethod } | null {
+  if (arrival && leg.open) return null;
+  const ground = arrival ? leg.groundAfter : leg.groundBefore;
+  const observed = endpointAirport(ground, true);
+  if (observed) return { airport: observed, method: "ground" };
+  const samples = arrival ? [...leg.samples].reverse() : leg.samples;
+  const boundary = samples[0] as AirSample;
+  for (const sample of samples) {
+    if (Math.abs(sample.ts.getTime() - boundary.ts.getTime()) > 3 * MINUTE) break;
+    const airport = endpointAirport(sample, false);
+    if (airport) return { airport, method: "low_altitude" };
+    if (sample.altFt !== null && sample.altFt >= 8_000) break;
+  }
+  return null;
+}
 
 export interface LegSummary {
   firstTs: Date;
@@ -116,6 +150,8 @@ export interface LegSummary {
   durationMin: number | null;
   dep: Airport | null;
   arr: Airport | null;
+  depMethod: EndpointMethod | null;
+  arrMethod: EndpointMethod | null;
   completeness: Completeness;
   samples: number;
   maxAltFt: number | null;
@@ -124,8 +160,10 @@ export interface LegSummary {
 export function summarizeLeg(leg: Leg): LegSummary {
   const first = leg.samples[0] as AirSample;
   const last = leg.samples.at(-1) as AirSample;
-  const dep = endpointAirport(leg.groundBefore ?? first, leg.groundBefore !== null);
-  const arr = leg.open ? null : endpointAirport(leg.groundAfter ?? last, leg.groundAfter !== null);
+  const departure = resolveEndpoint(leg, false);
+  const arrival = resolveEndpoint(leg, true);
+  const dep = departure?.airport ?? null;
+  const arr = arrival?.airport ?? null;
   const departedAt = leg.groundBefore ? leg.groundBefore.ts : first.ts;
   const arrivedAt = leg.open ? null : leg.groundAfter ? leg.groundAfter.ts : last.ts;
   const alts = leg.samples.map((s) => s.altFt).filter((a): a is number => a !== null);
@@ -139,6 +177,8 @@ export function summarizeLeg(leg: Leg): LegSummary {
       : null,
     dep,
     arr,
+    depMethod: departure?.method ?? null,
+    arrMethod: arrival?.method ?? null,
     completeness: dep && arr ? "full" : dep ? "departure_only" : arr ? "arrival_only" : "enroute",
     samples: leg.samples.length + (leg.groundBefore ? 1 : 0) + (leg.groundAfter ? 1 : 0),
     maxAltFt: alts.length ? Math.max(...alts) : null,
@@ -146,7 +186,7 @@ export function summarizeLeg(leg: Leg): LegSummary {
 }
 
 export function legDedupeKey(hex: string, firstTs: Date): string {
-  return `${hex}:${Math.floor(firstTs.getTime() / (30 * MINUTE))}`;
+  return `${hex}:${firstTs.getTime()}`;
 }
 
 export interface StoredFlight {
@@ -202,7 +242,7 @@ export function supersededFlights(
       const start = f.departedAt.getTime();
       if (f.arrivedAt === null && start >= from.getTime()) return true;
       const end = (f.arrivedAt ?? f.departedAt).getTime();
-      return legs.some((l) => start <= l.endAt.getTime() && end >= l.departedAt.getTime());
+      return legs.some((l) => start < l.endAt.getTime() && end > l.departedAt.getTime());
     })
     .map((f) => f.id);
 }

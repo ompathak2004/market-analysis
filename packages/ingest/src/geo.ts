@@ -80,19 +80,24 @@ export function nearestAirport(
   lat: number,
   lon: number,
   maxKm: number,
-  opts: { excludeSmall?: boolean } = {},
+  opts: { excludeSmall?: boolean; ambiguityKm?: number } = {},
 ): { airport: Airport; km: number } | null {
   let best: Airport | null = null;
   let bestKm = maxKm;
+  let secondKm = Number.POSITIVE_INFINITY;
   const dLat = maxKm / 111;
   for (const a of AIRPORTS) {
     if (Math.abs(a.lat - lat) > dLat) continue;
     if (opts.excludeSmall && a.size === "S") continue;
     const km = haversineKm(lat, lon, a.lat, a.lon);
     if (km <= bestKm) {
+      secondKm = best ? bestKm : secondKm;
       best = a;
       bestKm = km;
+    } else if (km <= maxKm && km < secondKm) {
+      secondKm = km;
     }
   }
+  if (opts.ambiguityKm && bestKm > 5 && secondKm - bestKm < opts.ambiguityKm) return null;
   return best ? { airport: best, km: bestKm } : null;
 }

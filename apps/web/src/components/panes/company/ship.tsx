@@ -73,7 +73,11 @@ function FacilitiesPane({ l }: { l: CompanyLogistics }) {
                       label={`${f.name} weekly arrivals`}
                     />
                   ) : null}
-                  <span className="dim">{f.activeVessels.length} in fence</span>
+                  <span className="dim">
+                    {f.coverage7d > 0
+                      ? `${f.activeVessels.length} observed in fence`
+                      : "coverage unavailable"}
+                  </span>
                 </span>
               </header>
               <span className="dim">
@@ -107,7 +111,7 @@ function CallsPane({ l, filter, base }: { l: CompanyLogistics; filter: CallFilte
     filter === "all"
       ? true
       : filter === "in"
-        ? c.cargoDirection !== "export"
+        ? c.cargoDirection === "import"
         : c.cargoDirection === "export",
   );
   const weeks = l.facilities.flatMap((f) => f.arrivalsWeekly);
@@ -117,7 +121,12 @@ function CallsPane({ l, filter, base }: { l: CompanyLogistics; filter: CallFilte
   const last = series.at(-1) ?? null;
   const prior = series.slice(0, -1);
   const base12 = prior.length ? prior.reduce((s, v) => s + v, 0) / prior.length : null;
-  const dwell = median(rows.map((c) => c.dwellMin).filter((d): d is number => d != null));
+  const dwell = median(
+    rows
+      .filter((c) => c.endedBy === "exit")
+      .map((c) => c.dwellMin)
+      .filter((d): d is number => d != null),
+  );
   return (
     <Pane
       id="calls"
@@ -143,8 +152,14 @@ function CallsPane({ l, filter, base }: { l: CompanyLogistics; filter: CallFilte
       <div className="tiles">
         <div className="tile">
           <span className="lbl">Arrivals / week</span>
-          <span className="val">{last ?? "—"}</span>
-          <span className="sub">{base12 != null ? `/ ${num(base12, 1)} base` : "no baseline"}</span>
+          <span className="val">{l.coverage.factor7d >= 0.2 ? (last ?? "—") : "—"}</span>
+          <span className="sub">
+            {l.coverage.factor7d < 0.2
+              ? "insufficient AIS coverage"
+              : base12 != null
+                ? `/ ${num(base12, 1)} observed base`
+                : "no baseline"}
+          </span>
         </div>
         <div className="tile">
           <span className="lbl">Median dwell</span>
@@ -189,7 +204,18 @@ function CallsPane({ l, filter, base }: { l: CompanyLogistics; filter: CallFilte
             align: "right",
             sortable: true,
             sortValue: (c) => c.dwellMin,
-            cell: (c) => (c.leftAt ? minutes(c.dwellMin) : <span className="accent">in port</span>),
+            cell: (c) =>
+              c.endedBy === "timeout" ? (
+                <span className="dim">≥{minutes(c.dwellMin)}</span>
+              ) : c.leftAt ? (
+                minutes(c.dwellMin)
+              ) : (
+                <span className="accent">last seen in port</span>
+              ),
+            title: (c) =>
+              c.endedBy === "timeout"
+                ? "Coverage ended; departure was not observed"
+                : "Observed geofence dwell",
           },
           {
             key: "c",
@@ -330,8 +356,8 @@ function ChokepointPane({ l }: { l: CompanyLogistics }) {
           />
         </>
       ) : covered.length ? (
-        <Empty title="No chokepoint loitering">
-          No inbound vessel bound for a mapped facility is idling at{" "}
+        <Empty title="No observed chokepoint loitering">
+          No fresh AIS observation shows an inbound vessel for a mapped facility idling at{" "}
           {orList(covered.map((z) => z.name))}.
           {covered.length < zones.length
             ? ` Coverage unavailable at ${zones.length - covered.length} other zones.`
@@ -356,7 +382,7 @@ function PositionsPane({ l }: { l: CompanyLogistics }) {
   return (
     <Pane
       id="map"
-      title="POSITION SCHEMATIC"
+      title="LINKED VESSEL POSITIONS"
       area="map"
       meta={lastTs ? istTime(lastTs) : "no fixes"}
       foot={
@@ -380,7 +406,7 @@ function PositionsPane({ l }: { l: CompanyLogistics }) {
           lat: p.lat,
           lon: p.lon,
           kind: p.class,
-          label: `${p.mmsi} · ${p.class} · ${istTime(p.ts)}`,
+          label: `${p.mmsi} · ${p.linkage} · ${p.class} · ${istTime(p.ts)}`,
         }))}
       />
     </Pane>

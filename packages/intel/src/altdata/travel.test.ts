@@ -54,6 +54,34 @@ const kinds = (legs: TravelLeg[], days: number) =>
   computeTravelSignals(input(legs, days)).signals.map((s) => s.kind);
 
 describe("computeTravelSignals", () => {
+  it("links observed arrivals to operating-site questions without asserting visits", () => {
+    const data = input([leg(1, "VOMY", "Mysuru")], 100);
+    data.airport = () => ({ lat: 12.2, lon: 76.6 });
+    data.ownFacilities = [
+      {
+        companyId: 7,
+        symbol: "TEST",
+        name: "Test",
+        facilityId: 9,
+        facilityName: "Mysuru plant",
+        kind: "plant",
+        lat: 12.2,
+        lon: 76.6,
+      },
+    ];
+    const read = computeTravelSignals(data).signals.find(
+      (s) => s.kind === "travel_operating_site_arrivals_30d",
+    );
+    expect(read?.value).toBe(1);
+    expect(read?.inputs.read).toContain("unverified");
+    expect(read?.inputs.evidence[0]?.kind).toBe("leg");
+    data.legs[0] = { ...(data.legs[0] as TravelLeg), arrivedMs: null };
+    expect(
+      computeTravelSignals(data).signals.some(
+        (s) => s.kind === "travel_operating_site_arrivals_30d",
+      ),
+    ).toBe(false);
+  });
   const baseline = Array.from({ length: 11 }, (_, w) => leg(10 + w * 7, "VIDP", "Delhi"));
   const spike = [1, 2, 3, 4, 5, 6].map((d) => leg(d, "VIDP", "Delhi"));
 

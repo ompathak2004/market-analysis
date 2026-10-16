@@ -10,7 +10,17 @@ export type JobKind = "fanout" | "unit";
 const companyUnit = z.object({ companyId: z.number().int().positive() }).strict();
 const empty = z.object({}).strict();
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const traceDay = z.object({ day: z.enum(["today", "yesterday"]).default("today") }).strict();
+const traceDay = z
+  .object({
+    day: z.enum(["today", "yesterday"]).default("today"),
+    aircraftId: z.number().int().positive().optional(),
+    date: isoDay.optional(),
+  })
+  .strict()
+  .refine(
+    (p) => p.date === undefined || p.aircraftId !== undefined,
+    "Historical traces require one aircraft",
+  );
 
 interface Contract<S extends z.ZodTypeAny> {
   family: string | null;
@@ -199,6 +209,33 @@ export const JOB_CONTRACTS = {
   "influence.perimeter.fanout": job("influence", "control", "fanout", empty, MINUTE),
   "influence.perimeter": job("influence", "compute", "unit", companyUnit, 2 * MINUTE, byCompany),
   "influence.parliament": job("influence", "io", "unit", empty, 10 * MINUTE),
+  "influence.states": job("influence", "io", "unit", empty, 3 * MINUTE),
+  "influence.sites": job(
+    "influence",
+    "parse",
+    "unit",
+    z
+      .object({
+        companyId: z.number().int().positive(),
+        documentId: z.number().int().positive(),
+        sites: z
+          .array(
+            z
+              .object({
+                name: z.string().min(2).max(150),
+                stateCode: z.string().regex(/^IN-[A-Z]{2}$/),
+                stateName: z.string().min(2).max(50),
+                quote: z.string().min(10).max(3000),
+              })
+              .strict(),
+          )
+          .min(1)
+          .max(100),
+      })
+      .strict(),
+    MINUTE,
+    (p) => `${p.companyId}:${p.documentId}:${sha256(JSON.stringify(p.sites)).slice(0, 16)}`,
+  ),
   "influence.affidavits": job("influence", "io", "fanout", empty, 5 * MINUTE),
   "influence.affidavit": job(
     "influence",
@@ -260,7 +297,16 @@ export const JOB_CONTRACTS = {
   "triage.batch": job("triage", "llm", "unit", empty, 5 * MINUTE),
   "aircraft.registry": job("aircraft-registry", "io", "unit", empty, 5 * MINUTE),
   "aircraft.sample": job("aircraft-sample", "io", "unit", empty, MINUTE, () => "", 1),
-  "aircraft.trace": job("aircraft-trace", "io", "unit", traceDay, 10 * MINUTE, (p) => p.day, 1),
+  "aircraft.trace": job(
+    "aircraft-trace",
+    "io",
+    "unit",
+    traceDay,
+    10 * MINUTE,
+    (p) => (p.aircraftId ? `${p.aircraftId}:${p.date ?? p.day}` : p.day),
+    2,
+  ),
+  "aircraft.repair": job("aircraft-trace", "control", "fanout", empty, MINUTE),
   "ais.collect": job("ais-collect", "io", "unit", empty, 2 * MINUTE, () => "", 1),
   "altdata.derive": job("altdata-derive", "compute", "unit", empty, 5 * MINUTE),
   "altdata.signals": job("altdata-signals", "compute", "unit", empty, 5 * MINUTE),

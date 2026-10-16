@@ -24,8 +24,8 @@ function placeCode(p: AirportRef | null): string {
   return p ? (p.iata ?? p.icao) : "???";
 }
 
-function placeLabel(p: AirportRef | null): string {
-  if (!p) return "unknown";
+function placeLabel(p: AirportRef | null, open = false): string {
+  if (!p) return open ? "track open" : "not observed";
   return `${placeCode(p)} ${p.city ?? ""}`.trim();
 }
 
@@ -127,7 +127,7 @@ function LegsPane({ t }: { t: CompanyTravel }) {
           {
             key: "d",
             header: "DATE · IST",
-            width: "md",
+            width: "lg",
             sortable: true,
             sortValue: (l) => (l.departedAt ? new Date(l.departedAt).getTime() : null),
             cell: (l) => legTime(l.departedAt ?? l.arrivedAt),
@@ -138,7 +138,7 @@ function LegsPane({ t }: { t: CompanyTravel }) {
             header: "FROM → TO · CITY",
             cell: (l) => (
               <span className="truncate">
-                {placeLabel(l.dep)} → {placeLabel(l.arr)}
+                {placeLabel(l.dep)} → {placeLabel(l.arr, l.arrivedAt === null)}
               </span>
             ),
           },
@@ -149,15 +149,27 @@ function LegsPane({ t }: { t: CompanyTravel }) {
             align: "right",
             sortable: true,
             sortValue: (l) => l.durationMin,
-            cell: (l) => minutes(l.durationMin),
+            cell: (l) =>
+              l.durationMin === null
+                ? "—"
+                : `${l.completeness === "full" ? "" : "≥"}${minutes(l.durationMin)}`,
+            title: (l) =>
+              l.completeness === "full"
+                ? "Observed flight interval"
+                : "Observed track duration; flight endpoints are incomplete",
           },
           {
             key: "s",
-            header: "SOURCE",
-            width: "sm",
+            header: "EVIDENCE",
+            width: "md",
             priority: 2,
-            cell: (l) => <span className={l.completeness === "full" ? "" : "dim"}>{l.source}</span>,
-            title: (l) => `completeness ${l.completeness}`,
+            cell: (l) => (
+              <span className={l.completeness === "full" ? "" : "dim"}>
+                {l.completeness === "full" ? "resolved" : "partial"}
+              </span>
+            ),
+            title: (l) =>
+              `${l.source} · departure ${l.depMethod ?? (l.dep ? "legacy inference" : "outside observed coverage")} · arrival ${l.arrMethod ?? (l.arr ? "legacy inference" : l.arrivedAt ? "outside observed coverage" : "track open; landing unverified")}`,
           },
         ]}
         empty={
@@ -166,6 +178,11 @@ function LegsPane({ t }: { t: CompanyTravel }) {
           </Empty>
         }
       />
+      <p className="pane-section dim sm">
+        Endpoints use ground or approach observations, or provider airport estimates. Partial
+        durations cover the observed track; an open track does not establish that the aircraft is
+        still airborne.
+      </p>
       {t.weeklyLegCounts.length ? (
         <div className="pane-section">
           <h3>Legs per week</h3>

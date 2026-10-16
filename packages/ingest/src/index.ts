@@ -53,4 +53,5 @@ export * from "./sources/policy-doc.js";
 export * from "./sources/prs.js";
 export * from "./sources/ratings.js";
 export * from "./sources/screener.js";
+export * from "./sources/state-government.js";
 export * from "./sources/yahoo.js";

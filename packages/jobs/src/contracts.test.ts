@@ -44,6 +44,14 @@ describe("job contracts", () => {
     expect(() => parsePayload("prices.window", { ...unit, from: "2021/10/12" })).toThrow();
   });
 
+  it("bounds historical repair to one aircraft per unit", () => {
+    expect(unitKey("aircraft.trace", { day: "today", aircraftId: 7, date: "2026-10-11" })).toBe(
+      "aircraft.trace:7:2026-10-11",
+    );
+    expect(() => parsePayload("aircraft.trace", { date: "2026-10-11" })).toThrow();
+    expect(parsePayload("aircraft.trace", {})).toEqual({ day: "today" });
+  });
+
   it("keys precision samples by name and bounds their payload", () => {
     expect(unitKey("relationships.sample", { name: "gate-2026-10" })).toBe(
       "relationships.sample:gate-2026-10",

@@ -36,6 +36,7 @@ const TRAVEL_KIND_BASE: Record<TravelSignalKind, number> = {
   travel_colocation: 0.35,
   travel_event_window: 0.5,
   travel_coverage: 1,
+  travel_operating_site_arrivals_30d: 0.7,
 };
 
 export interface DealHubRef {
@@ -114,6 +115,7 @@ export interface TravelInput {
   dealHubs: readonly DealHubRef[];
   airport: (icao: string) => AirportPoint | null;
   counterparties: CounterpartyFacility[];
+  ownFacilities?: CounterpartyFacility[];
   relations: Map<number, CounterpartyRelation>;
   otherArrivals: OtherGroupArrival[];
   announcements: TravelAnnouncement[];
@@ -143,7 +145,7 @@ export function travelConfidence(
 
 function place(icao: string | null, city: string | null): string {
   if (city && icao) return `${city} (${icao})`;
-  return city ?? icao ?? "unknown";
+  return city ?? icao ?? "endpoint not observed";
 }
 
 function legLabel(leg: TravelLeg): string {
@@ -338,6 +340,41 @@ export function computeTravelSignals(input: TravelInput): TravelResult {
     }
   }
 
+  const siteArrivals = legs30.flatMap((leg) => {
+    if (!leg.arrIcao || leg.arrivedMs === null) return [];
+    const point = input.airport(leg.arrIcao);
+    if (!point) return [];
+    const nearby = (input.ownFacilities ?? [])
+      .filter((f) => f.kind !== "hq")
+      .map((f) => ({ facility: f, km: haversineKm(point.lat, point.lon, f.lat, f.lon) }))
+      .filter((f) => f.km <= COUNTERPARTY_RADIUS_KM)
+      .sort((a, b) => a.km - b.km);
+    const site = nearby[0];
+    return site ? [{ leg, site }] : [];
+  });
+  if (siteArrivals.length) {
+    const sites = [...new Set(siteArrivals.map((a) => a.site.facility.facilityName))];
+    push(
+      "travel_operating_site_arrivals_30d",
+      siteArrivals.length,
+      `${siteArrivals.length} aircraft arrivals within 60 km of ${sites.join(", ")} in 30 d. Compare with capex and commissioning disclosures; site visits and passengers unverified.`,
+      travelConfidence(
+        confOf(siteArrivals.map((a) => a.leg)),
+        coverage,
+        "travel_operating_site_arrivals_30d",
+      ),
+      siteArrivals.map((a) => legEvidence(a.leg)),
+      window30,
+      {
+        arrivals: siteArrivals.map(({ leg, site }) => ({
+          legId: leg.id,
+          facilityId: site.facility.facilityId,
+          km: round(site.km, 1),
+        })),
+      },
+    );
+  }
+
   const hubByIcao = new Map(input.dealHubs.map((h) => [h.icao, h]));
   const hubArrivals = timed.filter((x) => x.leg.arrIcao && hubByIcao.has(x.leg.arrIcao));
   const hub30 = hubArrivals.filter((x) => x.at >= from30);
@@ -379,7 +416,7 @@ export function computeTravelSignals(input: TravelInput): TravelResult {
       push(
         "travel_deal_hub_cluster",
         hub30.length,
-        `${hub30.length} visits to ${regions} in 30 d vs ${baselineText} — consistent with financing or deal talks; purpose unverified.`,
+        `${hub30.length} aircraft arrivals in ${regions} in 30 d vs ${baselineText}. Compare with disclosed financing or expansion milestones; purpose unverified.`,
         travelConfidence(
           confOf(hubLegs),
           coverage,
@@ -534,7 +571,7 @@ export function computeTravelSignals(input: TravelInput): TravelResult {
     push(
       "travel_colocation",
       list.length,
-      `${input.label} and ${top.otherGroup} aircraft in ${top.city ?? top.icao} on ${formatDay(Date.parse(top.date))} — M&A/JV chatter watch; coincidence is the base case.`,
+      `${input.label} and ${top.otherGroup} aircraft observed in ${top.city ?? top.icao} on ${formatDay(Date.parse(top.date))}. No meeting or transaction is established.`,
       travelConfidence(confOf([...coLegs.values()]), coverage, "travel_colocation"),
       [...coLegs.values()].map(legEvidence),
       window30,
@@ -708,6 +745,7 @@ export async function refreshTravelSignals(
         select supplier_company_id as "supplierId", customer_company_id as "customerId"
         from relationships
         where supplier_company_id is not null and customer_company_id is not null
+          and status = 'active'
           and valid_from <= ${asOf} and valid_to >= ${asOf}
           and (supplier_company_id in ${ids} or customer_company_id in ${ids})`),
       db.execute<AnnouncementRow>(sql`
@@ -788,6 +826,7 @@ export async function refreshTravelSignals(
       dealHubs: opts.dealHubs,
       airport: opts.airport,
       counterparties: facilityRows.filter((f) => f.companyId !== companyId),
+      ownFacilities: facilityRows.filter((f) => f.companyId === companyId),
       relations,
       otherArrivals,
       announcements: announcementRows.filter((a) => a.companyId === companyId),

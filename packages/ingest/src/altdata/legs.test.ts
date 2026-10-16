@@ -39,10 +39,59 @@ describe("nearestAirport", () => {
     const near = { ...sample(0, VABB.lat + 0.2, VABB.lon + 0.05, false, 4_000), gsKt: 180 };
     expect(endpointAirport(near, false)?.icao).toBe("VABB");
     expect(endpointAirport({ ...near, altFt: 35_000, gsKt: 450 }, false)).toBeNull();
+    expect(endpointAirport({ ...near, altFt: 35_000, gsKt: 120 }, false)).toBeNull();
+    expect(endpointAirport({ ...near, altFt: null, gsKt: 120 }, false)).toBeNull();
+    expect(endpointAirport({ ...near, lat: Number.NaN }, false)).toBeNull();
+  });
+
+  it("leaves overlapping Hyderabad approach candidates unresolved", () => {
+    const old = airportByIcao("VOHY");
+    const international = airportByIcao("VOHS");
+    if (!old || !international) throw new Error("Hyderabad airports missing");
+    const midpoint = sample(
+      0,
+      (old.lat + international.lat) / 2,
+      (old.lon + international.lon) / 2,
+      false,
+      3000,
+    );
+    expect(endpointAirport({ ...midpoint, gsKt: 160 }, false)).toBeNull();
+    expect(endpointAirport(sample(0, old.lat, old.lon, true), true)?.icao).toBe("VOHY");
   });
 });
 
 describe("segmentLegs", () => {
+  it("does not attach a ground fix hours after coverage was lost", () => {
+    if (!VABB || !VIDP) throw new Error("airports missing");
+    const samples = [
+      sample(0, VABB.lat, VABB.lon, true),
+      sample(5, 20, 75, false),
+      sample(25, 22, 76, false),
+      sample(240, VIDP.lat, VIDP.lon, true),
+    ];
+    const legs = segmentLegs(samples, { now: new Date(T0 + 300 * MIN) });
+    expect(legs).toHaveLength(1);
+    expect(legs[0]?.groundAfter).toBeNull();
+    expect(summarizeLeg(legs[0] as (typeof legs)[number]).arr).toBeNull();
+  });
+
+  it("recovers a missing boundary coordinate only from nearby low-altitude evidence", () => {
+    if (!VABB || !VIDP) throw new Error("airports missing");
+    const first = { ...sample(0, VABB.lat, VABB.lon, false, 1500), lat: null, gsKt: 160 };
+    const legs = segmentLegs(
+      [
+        first,
+        { ...sample(1, VABB.lat, VABB.lon, false, 1800), gsKt: 170 },
+        sample(20, 24, 76, false),
+        sample(50, VIDP.lat, VIDP.lon, true),
+      ],
+      { now: new Date(T0 + 100 * MIN) },
+    );
+    const summary = summarizeLeg(legs[0] as (typeof legs)[number]);
+    expect(summary.dep?.icao).toBe("VABB");
+    expect(summary.depMethod).toBe("low_altitude");
+    expect(summary.arr).toBeNull();
+  });
   it("splits on ground contact and gaps and keeps the bracketing ground samples", () => {
     if (!VABB || !VIDP) throw new Error("airports missing");
     const cruise = Array.from({ length: 12 }, (_, i) =>
@@ -142,8 +191,8 @@ describe("segmentLegs", () => {
     );
   });
 
-  it("buckets dedupe keys by half hour", () => {
-    expect(legDedupeKey("80abcd", new Date(T0 + 5 * MIN))).toBe(
+  it("keeps distinct short flights inside the same half hour", () => {
+    expect(legDedupeKey("80abcd", new Date(T0 + 5 * MIN))).not.toBe(
       legDedupeKey("80abcd", new Date(T0 + 25 * MIN)),
     );
   });
@@ -226,5 +275,20 @@ describe("incremental flight derivation", () => {
     };
     const leg = { key: "80abcd:new", departedAt: new Date(T0), endAt: new Date(T0 + 125 * MIN) };
     expect(supersededFlights([truncated, earlier], [leg], new Date(T0))).toEqual([7]);
+  });
+
+  it("preserves the previous flight when its landing is the next flight's ground bracket", () => {
+    const stored = [
+      {
+        id: 1,
+        dedupeKey: "previous",
+        departedAt: new Date(T0),
+        arrivedAt: new Date(T0 + 60 * MIN),
+      },
+    ];
+    const next = [
+      { key: "next", departedAt: new Date(T0 + 60 * MIN), endAt: new Date(T0 + 120 * MIN) },
+    ];
+    expect(supersededFlights(stored, next, new Date(T0 + 60 * MIN))).toEqual([]);
   });
 });

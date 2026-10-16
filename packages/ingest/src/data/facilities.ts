@@ -3,6 +3,8 @@ import type { FacilitySeed } from "./types.js";
 export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   {
     slug: "ril-jamnagar",
+    stateCode: "IN-GJ",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Reliance Jamnagar refinery complex",
     kind: "refinery",
     lat: 22.33,
@@ -23,6 +25,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "ril-sikka-spm",
+    stateCode: "IN-GJ",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Reliance Sikka SPM and jetties",
     kind: "spm",
     lat: 22.45,
@@ -43,6 +47,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "adani-mundra",
+    stateCode: "IN-GJ",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Mundra port",
     kind: "port",
     lat: 22.74,
@@ -75,6 +81,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "adani-hazira",
+    stateCode: "IN-GJ",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Hazira port",
     kind: "port",
     lat: 21.1,
@@ -95,6 +103,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "adani-dhamra",
+    stateCode: "IN-OD",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Dhamra port",
     kind: "port",
     lat: 20.8,
@@ -121,6 +131,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "adani-krishnapatnam",
+    stateCode: "IN-AP",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Krishnapatnam port",
     kind: "port",
     lat: 14.27,
@@ -141,6 +153,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "adani-gangavaram",
+    stateCode: "IN-AP",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Gangavaram port",
     kind: "port",
     lat: 17.62,
@@ -161,6 +175,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "adani-kattupalli",
+    stateCode: "IN-TN",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Kattupalli port",
     kind: "port",
     lat: 13.32,
@@ -181,6 +197,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "adani-dahej",
+    stateCode: "IN-GJ",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Dahej port",
     kind: "port",
     lat: 21.7,
@@ -213,6 +231,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "adani-vizhinjam",
+    stateCode: "IN-KL",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Vizhinjam port",
     kind: "port",
     lat: 8.38,
@@ -234,6 +254,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "gppl-pipavav",
+    stateCode: "IN-GJ",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Pipavav port",
     kind: "port",
     lat: 20.92,
@@ -254,6 +276,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "jsw-dharamtar-dolvi",
+    stateCode: "IN-MH",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "JSW Dharamtar jetty (Dolvi)",
     kind: "jetty",
     lat: 18.7,
@@ -274,6 +298,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "jsw-jaigarh",
+    stateCode: "IN-MH",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Jaigarh port",
     kind: "port",
     lat: 17.29,
@@ -306,6 +332,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "mormugao-goa",
+    stateCode: "IN-GA",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Mormugao port",
     kind: "port",
     lat: 15.41,
@@ -338,6 +366,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "paradip",
+    stateCode: "IN-OD",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Paradip port",
     kind: "port",
     lat: 20.27,
@@ -370,6 +400,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "vizag-port",
+    stateCode: "IN-AP",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Visakhapatnam port",
     kind: "port",
     lat: 17.69,
@@ -396,6 +428,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "bpcl-kochi",
+    stateCode: "IN-KL",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "BPCL Kochi refinery",
     kind: "refinery",
     lat: 9.97,
@@ -416,6 +450,7 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "kochi-lng",
+    stateCode: "IN-KL",
     name: "Petronet Kochi LNG terminal",
     kind: "lng_terminal",
     lat: 9.96,
@@ -436,6 +471,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "mumbai-mahul",
+    stateCode: "IN-MH",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Mahul refineries (Mumbai)",
     kind: "refinery",
     lat: 19.01,
@@ -462,6 +499,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "vadinar",
+    stateCode: "IN-GJ",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Vadinar crude terminal",
     kind: "terminal",
     lat: 22.44,
@@ -483,6 +522,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "kandla",
+    stateCode: "IN-GJ",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Deendayal (Kandla) port",
     kind: "port",
     lat: 23.03,
@@ -521,6 +562,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "tuticorin",
+    stateCode: "IN-TN",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "V.O. Chidambaranar (Tuticorin) port",
     kind: "port",
     lat: 8.76,
@@ -542,6 +585,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "kakinada",
+    stateCode: "IN-AP",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Kakinada port",
     kind: "port",
     lat: 16.96,
@@ -562,6 +607,8 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "ennore-kamarajar",
+    stateCode: "IN-TN",
+    jurisdictionSourceUrl: "https://service.unece.org/trade/locode/in.htm",
     name: "Kamarajar (Ennore) port",
     kind: "port",
     lat: 13.28,
@@ -588,6 +635,7 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "hazira-lng",
+    stateCode: "IN-GJ",
     name: "Hazira LNG terminal",
     kind: "lng_terminal",
     lat: 21.08,
@@ -609,6 +657,7 @@ export const FACILITY_SEEDS: readonly FacilitySeed[] = [
   },
   {
     slug: "simhadri-ntpc",
+    stateCode: "IN-AP",
     name: "NTPC Simhadri power station",
     kind: "power_plant",
     lat: 17.58,

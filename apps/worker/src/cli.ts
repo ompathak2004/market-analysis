@@ -35,6 +35,7 @@ export const FAMILY_ALIASES: Record<string, { type: JobType; payload?: Record<st
     "aircraft-registry": { type: "aircraft.registry" },
     "aircraft-sample": { type: "aircraft.sample" },
     "aircraft-trace": { type: "aircraft.trace" },
+    "aircraft-repair": { type: "aircraft.repair" },
     "ais-collect": { type: "ais.collect" },
     "altdata-derive": { type: "altdata.derive" },
     "altdata-signals": { type: "altdata.signals" },

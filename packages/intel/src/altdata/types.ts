@@ -1,5 +1,5 @@
-export const TRAVEL_MODEL_VERSION = 1;
-export const LOGISTICS_MODEL_VERSION = 1;
+export const TRAVEL_MODEL_VERSION = 2;
+export const LOGISTICS_MODEL_VERSION = 2;
 
 export const TRAVEL_SIGNAL_KINDS = [
   "travel_legs_7d",
@@ -10,6 +10,7 @@ export const TRAVEL_SIGNAL_KINDS = [
   "travel_colocation",
   "travel_event_window",
   "travel_coverage",
+  "travel_operating_site_arrivals_30d",
 ] as const;
 export type TravelSignalKind = (typeof TRAVEL_SIGNAL_KINDS)[number];
 
@@ -21,6 +22,7 @@ export const LOGISTICS_SIGNAL_KINDS = [
   "logistics_export_departures_7d",
   "logistics_fleet_activity",
   "logistics_coverage",
+  "logistics_dwell_change",
 ] as const;
 export type LogisticsSignalKind = (typeof LOGISTICS_SIGNAL_KINDS)[number];
 

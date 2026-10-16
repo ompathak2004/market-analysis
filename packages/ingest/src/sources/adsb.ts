@@ -1,3 +1,4 @@
+import { UpstreamError } from "@ma/core";
 import type { HttpClient } from "../http.js";
 
 const BASE = "https://api.adsb.lol";
@@ -87,12 +88,23 @@ export interface AdsbLolTrace {
 }
 
 export function normalizeTrace(body: AdsbLolTrace, hex: string): PositionSample[] {
+  if (body.icao && body.icao.toLowerCase() !== hex.toLowerCase()) {
+    throw new UpstreamError("adsb.lol", "Trace aircraft identity does not match request");
+  }
   const base = body.timestamp;
   if (typeof base !== "number" || !Array.isArray(body.trace)) return [];
   const out: PositionSample[] = [];
   let kept: PositionSample | null = null;
   for (const [i, p] of body.trace.entries()) {
-    if (typeof p[1] !== "number" || typeof p[2] !== "number" || p[6] & TRACE_STALE) continue;
+    if (
+      !Number.isFinite(p[0]) ||
+      !Number.isFinite(p[1]) ||
+      !Number.isFinite(p[2]) ||
+      Math.abs(p[1]) > 90 ||
+      Math.abs(p[2]) > 180 ||
+      p[6] & TRACE_STALE
+    )
+      continue;
     const onGround = p[3] === "ground";
     const sample: PositionSample = {
       hex,

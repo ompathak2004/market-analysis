@@ -21,6 +21,7 @@ import {
   type Tx,
 } from "@ma/db";
 import {
+  AIRCRAFT_LEG_PARSER_VERSION,
   type DerivedLeg,
   legDedupeKey,
   replayStart,
@@ -381,7 +382,35 @@ async function applyOverrides(
 
 export interface TraceOptions extends Deadline {
   day?: "today" | "yesterday";
+  aircraftId?: number;
+  date?: string;
   now?: Date;
+}
+
+const traceRepairKey = (aircraftId: number, date: string) =>
+  `altdata:air:repair:v${AIRCRAFT_LEG_PARSER_VERSION}:${aircraftId}:${date}`;
+
+export async function aircraftRepairTargets(ctx: IngestContext, now = new Date()) {
+  const rows = await ctx.db.execute<{ aircraftId: number; date: string }>(sql`
+    select distinct f.aircraft_id as "aircraftId", d.day::date::text as date
+    from aircraft_flights f join corporate_aircraft a on a.id = f.aircraft_id
+    cross join lateral generate_series(
+      ((f.departed_at - interval '3 hours') at time zone 'UTC')::date,
+      (coalesce(f.arrived_at, f.departed_at) at time zone 'UTC')::date,
+      interval '1 day') d(day)
+    where a.active and f.source in ('sampled', 'merged')
+      and (f.completeness <> 'full' or f.parser_version < ${AIRCRAFT_LEG_PARSER_VERSION})
+      and f.departed_at >= ${new Date(now.getTime() - 29 * DAY).toISOString()}::timestamptz
+      and d.day::date < ${traceDay(now, 0)}::date
+    order by date desc, "aircraftId"`);
+  if (!rows.length) return [];
+  const targets: (typeof rows)[number][] = [];
+  for (const batch of chunk([...rows], 500)) {
+    const tried = await ctx.redis.mget(...batch.map((r) => traceRepairKey(r.aircraftId, r.date)));
+    targets.push(...batch.filter((_, i) => tried[i] === null));
+    if (targets.length >= 60) break;
+  }
+  return targets.slice(0, 60);
 }
 
 export async function collectAircraftTraces(
@@ -389,8 +418,20 @@ export async function collectAircraftTraces(
   opts: TraceOptions = {},
 ): Promise<Record<string, number>> {
   const now = opts.now ?? new Date();
-  const day = opts.day === "yesterday" ? traceDay(now, 1) : null;
-  const fleet = await loadActiveAircraft(ctx);
+  const day = opts.date ?? (opts.day === "yesterday" ? traceDay(now, 1) : null);
+  if (
+    day &&
+    (!/^\d{4}-\d{2}-\d{2}$/.test(day) ||
+      !Number.isFinite(Date.parse(day)) ||
+      new Date(day).toISOString().slice(0, 10) !== day ||
+      day > traceDay(now, 0) ||
+      day < traceDay(now, 30))
+  ) {
+    throw new Error("Trace date must be a valid UTC day within the last 30 days");
+  }
+  const fleet = (await loadActiveAircraft(ctx)).filter(
+    (a) => opts.aircraftId === undefined || a.id === opts.aircraftId,
+  );
   const adsb = new AdsbSource(ctx.http);
   const stats = {
     aircraft: fleet.length,
@@ -413,13 +454,27 @@ export async function collectAircraftTraces(
     } catch (err) {
       stats.failures++;
       ctx.logger.warn({ err, hex: a.hex, day }, "adsb.lol trace failed");
+      if (opts.aircraftId !== undefined) throw err;
       return;
     }
-    if (!samples.length) return;
+    if (!samples.length) {
+      if (opts.date && opts.aircraftId) {
+        await ctx.redis.set(
+          traceRepairKey(opts.aircraftId, opts.date),
+          "unavailable",
+          "EX",
+          6 * 3600,
+        );
+      }
+      return;
+    }
     throwIfAborted(opts.signal);
     const inserted = await storeTrace(ctx, a, samples, now, stats, opts.signal);
     stats.positions += inserted;
     stats.traced++;
+    if (opts.date && opts.aircraftId) {
+      await ctx.redis.set(traceRepairKey(opts.aircraftId, opts.date), "read", "EX", 7 * 86400);
+    }
   });
   if (stats.skipped) ctx.logger.warn({ skipped: stats.skipped, day }, "trace deadline reached");
   await fencedTransaction(
@@ -467,7 +522,8 @@ async function storeTrace(
           first_seen_at = least(a.first_seen_at, ${first.ts.toISOString()}::timestamptz),
           updated_at = now()
         where a.icao_hex = ${a.hex}`);
-      await deriveAircraft(tx, a, now, first.ts, stats);
+      const replayMs = Math.max(REPLAY_MAX_MS, now.getTime() - first.ts.getTime() + HOUR);
+      await deriveAircraft(tx, a, now, first.ts, stats, replayMs);
       return count;
     },
     signal,
@@ -780,8 +836,9 @@ async function deriveAircraft(
   now: Date,
   requested: Date | null,
   stats: LegStats,
+  replayMs = REPLAY_MAX_MS,
 ): Promise<void> {
-  const floor = new Date(now.getTime() - REPLAY_MAX_MS);
+  const floor = new Date(now.getTime() - replayMs);
   const stored = await tx
     .select({
       id: aircraftFlights.id,
@@ -797,7 +854,7 @@ async function deriveAircraft(
         sql`coalesce(${aircraftFlights.arrivedAt}, ${aircraftFlights.departedAt}) >= ${floor.toISOString()}`,
       ),
     );
-  const from = replayStart(stored, requested, now, REPLAY_MAX_MS);
+  const from = replayStart(stored, requested, now, replayMs);
   const rows = await tx
     .select()
     .from(aircraftPositions)
@@ -826,6 +883,9 @@ async function deriveAircraft(
       samples: sum.samples,
       maxAltFt: sum.maxAltFt,
       dedupeKey: key,
+      parserVersion: AIRCRAFT_LEG_PARSER_VERSION,
+      depMethod: sum.depMethod,
+      arrMethod: sum.arrMethod,
     };
     await tx
       .insert(aircraftFlights)
@@ -836,13 +896,21 @@ async function deriveAircraft(
           departedAt: values.departedAt,
           arrivedAt: values.arrivedAt,
           durationMin: values.durationMin,
-          depIcao: sql`coalesce(excluded.dep_icao, ${aircraftFlights.depIcao})`,
-          depCity: sql`coalesce(excluded.dep_city, ${aircraftFlights.depCity})`,
-          depCountry: sql`coalesce(excluded.dep_country, ${aircraftFlights.depCountry})`,
-          arrIcao: sql`coalesce(excluded.arr_icao, ${aircraftFlights.arrIcao})`,
-          arrCity: sql`coalesce(excluded.arr_city, ${aircraftFlights.arrCity})`,
-          arrCountry: sql`coalesce(excluded.arr_country, ${aircraftFlights.arrCountry})`,
-          completeness: values.completeness,
+          depIcao: sql`case when ${aircraftFlights.depMethod} = 'opensky' then ${aircraftFlights.depIcao} else excluded.dep_icao end`,
+          depCity: sql`case when ${aircraftFlights.depMethod} = 'opensky' then ${aircraftFlights.depCity} else excluded.dep_city end`,
+          depCountry: sql`case when ${aircraftFlights.depMethod} = 'opensky' then ${aircraftFlights.depCountry} else excluded.dep_country end`,
+          arrIcao: sql`case when ${aircraftFlights.arrMethod} = 'opensky' then ${aircraftFlights.arrIcao} else excluded.arr_icao end`,
+          arrCity: sql`case when ${aircraftFlights.arrMethod} = 'opensky' then ${aircraftFlights.arrCity} else excluded.arr_city end`,
+          arrCountry: sql`case when ${aircraftFlights.arrMethod} = 'opensky' then ${aircraftFlights.arrCountry} else excluded.arr_country end`,
+          depMethod: sql`case when ${aircraftFlights.depMethod} = 'opensky' then 'opensky' else excluded.dep_method end`,
+          arrMethod: sql`case when ${aircraftFlights.arrMethod} = 'opensky' then 'opensky' else excluded.arr_method end`,
+          completeness: sql`case
+            when (excluded.dep_icao is not null or ${aircraftFlights.depMethod} = 'opensky')
+              and (excluded.arr_icao is not null or ${aircraftFlights.arrMethod} = 'opensky') then 'full'::flight_completeness
+            when excluded.dep_icao is not null or ${aircraftFlights.depMethod} = 'opensky' then 'departure_only'::flight_completeness
+            when excluded.arr_icao is not null or ${aircraftFlights.arrMethod} = 'opensky' then 'arrival_only'::flight_completeness
+            else 'enroute'::flight_completeness end`,
+          parserVersion: values.parserVersion,
           samples: values.samples,
           maxAltFt: values.maxAltFt,
           updatedAt: new Date(),
@@ -882,6 +950,7 @@ async function mergeOpenSky(
     await fencedTransaction(
       ctx.db,
       async (tx) => {
+        await lockAircraft(tx, a.hex);
         for (const f of flights) {
           const dep = airportByIcao(f.depIcao);
           const arr = airportByIcao(f.arrIcao);
@@ -891,9 +960,12 @@ async function mergeOpenSky(
             .where(
               and(
                 eq(aircraftFlights.aircraftId, a.id),
-                sql`${aircraftFlights.departedAt} <= ${new Date(f.lastSeen.getTime() + 45 * MINUTE).toISOString()}`,
-                sql`coalesce(${aircraftFlights.arrivedAt}, now()) >= ${new Date(f.firstSeen.getTime() - 45 * MINUTE).toISOString()}`,
+                sql`${aircraftFlights.departedAt} <= ${f.lastSeen.toISOString()}`,
+                sql`coalesce(${aircraftFlights.arrivedAt}, now()) >= ${f.firstSeen.toISOString()}`,
               ),
+            )
+            .orderBy(
+              sql`abs(extract(epoch from (${aircraftFlights.departedAt} - ${f.firstSeen.toISOString()}::timestamptz)))`,
             )
             .limit(1);
           const hit = overlap[0];
@@ -907,6 +979,8 @@ async function mergeOpenSky(
                 arrIcao: sql`coalesce(${aircraftFlights.arrIcao}, ${arr?.icao ?? null})`,
                 arrCity: sql`coalesce(${aircraftFlights.arrCity}, ${arr?.city ?? null})`,
                 arrCountry: sql`coalesce(${aircraftFlights.arrCountry}, ${arr?.country ?? null})`,
+                depMethod: sql`case when ${aircraftFlights.depIcao} is null and ${dep?.icao ?? null}::text is not null then 'opensky' else ${aircraftFlights.depMethod} end`,
+                arrMethod: sql`case when ${aircraftFlights.arrIcao} is null and ${arr?.icao ?? null}::text is not null then 'opensky' else ${aircraftFlights.arrMethod} end`,
                 completeness: sql`case when coalesce(${aircraftFlights.depIcao}, ${dep?.icao ?? null}) is not null and coalesce(${aircraftFlights.arrIcao}, ${arr?.icao ?? null}) is not null then 'full'::flight_completeness else ${aircraftFlights.completeness} end`,
                 source: "merged",
                 updatedAt: new Date(),
@@ -930,6 +1004,9 @@ async function mergeOpenSky(
                 completeness:
                   dep && arr ? "full" : dep ? "departure_only" : arr ? "arrival_only" : "enroute",
                 source: "opensky",
+                parserVersion: AIRCRAFT_LEG_PARSER_VERSION,
+                depMethod: dep ? "opensky" : null,
+                arrMethod: arr ? "opensky" : null,
                 samples: 0,
                 maxAltFt: null,
                 dedupeKey: `${legDedupeKey(a.hex, f.firstSeen)}:os`,

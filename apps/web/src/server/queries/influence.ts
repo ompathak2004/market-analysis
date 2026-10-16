@@ -2,6 +2,7 @@ import { NotFoundError } from "@ma/core";
 import { sql } from "@ma/db";
 import type { AppContext } from "../context";
 import { findCompany } from "./core";
+import { type RegionalExposure, regionalExposure } from "./regions";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -153,6 +154,7 @@ export interface InfluenceResponse {
   promoters: InfluenceEntity[];
   related: InfluenceEntity[];
   paths: InfluencePath[];
+  regions: RegionalExposure[];
   policy: InfluencePolicyEvent[];
   events: InfluenceEvent[];
   coverage: InfluenceCoverage;
@@ -280,10 +282,10 @@ export async function confirmedPaths(
 export async function influenceFor(ctx: AppContext, symbol: string): Promise<InfluenceResponse> {
   const company = await findCompany(ctx, symbol);
   const data = await ctx.api.getOrLoad(
-    `${influenceKey(company.id)}v2`,
+    `${influenceKey(company.id)}v4`,
     async () => {
       const today = new Date().toISOString().slice(0, 10);
-      const [graph, paths, events, coverage] = await Promise.all([
+      const [graph, paths, events, coverage, regions] = await Promise.all([
         ctx.db.execute<GraphRow>(sql`
           with node as (
             select id from graph_nodes where company_id = ${company.id}
@@ -445,6 +447,7 @@ export async function influenceFor(ctx: AppContext, symbol: string): Promise<Inf
                    'policyReadAt', c.policy_read_at) as coverage
           from (select 1) one
           left join influence_coverage c on c.company_id = ${company.id}`),
+        regionalExposure(ctx, company.id),
       ]);
       const g = graph[0];
       const c = coverage[0]?.coverage;
@@ -455,6 +458,7 @@ export async function influenceFor(ctx: AppContext, symbol: string): Promise<Inf
         promoters: g?.promoters ?? [],
         related: g?.related ?? [],
         paths,
+        regions,
         policy: g?.policy ?? [],
         events: [...events].map((e) => ({ ...e, id: Number(e.id) })),
         coverage: {

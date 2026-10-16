@@ -59,6 +59,8 @@ export interface FacilitySeed {
   lon: number;
   radiusKm: number;
   locode: string | null;
+  stateCode?: string;
+  jurisdictionSourceUrl?: string;
   aliases: string[];
   exclusive: boolean;
   active: boolean;

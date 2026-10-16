@@ -1,5 +1,17 @@
 # Operations runbook
 
+## Regional exposure and alt-data v2 rollout
+
+Apply migrations `0013_altdata_provenance` and `0014_company_operating_sites` before deploying readers or the worker. They add columns and tables without deleting stored data. New tables inherit the existing role grants described below. Rebuild both applications; the workspace build filter uses double quotes so the same command works under Windows and POSIX shells.
+
+After worker deployment, run `aircraft.registry` to refresh facility jurisdictions, `influence.states` to ingest the official chief-minister directory, `aircraft.repair` to enqueue bounded historical trace reads, and `altdata.signals` after the repair campaign settles. The new schedules repeat state leadership daily at 04:20 IST and historical repair at 02:40 IST. State refresh uses the Firecrawl monthly budget; trace repair uses the existing adsb.lol HTTP bucket. Web never enqueues these jobs.
+
+`aircraft.trace` also accepts `{ "aircraftId": 123, "date": "2026-10-11" }`; historical reads require one aircraft and a real UTC date within 30 days. A pass plans at most 60 units. Unavailable source days cool down for six hours, successfully read days for seven days. The source may still lack either endpoint. Inspect endpoint methods and parser version rather than using a target percentage of filled airports as a success metric.
+
+For a stored company filing or official company-location document, `influence.sites` accepts `{ "companyId": 123, "documentId": 456, "sites": [{ "name": "Hosur", "stateCode": "IN-TN", "stateName": "Tamil Nadu", "quote": "Hosur in Tamil Nadu" }] }`. The quote must occur verbatim in the immutable current revision and directly associate the location with the named state. The document must belong to that company. A successful import replaces that document's site set atomically; a failed import writes nothing. A newer revision hides those locations until they are re-imported. Do not invent coordinates to make a disclosed region appear on a transport map.
+
+Travel/logistics model version 2 is selected explicitly by the read models. Run `altdata.signals` during rollout; version 1 signals remain stored for comparison but are not served as current. The INFL pane treats electoral bonds as historical funding and shows regional operations separately from confirmed political paths. Full research and unfinished acquisition work: `docs/influence-and-altdata-research.md`.
+
 ## What runs where
 
 | Component | Where | Notes |

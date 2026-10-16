@@ -1,5 +1,6 @@
 import { MINUTE } from "@ma/core";
 import {
+  aircraftRepairTargets,
   airportByIcao,
   CHOKEPOINTS,
   cleanupAltdataPositions,
@@ -17,7 +18,7 @@ import {
 import { type Prices, refreshLogisticsSignals, refreshTravelSignals } from "@ma/intel";
 import { type Metrics, numericMetrics } from "../batch.js";
 import type { WorkerContext } from "../context.js";
-import { done, type Handler, type HandlerMap, type UnitRun } from "../registry.js";
+import { done, fanout, type Handler, type HandlerMap, type UnitRun } from "../registry.js";
 
 const PRICE_TTL_MS = 15 * MINUTE;
 
@@ -66,7 +67,11 @@ export async function altdataPrices(ctx: WorkerContext): Promise<Prices | null> 
   );
 }
 
-export const altdataHandlers: Pick<HandlerMap, AltdataType> = {
+export const altdataHandlers: Pick<HandlerMap, AltdataType | "aircraft.repair"> = {
+  "aircraft.repair": async ({ ctx }) =>
+    ctx.config.ALTDATA_ENABLED
+      ? fanout("aircraft.trace", await aircraftRepairTargets(ctx))
+      : done({ disabled: 1 }),
   "aircraft.registry": gated(async ({ ctx, deadline, signal }) => {
     const facilities = await seedFacilities(ctx, signal);
     const registry = await seedAircraftRegistry(ctx, { deadline: deadline - 20_000, signal });
@@ -77,7 +82,13 @@ export const altdataHandlers: Pick<HandlerMap, AltdataType> = {
   ),
   "aircraft.trace": gated(async ({ ctx, payload, deadline, signal }) =>
     numericMetrics(
-      await collectAircraftTraces(ctx, { day: payload.day, deadline: deadline - 15_000, signal }),
+      await collectAircraftTraces(ctx, {
+        day: payload.day,
+        ...(payload.aircraftId === undefined ? {} : { aircraftId: payload.aircraftId }),
+        ...(payload.date === undefined ? {} : { date: payload.date }),
+        deadline: deadline - 15_000,
+        signal,
+      }),
     ),
   ),
   "ais.collect": gated(async ({ ctx, deadline, signal }) => {

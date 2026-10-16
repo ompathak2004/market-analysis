@@ -53,7 +53,7 @@ const EVENT_TONE: Record<string, ChipTone> = {
 const POLITICAL_LABEL: Record<InfluencePath["terminal"], string> = {
   holds_office: "OFFICE",
   member_of_party: "PARTY",
-  donated_to: "DONATION",
+  donated_to: "HISTORICAL",
 };
 
 const HOP_LABEL: Record<string, readonly [string, string]> = {
@@ -117,6 +117,11 @@ const QUOTE_FIELDS: ReadonlyArray<readonly [string, (v: string) => string]> = [
 ];
 
 function readableQuote(quote: string): string {
+  if (/^<h[1-6]\b/i.test(quote))
+    return quote
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
   if (!quote.startsWith("{")) return quote;
   try {
     const fact: unknown = JSON.parse(quote);
@@ -417,9 +422,9 @@ function coverageRows(data: InfluenceResponse): CoverageRow[] {
     },
     {
       key: "bond",
-      label: "Electoral bonds · SBI/ECI",
+      label: "Historical bonds · SBI/ECI",
       readAt: c.bondsReadAt,
-      detail: `${data.paths.filter((p) => p.terminal === "donated_to").length} donation paths`,
+      detail: "Scheme struck down 15-Feb-2024",
     },
     {
       key: "pcy",
@@ -536,11 +541,56 @@ export async function PoliticalPane({ symbol }: { symbol: string }) {
   return (
     <Pane
       id="political"
-      title="POLITICAL LINKS"
+      title="POLITICAL LINKS & REGIONS"
       area="political"
       meta={rows.length ? `${rows.length} documented` : "none documented"}
-      foot={<output>every hop confirmed and cited · no inference from names</output>}
+      foot={
+        <output>
+          Regional operations show policy exposure. Relationships require confirmed, cited links.
+        </output>
+      }
     >
+      {res.data.regions.length ? (
+        <div className="pane-section">
+          <h3>Operating jurisdictions</h3>
+          <ul data-rows>
+            {res.data.regions.map((region) => (
+              <li key={region.key} className="broker-card" data-row="">
+                <header>
+                  <b>{region.stateName ?? region.stateCode ?? "Jurisdiction not verified"}</b>
+                  <Badge tone={region.freshness === "recent" ? "info" : "warn"}>
+                    {region.freshness === "recent" ? "OBSERVED" : region.freshness.toUpperCase()}
+                  </Badge>
+                </header>
+                <span>
+                  {region.facility} · {region.role}
+                  {region.siteAsOf ? ` · ${shortDate(region.siteAsOf)}` : ""}
+                </span>
+                <span className="dim">
+                  {region.headName
+                    ? `CM listed: ${region.headName} · as observed ${shortDate(region.observedOn)}`
+                    : "Chief minister not verified"}
+                </span>
+                <EvidenceLine items={readable(region.evidence)} />
+                {region.jurisdictionSourceUrl ? (
+                  <a
+                    className="ext sm"
+                    href={region.jurisdictionSourceUrl}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    LOCATION SOURCE
+                  </a>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <p className="dim sm">
+            Assess land, power, water, permits and state incentives. Party control and company
+            access require separate evidence.
+          </p>
+        </div>
+      ) : null}
       <DataTable<PathRow>
         label="Documented political links"
         rows={rows}
@@ -550,11 +600,19 @@ export async function PoliticalPane({ symbol }: { symbol: string }) {
         rowSub={(r) => <EvidenceLine items={readable(r.evidence)} />}
         columns={POLITICAL_COLUMNS}
         empty={
-          <Empty title="NO DOCUMENTED LINK" hint="parliament · myneta · electoral bonds">
+          <Empty
+            title="NO DOCUMENTED LINK"
+            hint="office disclosures · affidavits · historical donations"
+          >
             No fully confirmed, cited chain connects {symbol} to an officeholder, party or donation.
           </Empty>
         }
       />
+      <p className="pane-section dim sm">
+        Electoral bonds record historical funding. The scheme was struck down on 15 February 2024;
+        current funding requires newer contribution and electoral-trust disclosures. A donation does
+        not establish lobbying or a policy favour.
+      </p>
     </Pane>
   );
 }

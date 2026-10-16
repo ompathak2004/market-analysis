@@ -1,5 +1,11 @@
 import { sql } from "@ma/db";
 import { RELATIONSHIP_EXTRACTOR_VERSION } from "@ma/ingest";
+import {
+  LOGISTICS_MODEL_VERSION,
+  LOGISTICS_SIGNAL_KINDS,
+  TRAVEL_MODEL_VERSION,
+  TRAVEL_SIGNAL_KINDS,
+} from "./altdata/types.js";
 import { CONCENTRATION_MODEL_VERSION } from "./concentration.js";
 import { HORIZONS, MOMENTUM_MODEL_VERSION } from "./momentum.js";
 import { RISK_MODEL_VERSION } from "./risk.js";
@@ -17,6 +23,8 @@ export const ACTIVE_SIGNAL_VERSIONS: Readonly<Record<string, number>> = {
     ]),
   ),
   distress_score: RISK_MODEL_VERSION,
+  ...Object.fromEntries(TRAVEL_SIGNAL_KINDS.map((kind) => [kind, TRAVEL_MODEL_VERSION])),
+  ...Object.fromEntries(LOGISTICS_SIGNAL_KINDS.map((kind) => [kind, LOGISTICS_MODEL_VERSION])),
 };
 
 export function activeSignalVersion(kind: string): number | null {

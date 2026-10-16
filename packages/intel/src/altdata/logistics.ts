@@ -27,7 +27,7 @@ export const CHOKEPOINT_LOITER_MIN = 360;
 const FILL_FACTOR = 0.95;
 const PRODUCT_CRACK = 1.15;
 const VALUE_BAND = 0.25;
-const CARGO_VALUE_BASIS = "dwt_est × 0.95 fill × Brent × USDINR";
+const CARGO_VALUE_BASIS = "class-typical barrels × 0.95 fill × Brent × USDINR";
 
 const TANKER_BBL: Record<string, number> = {
   VLCC: 2_000_000,
@@ -48,6 +48,7 @@ const LOGISTICS_KIND_BASE: Record<LogisticsSignalKind, number> = {
   logistics_export_departures_7d: 0.6,
   logistics_fleet_activity: 0.8,
   logistics_coverage: 1,
+  logistics_dwell_change: 0.7,
 };
 
 const COMMODITY_CLASSES: Record<string, string[]> = {
@@ -162,6 +163,7 @@ export interface LogisticsCall {
   leftMs: number | null;
   dwellMin: number | null;
   cargoDirection: string | null;
+  endedBy: string | null;
 }
 
 export interface InboundVessel {
@@ -302,7 +304,10 @@ export function computeLogisticsSignals(input: LogisticsInput): LogisticsResult 
       const recent = (callsBy.get(f.id) ?? []).filter((c) => c.enteredMs >= from7);
       const byClass = { tanker: 0, gas: 0, cargo: 0, container: 0 };
       for (const c of recent) if (c.class in byClass) byClass[c.class as keyof typeof byClass]++;
-      const dwell = recent.map((c) => c.dwellMin).filter((d): d is number => d !== null);
+      const dwell = recent
+        .filter((c) => c.endedBy === "exit")
+        .map((c) => c.dwellMin)
+        .filter((d): d is number => d !== null);
       return { f, recent, byClass, medianDwellMin: median(dwell) };
     });
     const total = rows.reduce((s, r) => s + r.recent.length, 0);
@@ -382,12 +387,52 @@ export function computeLogisticsSignals(input: LogisticsInput): LogisticsResult 
       );
     }
 
+    for (const f of eligible) {
+      const completed = (callsBy.get(f.id) ?? []).filter(
+        (c) =>
+          c.endedBy === "exit" &&
+          c.dwellMin !== null &&
+          c.dwellMin > 0 &&
+          c.leftMs !== null &&
+          c.leftMs <= nowMs,
+      );
+      const recent = completed.filter((c) => (c.leftMs as number) >= from7);
+      const prior = completed.filter(
+        (c) => (c.leftMs as number) < from7 && (c.leftMs as number) >= from7 - 56 * DAY_MS,
+      );
+      if (recent.length < 5 || prior.length < 5) continue;
+      const recentMin = median(recent.map((c) => c.dwellMin as number));
+      const priorMin = median(prior.map((c) => c.dwellMin as number));
+      if (recentMin === null || priorMin === null || priorMin <= 0) continue;
+      const changePct = round((recentMin / priorMin - 1) * 100, 1);
+      push(
+        "logistics_dwell_change",
+        changePct,
+        `${f.name}: median observed dwell ${round(recentMin / 60, 1)} h vs ${round(priorMin / 60, 1)} h prior 8 weeks (${changePct > 0 ? "+" : ""}${changePct}%). Check turnaround and working-capital timing; cargo mix can explain changes.`,
+        linkageConfidence(f) * covFactor(f) * LOGISTICS_KIND_BASE.logistics_dwell_change,
+        recent.map((c) => callEvidence(c, f.slug)),
+        {
+          facilityId: f.id,
+          recentCalls: recent.length,
+          baselineCalls: prior.length,
+          recentMedianHours: round(recentMin / 60, 2),
+          baselineMedianHours: round(priorMin / 60, 2),
+          excludesCoverageTimeouts: true,
+        },
+      );
+      break;
+    }
+
     const congestion = eligible
       .map((f) => {
         const waiting = input.waiting.filter((w) => w.facilityId === f.id);
         const days = Math.min(56, historyWeeks(f) * 7 + 7);
         const closed = (callsBy.get(f.id) ?? []).filter(
-          (c) => c.leftMs !== null && c.leftMs >= nowMs - days * DAY_MS && c.dwellMin !== null,
+          (c) =>
+            c.endedBy === "exit" &&
+            c.leftMs !== null &&
+            c.leftMs >= nowMs - days * DAY_MS &&
+            c.dwellMin !== null,
         );
         const excess = closed.reduce((s, c) => s + Math.max(0, (c.dwellMin as number) - 1440), 0);
         const baselineWaiting = days > 0 ? round(excess / (days * 1440), 2) : 0;
@@ -443,7 +488,7 @@ export function computeLogisticsSignals(input: LogisticsInput): LogisticsResult 
       .map((f) => {
         const weeks = historyWeeks(f);
         const exp = (callsBy.get(f.id) ?? []).filter(
-          (c) => c.leftMs !== null && c.cargoDirection === "export",
+          (c) => c.endedBy === "exit" && c.leftMs !== null && c.cargoDirection === "export",
         );
         const recent = exp.filter((c) => (c.leftMs as number) >= from7);
         const weekly = weekCounts(
@@ -693,6 +738,7 @@ type CallRow = {
   leftMs: number | null;
   dwellMin: number | null;
   cargoDirection: string | null;
+  endedBy: string | null;
 };
 
 type InboundRow = {
@@ -787,7 +833,7 @@ export async function refreshLogisticsSignals(
       select c.id, c.facility_id as "facilityId", c.mmsi, v.name, v.class::text as class,
         v.size_class as "sizeClass", (extract(epoch from c.entered_at) * 1000)::float8 as "enteredMs",
         (extract(epoch from c.left_at) * 1000)::float8 as "leftMs", c.dwell_min as "dwellMin",
-        c.cargo_direction as "cargoDirection"
+        c.cargo_direction as "cargoDirection", c.ended_by as "endedBy"
       from vessel_calls c join vessels v on v.mmsi = c.mmsi
       where c.facility_id in ${fids} and c.entered_at >= ${iso(nowMs - 70 * DAY_MS)}`),
     db.execute<InboundRow>(sql`

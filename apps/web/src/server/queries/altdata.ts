@@ -2,6 +2,7 @@ import { sql } from "@ma/db";
 import { airportByIcao, CHOKEPOINTS } from "@ma/ingest";
 import {
   type AltdataSignalInputs,
+  activeSignalVersionClause,
   CHOKEPOINT_LOITER_MIN,
   cargoValueEstimate,
   coverageFactor,
@@ -13,7 +14,6 @@ import { findCompany } from "./core";
 
 const MINUTE = 60_000;
 const PRICE_TTL_MS = 15 * MINUTE;
-const MAP_RADIUS_KM = 60;
 
 type SQL = ReturnType<typeof sql>;
 
@@ -59,6 +59,8 @@ export type TravelLegView = {
   arr: AirportRef | null;
   completeness: string;
   source: string;
+  depMethod: string | null;
+  arrMethod: string | null;
 };
 
 export type TravelCoverageView = {
@@ -117,6 +119,7 @@ export type LogisticsCallView = {
   leftAt: string | null;
   dwellMin: number | null;
   cargoDirection: string | null;
+  endedBy: string | null;
   cargoProxy: { commodity: string; bbl: number | null };
 };
 
@@ -159,6 +162,7 @@ export type MapPosition = {
   cogDeg: number | null;
   class: string;
   ts: string;
+  linkage: string;
 };
 
 export type CompanyLogistics = {
@@ -219,7 +223,9 @@ async function latestKindSignals(
   }>(sql`
     select distinct on (kind) kind, as_of::text as "asOf", value, inputs from signals
     where company_id = ${companyId} and kind like ${`${prefix}%`}
-      and as_of = (select max(as_of) from signals where company_id = ${companyId} and kind like ${`${prefix}%`})
+      and ${activeSignalVersionClause(sql`kind`, sql`model_version`)}
+      and as_of = (select max(as_of) from signals where company_id = ${companyId} and kind like ${`${prefix}%`}
+        and ${activeSignalVersionClause(sql`kind`, sql`model_version`)})
     order by kind, model_version desc`);
   return rows.map((r) => ({ ...r }));
 }
@@ -274,12 +280,14 @@ export async function companyTravel(
           arrCountry: string | null;
           completeness: string;
           source: string;
+          depMethod: string | null;
+          arrMethod: string | null;
         }>(sql`
           select f.id, a.registration, ${isoz("f.departed_at")} as "departedAt",
             ${isoz("f.arrived_at")} as "arrivedAt", f.duration_min as "durationMin",
             f.dep_icao as "depIcao", f.dep_city as "depCity", f.dep_country as "depCountry",
             f.arr_icao as "arrIcao", f.arr_city as "arrCity", f.arr_country as "arrCountry",
-            f.completeness::text as completeness, f.source
+            f.completeness::text as completeness, f.source, f.dep_method as "depMethod", f.arr_method as "arrMethod"
           from aircraft_flights f join corporate_aircraft a on a.id = f.aircraft_id
           where f.aircraft_id in ${ids}
             and coalesce(f.arrived_at, f.departed_at) >= now() - interval '30 days'
@@ -324,6 +332,8 @@ export async function companyTravel(
           arr: airportRef(l.arrIcao, l.arrCity, l.arrCountry),
           completeness: l.completeness,
           source: l.source,
+          depMethod: l.depMethod,
+          arrMethod: l.arrMethod,
         })),
         weeklyLegCounts: weekly.map((w) => ({ ...w })),
         signals: signalRows,
@@ -345,24 +355,6 @@ export async function companyTravel(
     },
     { ttlMs: 5 * MINUTE, staleMs: 30 * MINUTE },
   );
-}
-
-function mapFilter(points: Array<{ lat: number; lon: number }>): SQL {
-  const parts: SQL[] = [];
-  for (const p of points) {
-    const dLat = MAP_RADIUS_KM / 111;
-    const dLon = MAP_RADIUS_KM / (111 * Math.max(0.2, Math.cos((p.lat * Math.PI) / 180)));
-    parts.push(
-      sql`(p.lat between ${p.lat - dLat} and ${p.lat + dLat} and p.lon between ${p.lon - dLon} and ${p.lon + dLon})`,
-    );
-  }
-  for (const c of CHOKEPOINTS) {
-    const [[latMin, lonMin], [latMax, lonMax]] = c.box;
-    parts.push(
-      sql`(p.lat between ${latMin} and ${latMax} and p.lon between ${lonMin} and ${lonMax})`,
-    );
-  }
-  return sql.join(parts, sql` or `);
 }
 
 export async function companyLogistics(
@@ -442,11 +434,12 @@ export async function companyLogistics(
               v.size_class as "sizeClass", ${isoz("c.entered_at")} as "sinceAt", c.nav_status_mode as "navStatus"
             from vessel_calls c join vessels v on v.mmsi = c.mmsi
             where c.facility_id in ${fids} and c.left_at is null
+              and v.last_seen_at >= now() - interval '12 hours'
             order by c.entered_at desc limit 200`),
           ctx.db.execute<Omit<LogisticsCallView, "cargoProxy">>(sql`
             select c.id, f.slug as "facilitySlug", c.mmsi, v.name, v.class::text as class,
               v.size_class as "sizeClass", ${isoz("c.entered_at")} as "enteredAt", ${isoz("c.left_at")} as "leftAt",
-              c.dwell_min as "dwellMin", c.cargo_direction as "cargoDirection"
+              c.dwell_min as "dwellMin", c.cargo_direction as "cargoDirection", c.ended_by as "endedBy"
             from vessel_calls c join vessels v on v.mmsi = c.mmsi join facilities f on f.id = c.facility_id
             where c.facility_id in ${fids} and coalesce(c.left_at, c.entered_at) >= now() - interval '7 days'
             order by c.entered_at desc limit 50`),
@@ -458,13 +451,20 @@ export async function companyLogistics(
             from chokepoint_transits t join vessels v on v.mmsi = t.mmsi
             join facilities f on f.id = coalesce(v.destination_facility_id, t.destination_facility_id)
             where t.left_at is null and f.id in ${fids}
+              and v.last_seen_at >= now() - interval '2 days'
             order by t.mmsi, t.entered_at desc`),
           ctx.db.execute<MapPosition>(sql`
+            with linked as (
+              select c.mmsi, 'facility call' as linkage from vessel_calls c
+              where c.facility_id in ${fids} and coalesce(c.left_at, c.entered_at) >= now() - interval '7 days'
+              union select mmsi, 'declared destination' from vessels where destination_facility_id in ${fids}
+              union select v.mmsi, 'owned fleet' from vessels v join vessel_fleet vf on vf.imo = v.imo where vf.company_id = ${company.id}
+            ), links as (select mmsi, string_agg(distinct linkage, ', ' order by linkage) as linkage from linked group by mmsi)
             select distinct on (p.mmsi) p.mmsi, p.lat, p.lon, p.cog_deg as "cogDeg", v.class::text as class,
-              ${isoz("p.ts")} as ts
+              ${isoz("p.ts")} as ts, l.linkage
             from vessel_positions p join vessels v on v.mmsi = p.mmsi
+            join links l on l.mmsi = p.mmsi
             where p.ts >= now() - interval '24 hours'
-              and (${mapFilter(facilityRows)})
             order by p.mmsi, p.ts desc limit 200`),
           latestKindSignals(ctx, company.id, "logistics_"),
           altdataPrices(ctx),

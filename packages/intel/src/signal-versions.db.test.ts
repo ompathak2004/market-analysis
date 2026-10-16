@@ -21,7 +21,9 @@ describe.skipIf(!url)("active signal version clause (DATABASE_URL_TEST)", () => 
         ('customer_hhi', 2), ('customer_hhi', 3),
         ('customer_momentum_1m', 1), ('customer_momentum_1m', 2),
         ('top3_customers_pct', 2), ('top3_customers_pct', 3),
-        ('distress_score', 1), ('gst_filing_score', 7)
+        ('distress_score', 1), ('gst_filing_score', 7),
+        ('travel_coverage', 1), ('travel_coverage', 2),
+        ('logistics_dwell_change', 1), ('logistics_dwell_change', 2)
       ) as v(kind, version)
       where ${activeSignalVersionClause(sql`v.kind`, sql`v.version`)}
       order by kind`);
@@ -30,7 +32,9 @@ describe.skipIf(!url)("active signal version clause (DATABASE_URL_TEST)", () => 
       ["customer_momentum_1m", 2],
       ["distress_score", 1],
       ["gst_filing_score", 7],
+      ["logistics_dwell_change", 2],
       ["top3_customers_pct", 3],
+      ["travel_coverage", 2],
     ]);
   });
 });

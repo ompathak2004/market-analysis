@@ -3,6 +3,7 @@
 Bloomberg-like intelligence terminal for Indian equities: supply-chain relationships extracted from filings, relationship value estimates, customer momentum, distress scores, event impact analysis, Moneycontrol broker research, Cerebras-generated company and market briefs with cited evidence, and corporate-aircraft and vessel alt-data — one Next.js app on Vercel serving the terminal UI, the cached `/api/v1` read API and the cron jobs.
 
 - Start here: [`AGENTS.md`](AGENTS.md) (codebase map and conventions)
+- New to the repository: [`docs/codebase-guide.md`](docs/codebase-guide.md) (architecture, execution paths, database, caches, deployment, and source-review findings)
 - Models: [`docs/methodology.md`](docs/methodology.md)
 - Status and next steps: [`docs/plan.md`](docs/plan.md)
 - Sources and caching: [`docs/data-sources.md`](docs/data-sources.md)

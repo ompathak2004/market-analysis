@@ -25,7 +25,7 @@ export const FAMILY_INVALIDATIONS: Record<string, readonly string[]> = {
   "market-brief": ["market-brief:"],
   triage: ["announcements:", "feed:", "market-brief:", BRIEF_INPUTS],
   "broker-theses": ["analysts:", BRIEF_INPUTS],
-  "aircraft-registry": ["travel:", "logistics:", "altdata:"],
+  "aircraft-registry": ["travel:", "logistics:", "altdata:", "influence:"],
   "aircraft-sample": ["travel:", "altdata:"],
   "aircraft-trace": ["travel:", "altdata:"],
   "ais-collect": ["logistics:", "altdata:"],

@@ -7,11 +7,13 @@ import {
   syncBonds,
   syncGazette,
   syncGovernance,
+  syncOperatingSites,
   syncParliament,
   syncPerimeter,
   syncPib,
   syncPrs,
   syncRelatedParties,
+  syncStateLeadership,
   tagPolicyEvent,
   untaggedPolicyEvents,
 } from "@ma/intel";
@@ -33,6 +35,8 @@ type InfluenceHandlers = Pick<
   | "influence.perimeter.fanout"
   | "influence.perimeter"
   | "influence.parliament"
+  | "influence.states"
+  | "influence.sites"
   | "influence.affidavits"
   | "influence.affidavit"
   | "influence.bonds"
@@ -45,6 +49,9 @@ type InfluenceHandlers = Pick<
 >;
 
 export const influenceHandlers: InfluenceHandlers = {
+  "influence.states": async ({ ctx, signal }) => done(await syncStateLeadership(ctx, signal)),
+  "influence.sites": async ({ ctx, payload, signal }) =>
+    done(await syncOperatingSites(ctx, payload, signal)),
   "influence.governance.fanout": async ({ ctx }) =>
     companies(
       "influence.governance",
