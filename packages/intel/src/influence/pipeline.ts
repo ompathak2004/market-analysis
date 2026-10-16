@@ -6,11 +6,13 @@ import {
   counterparties,
   counterpartyAliases,
   desc,
+  documents,
   eq,
   fencedTransaction,
   fundamentals,
   gte,
   inArray,
+  influenceEdgeEvidence,
   influenceEdges,
   isNull,
   or,
@@ -35,10 +37,12 @@ import {
   NseGovernanceSource,
   NseRptSource,
   normalizeCompanyName,
+  pageOf,
   type RptFiling,
   type RptReport,
   rptSnapshot,
 } from "@ma/ingest";
+import { GROUP_EVIDENCE_VERSION, groupDisclosure } from "./group-evidence.js";
 import {
   confidenceFor,
   INFLUENCE_EVENT_RULE_VERSION,
@@ -607,17 +611,21 @@ export async function syncRelatedParties(
   return result("updated", { changed: true, ...out });
 }
 
+function groupLabel(groupKey: string): string {
+  return `${groupKey
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((w) => w[0]?.toUpperCase() + w.slice(1))
+    .join(" ")} Group`;
+}
+
 async function groupCounterparty(tx: Tx, groupKey: string): Promise<number | null> {
   const [hit] = await tx
     .select({ id: counterparties.id })
     .from(counterparties)
     .where(and(eq(counterparties.kind, "group"), eq(counterparties.groupKey, groupKey)));
   if (hit) return hit.id;
-  const label = `${groupKey
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map((w) => w[0]?.toUpperCase() + w.slice(1))
-    .join(" ")} Group`;
+  const label = groupLabel(groupKey);
   const normalized = normalizeCompanyName(label);
   const [created] = await tx
     .insert(counterparties)
@@ -705,6 +713,49 @@ export async function syncPerimeter(
     .orderBy(desc(shareholding.quarterEnd))
     .limit(1);
 
+  const disclosures = new Map<
+    string,
+    {
+      revisionId: number;
+      content: string;
+      span: { start: number; end: number };
+      page: number | null;
+    }
+  >();
+  if (groups.length) {
+    const reports = await ctx.db
+      .select({ id: documents.id, revisionId: documents.currentRevisionId })
+      .from(documents)
+      .where(
+        and(
+          eq(documents.companyId, companyId),
+          eq(documents.source, "annual_report"),
+          sql`${documents.currentRevisionId} is not null`,
+        ),
+      )
+      .orderBy(desc(documents.publishedAt), desc(documents.id))
+      .limit(6);
+    for (const report of reports) {
+      throwIfAborted(signal);
+      if (report.revisionId === null) continue;
+      const revision = await ctx.docs.revision(report.revisionId);
+      if (!revision) continue;
+      const content = await ctx.docs.text(revision);
+      for (const group of groups) {
+        if (disclosures.has(group.groupKey)) continue;
+        const span = groupDisclosure(content, groupLabel(group.groupKey));
+        if (span)
+          disclosures.set(group.groupKey, {
+            revisionId: revision.id,
+            content,
+            span,
+            page: pageOf(revision.pageMap, span.start),
+          });
+      }
+      if (disclosures.size === groups.length) break;
+    }
+  }
+
   const byCounterparty = (cls: "holding" | "subsidiary") => {
     const out = new Map<number, typeof rpt>();
     for (const r of rpt) {
@@ -780,9 +831,24 @@ export async function syncPerimeter(
       }
 
       for (const g of groups) {
+        throwIfAborted(signal);
         const counterpartyId = await groupCounterparty(tx, g.groupKey);
         if (counterpartyId === null) continue;
         const node = await nodeFor(tx, "counterparty", counterpartyId);
+        const disclosure = disclosures.get(g.groupKey);
+        const spanId = disclosure
+          ? await spanFor(tx, disclosure.revisionId, disclosure.content, disclosure.span, {
+              kind: "group_membership",
+              group: g.groupKey,
+              page: disclosure.page,
+            })
+          : null;
+        await tx.delete(influenceEdgeEvidence).where(sql`
+          edge_id in (select id from influence_edges where from_node_id = ${node}
+            and to_node_id = ${companyNode} and kind = 'promoter_of')
+          and evidence_span_id in (select id from evidence_spans
+            where locator->>'kind' = 'group_membership' and locator->>'group' = ${g.groupKey}
+              ${spanId === null ? sql`` : sql`and id <> ${spanId}`})`);
         const ownershipId = promoter
           ? await ownershipRow(tx, {
               holderNodeId: node,
@@ -790,7 +856,7 @@ export async function syncPerimeter(
               pct: promoter.pct,
               asOf: promoter.quarterEnd,
               source: "shareholding",
-              documentRevisionId: null,
+              documentRevisionId: disclosure?.revisionId ?? null,
             })
           : null;
         count(
@@ -803,11 +869,19 @@ export async function syncPerimeter(
             source: "primary",
             identifier: false,
             inputHash: sha256(
-              JSON.stringify(["group", g.groupKey, g.source, promoter?.quarterEnd, promoter?.pct]),
+              JSON.stringify([
+                "group",
+                g.groupKey,
+                g.source,
+                promoter?.quarterEnd,
+                promoter?.pct,
+                GROUP_EVIDENCE_VERSION,
+                disclosure?.revisionId ?? null,
+              ]),
             ),
             validFrom: null,
             validTo: null,
-            spanIds: [],
+            spanIds: spanId ? [spanId] : [],
           }),
         );
       }

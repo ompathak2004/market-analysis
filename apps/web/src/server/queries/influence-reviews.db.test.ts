@@ -17,7 +17,7 @@ describe.skipIf(!url)("INFL political paths and review (DATABASE_URL_TEST)", () 
   let since = "";
   const tag = `P${randomUUID().slice(0, 8).toUpperCase()}`;
   const invalidated: string[] = [];
-  const seed = { company: 0, persons: [] as number[], document: 0, pendingOffice: 0 };
+  const seed = { company: 0, persons: [] as number[], document: 0, pendingOffice: 0, uncited: 0 };
 
   const ctxOf = (d: Db) =>
     ({
@@ -107,6 +107,7 @@ describe.skipIf(!url)("INFL political paths and review (DATABASE_URL_TEST)", () 
       return id;
     };
 
+    seed.uncited = await edge(meeraNode, cNode, "promoter_of", "pending", 0.8, null);
     await edge(meeraNode, cNode, "director_of", "confirmed", 0.98, `Meera ${tag} Director`);
     await edge(meeraNode, houseNode, "holds_office", "confirmed", 0.95, `Meera ${tag} MP`);
     await edge(meeraNode, partyNode, "member_of_party", "confirmed", 0.95, null);
@@ -192,6 +193,44 @@ describe.skipIf(!url)("INFL political paths and review (DATABASE_URL_TEST)", () 
     expect(page.items.some((i) => i.from.label.includes(tag) && i.kind === "director_of")).toBe(
       false,
     );
+  });
+
+  it("filters political review items without including promoter seeds", async () => {
+    const page = await influenceReviewQueue(ctxOf(readOnly), { limit: 100, political: true });
+    expect(page.items.some((i) => i.edgeId === seed.pendingOffice)).toBe(true);
+    expect(page.items.some((i) => i.edgeId === seed.uncited)).toBe(false);
+    expect(
+      page.items.every((i) =>
+        [
+          "holds_office",
+          "member_of_party",
+          "declared_interest",
+          "declared_family",
+          "donated_to",
+        ].includes(i.kind),
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses uncited confirmation without recording a decision and still permits rejection", async () => {
+    const res = await reviewInfluenceEdge(
+      ctxOf(readOnly),
+      { edgeId: seed.uncited, decision: "confirm", version: 1 },
+      "operator",
+    ).catch((e: unknown) => e);
+    expect(res).toBeInstanceOf(AppError);
+    expect((res as AppError).status).toBe(400);
+    const [row] = await db.execute<{ status: string; version: number; reviews: number }>(sql`
+      select status, version, (select count(*)::int from influence_reviews where edge_id = e.id) as reviews
+      from influence_edges e where id = ${seed.uncited}`);
+    expect(row).toEqual({ status: "pending", version: 1, reviews: 0 });
+    expect(
+      await reviewInfluenceEdge(
+        ctxOf(readOnly),
+        { edgeId: seed.uncited, decision: "reject", version: 1 },
+        "operator",
+      ),
+    ).toMatchObject({ status: "rejected", version: 2 });
   });
 
   it("rejects a stale version, confirms with the current one and invalidates the company", async () => {

@@ -1,6 +1,6 @@
 {
-  "id": "cb165543-29a9-41b0-b993-b9d5baee71dc",
-  "prevId": "5407faf9-5a09-4d82-8401-0848804230b0",
+  "id": "5407faf9-5a09-4d82-8401-0848804230b0",
+  "prevId": "cc44c585-2f2f-4da9-af4c-728165754e74",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -9300,123 +9300,6 @@
         "related_party_transactions_value_ck": {
           "name": "related_party_transactions_value_ck",
           "value": "\"related_party_transactions\".\"value_cr\" is null or \"related_party_transactions\".\"value_cr\" >= 0"
-        }
-      },
-      "isRLSEnabled": false
-    },
-    "public.company_operating_sites": {
-      "name": "company_operating_sites",
-      "schema": "",
-      "columns": {
-        "company_id": {
-          "name": "company_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "document_id": {
-          "name": "document_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "state_code": {
-          "name": "state_code",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "evidence_span_id": {
-          "name": "evidence_span_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "observed_on": {
-          "name": "observed_on",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "company_operating_sites_company_id_companies_id_fk": {
-          "name": "company_operating_sites_company_id_companies_id_fk",
-          "tableFrom": "company_operating_sites",
-          "tableTo": "companies",
-          "columnsFrom": [
-            "company_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "company_operating_sites_document_id_documents_id_fk": {
-          "name": "company_operating_sites_document_id_documents_id_fk",
-          "tableFrom": "company_operating_sites",
-          "tableTo": "documents",
-          "columnsFrom": [
-            "document_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "company_operating_sites_evidence_span_id_evidence_spans_id_fk": {
-          "name": "company_operating_sites_evidence_span_id_evidence_spans_id_fk",
-          "tableFrom": "company_operating_sites",
-          "tableTo": "evidence_spans",
-          "columnsFrom": [
-            "evidence_span_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "company_operating_sites_company_id_document_id_name_pk": {
-          "name": "company_operating_sites_company_id_document_id_name_pk",
-          "columns": [
-            "company_id",
-            "document_id",
-            "name"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "company_operating_sites_state_ck": {
-          "name": "company_operating_sites_state_ck",
-          "value": "\"company_operating_sites\".\"state_code\" ~ '^IN-[A-Z]{2}$'"
         }
       },
       "isRLSEnabled": false

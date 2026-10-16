@@ -2,7 +2,7 @@
 
 ## Regional exposure and alt-data v2 rollout
 
-Apply migrations `0013_altdata_provenance` and `0014_company_operating_sites` before deploying readers or the worker. They add columns and tables without deleting stored data. New tables inherit the existing role grants described below. Rebuild both applications; the workspace build filter uses double quotes so the same command works under Windows and POSIX shells.
+Apply migrations `0014_altdata_provenance` and `0015_company_operating_sites` before deploying readers or the worker. They add columns and tables without deleting stored data. New tables inherit the existing role grants described below. Rebuild both applications; the workspace build filter uses double quotes so the same command works under Windows and POSIX shells.
 
 After worker deployment, run `aircraft.registry` to refresh facility jurisdictions, `influence.states` to ingest the official chief-minister directory, `aircraft.repair` to enqueue bounded historical trace reads, and `altdata.signals` after the repair campaign settles. The new schedules repeat state leadership daily at 04:20 IST and historical repair at 02:40 IST. State refresh uses the Firecrawl monthly budget; trace repair uses the existing adsb.lol HTTP bucket. Web never enqueues these jobs.
 

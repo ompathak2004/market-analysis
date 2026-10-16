@@ -91,9 +91,13 @@ describe.skipIf(!url)("INFL read model (DATABASE_URL_TEST)", () => {
     const revision = await one(sql`
       insert into document_revisions (document_id, content_sha256, text_bytes, published_at)
       values (${seed.document}, ${`${tag}rev`}, 100, now() - interval '9 days') returning id`);
-    const span = (quote: string) =>
-      one(sql`insert into evidence_spans (document_revision_id, start_offset, end_offset, quote, page)
-              values (${revision}, 0, ${quote.length}, ${quote}, null) returning id`);
+    let offset = 0;
+    const span = (quote: string) => {
+      const start = offset;
+      offset += quote.length + 1;
+      return one(sql`insert into evidence_spans (document_revision_id, start_offset, end_offset, quote, page)
+              values (${revision}, ${start}, ${start + quote.length}, ${quote}, null) returning id`);
+    };
 
     const cNode = await node("company", "company_id", seed.company);
     const [asha, ravi] = seed.persons as [number, number];
@@ -114,7 +118,15 @@ describe.skipIf(!url)("INFL read model (DATABASE_URL_TEST)", () => {
     const ashaEdge = await edge(ashaNode, cNode, "director_of", "confirmed", 0.98, {
       role: ashaRole,
     });
-    await edge(raviNode, cNode, "director_of", "confirmed", 0.98, { role: raviRole }, "2025-06-30");
+    const raviEdge = await edge(
+      raviNode,
+      cNode,
+      "director_of",
+      "confirmed",
+      0.98,
+      { role: raviRole },
+      "2025-06-30",
+    );
 
     const rpt = (cpId: number | null, name: string, type: string, value: string, key: string) =>
       one(sql`insert into related_party_transactions (company_id, counterparty_id, counterparty_name,
@@ -130,18 +142,23 @@ describe.skipIf(!url)("INFL read model (DATABASE_URL_TEST)", () => {
       rpt: bigRpt,
     });
     await edge(cNode, pendingNode, "related_party", "pending", 0.8, { rpt: pendingRpt });
-    await edge(holdingNode, cNode, "promoter_of", "confirmed", 0.95, {});
+    const promoterEdge = await edge(holdingNode, cNode, "promoter_of", "confirmed", 0.95, {});
+    await edge(pendingNode, cNode, "promoter_of", "confirmed", 0.95, {});
     const own = await one(sql`
       insert into ownership (holder_node_id, target_node_id, pct, as_of, source)
       values (${cNode}, ${subNode}, 74.5, '2025-09-30', 'nse_rpt') returning id`);
-    await edge(cNode, subNode, "owns", "confirmed", 0.95, { ownership: own });
+    const ownEdge = await edge(cNode, subNode, "owns", "confirmed", 0.95, { ownership: own });
 
     const spans = [
       await span(`${tag} Asha is the Chairperson`),
       await span(`${tag} Holdings purchase of goods 120.50`),
+      await span(`${tag} Ravi ceased as director`),
+      await span(`${tag} Holdings is the promoter`),
+      await span(`${tag} owns 74.5% of the subsidiary`),
     ];
     await db.execute(sql`insert into influence_edge_evidence (edge_id, evidence_span_id)
-      values (${ashaEdge}, ${spans[0]}), (${rptEdge}, ${spans[1]})`);
+      values (${ashaEdge}, ${spans[0]}), (${rptEdge}, ${spans[1]}),
+             (${raviEdge}, ${spans[2]}), (${promoterEdge}, ${spans[3]}), (${ownEdge}, ${spans[4]})`);
 
     await db.execute(sql`
       insert into influence_events (company_id, kind, occurred_at, summary, rule_version, input_hash)

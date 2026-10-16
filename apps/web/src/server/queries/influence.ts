@@ -419,6 +419,8 @@ export async function influenceFor(ctx: AppContext, symbol: string): Promise<Inf
             from influence_edges e, node
             where (e.from_node_id = node.id or e.to_node_id = node.id)
               and e.status in ('pending', 'confirmed')
+              and (e.status = 'pending' or exists (
+                select 1 from influence_edge_evidence ee where ee.edge_id = e.id))
             group by 1, 2
           ), rpt as (
             select max(period_end) as period_end from related_party_transactions

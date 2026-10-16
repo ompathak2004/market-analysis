@@ -30,7 +30,7 @@ import type {
   PolicyDocument,
 } from "@ma/ingest";
 import { DocumentStore, PARLIAMENT_PAGE_URL } from "@ma/ingest";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   nseQuoteUrl,
   type PibSourceLike,
@@ -154,9 +154,8 @@ describe.skipIf(!url)("political and policy sync (DATABASE_URL_TEST)", () => {
 
   afterAll(async () => {
     if (!db) return;
-    const kabirId = await personId("Kabir");
     await db.delete(companies).where(eq(companies.id, seed.company));
-    await db.delete(persons).where(inArray(persons.id, [seed.meera, kabirId].filter(Boolean)));
+    await db.delete(persons).where(sql`${persons.canonicalName} like ${`% ${Tag}`}`);
     await db.delete(policyEvents).where(eq(policyEvents.externalId, prid));
     await db.delete(graphNodes).where(eq(graphNodes.partyName, `Party ${Tag}`));
     await db
@@ -291,5 +290,32 @@ describe.skipIf(!url)("political and policy sync (DATABASE_URL_TEST)", () => {
 
     expect(await tagPolicyEvent(ctx, id)).toMatchObject({ status: "unchanged", edges: 0 });
     expect((await companyEvents()).filter((e) => e.kind === "policy_change")).toHaveLength(1);
+  });
+  it("resumes committed Parliament batches after interruption without duplicating people", async () => {
+    const members = Array.from({ length: 27 }, (_, i) =>
+      member(`Resume${String.fromCharCode(65 + i)}`, `${raw}${i}`),
+    );
+    const source = parliament(members);
+    const controller = new AbortController();
+    const transaction = db.transaction.bind(db);
+    const spy = vi.spyOn(db, "transaction").mockImplementation(async (fn, options) => {
+      const out = await transaction(fn, options);
+      if (out && typeof out === "object" && "rows" in out && out.rows === 25) controller.abort();
+      return out;
+    });
+    try {
+      await expect(syncParliament(ctx, { source, signal: controller.signal })).rejects.toThrow();
+    } finally {
+      spy.mockRestore();
+    }
+    const count = async () => {
+      const [row] = await db.execute<{ n: number }>(sql`
+        select count(*)::int as n from political_roles where dedupe_key like ${`parliament:ls:${raw}%`}`);
+      return row?.n ?? 0;
+    };
+    expect(await count()).toBe(25);
+    await syncParliament(ctx, { source });
+    expect(await count()).toBe(27);
+    expect(await syncParliament(ctx, { source })).toMatchObject({ status: "unchanged" });
   });
 });

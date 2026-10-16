@@ -69,7 +69,11 @@ type QueueRow = {
   evidence: ReviewEvidence[] | null;
 };
 
-export function influenceReviewQuery(opts: { limit: number; after: ReviewCursor | null }) {
+export function influenceReviewQuery(opts: {
+  limit: number;
+  after: ReviewCursor | null;
+  political?: boolean;
+}) {
   const after = opts.after
     ? sql`and (e.created_at, e.id) > (${opts.after.createdAt}::timestamptz, ${opts.after.id}::bigint)`
     : sql``;
@@ -119,6 +123,7 @@ export function influenceReviewQuery(opts: { limit: number; after: ReviewCursor 
       ) x
     ) ev on true
     where e.status = 'pending'
+      ${opts.political ? sql`and e.kind in ('holds_office', 'member_of_party', 'declared_interest', 'declared_family', 'donated_to')` : sql``}
       ${after}
     order by e.created_at, e.id
     limit ${opts.limit + 1}`;
@@ -142,12 +147,16 @@ function itemFrom(r: QueueRow): InfluenceReviewItem {
 
 export async function influenceReviewQueue(
   ctx: AppContext,
-  opts: { limit?: number | null; cursor?: string | null } = {},
+  opts: { limit?: number | null; cursor?: string | null; political?: boolean } = {},
 ): Promise<InfluenceReviewPage> {
   const limit = clampLimit(opts.limit);
   const after = opts.cursor ? decodeCursor(opts.cursor) : null;
   if (opts.cursor && !after) throw new AppError("invalid cursor", "BAD_REQUEST", 400);
-  const rows = [...(await ctx.db.execute<QueueRow>(influenceReviewQuery({ limit, after })))];
+  const rows = [
+    ...(await ctx.db.execute<QueueRow>(
+      influenceReviewQuery({ limit, after, political: opts.political ?? false }),
+    )),
+  ];
   const page = rows.slice(0, limit).map(itemFrom);
   const last = page.at(-1);
   return {
