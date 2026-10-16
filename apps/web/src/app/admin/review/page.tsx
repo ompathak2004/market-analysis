@@ -43,6 +43,7 @@ export default async function AdminReviewPage({
   const params = await searchParams;
   const sample = typeof params.sample === "string" ? params.sample : null;
   const scope = sample ? `sample=${encodeURIComponent(sample)}` : null;
+  const political = params.inflKind === "political";
   const raw = params.cursor;
   const cursor =
     typeof raw === "string" && (sample ? decodeSampleCursor(raw) : decodeCursor(raw)) ? raw : null;
@@ -50,7 +51,7 @@ export default async function AdminReviewPage({
   const inflCursor = typeof rawInfl === "string" && decodeCursor(rawInfl) ? rawInfl : null;
   const [res, infl] = await Promise.all([
     attempt(splcQueue(ctx, sample, cursor)),
-    attempt(influenceReviewQueue(ctx, { cursor: inflCursor })),
+    attempt(influenceReviewQueue(ctx, { cursor: inflCursor, political })),
   ]);
   return (
     <div className="grid grid-review admin-screen">
@@ -83,6 +84,7 @@ export default async function AdminReviewPage({
           nextCursor={infl.data.nextCursor}
           paged={inflCursor != null}
           scope={scope}
+          political={political}
         />
       ) : (
         <PaneError

@@ -101,7 +101,7 @@ interface QueueOptions<D extends string> {
   keys: Record<string, D>;
   doneLabel: Record<D, string>;
   refreshOn: readonly number[];
-  fromRow: (row: HTMLElement) => { id: number; body: Record<string, unknown> } | null;
+  fromRow: (row: HTMLElement, decision: D) => { id: number; body: Record<string, unknown> } | null;
   arm?: { decision: D; ms: number; prompt: (id: number) => string };
 }
 
@@ -198,7 +198,7 @@ export function useReviewQueue<D extends string>(opts: QueueOptions<D>) {
       const pane = paneOf(opts.pane);
       if (!pane || focusedPane() !== pane) return;
       const row = selectedRow(pane);
-      const target = row ? opts.fromRow(row) : null;
+      const target = row ? opts.fromRow(row, decision) : null;
       if (!target) return;
       e.preventDefault();
       void decide(target.id, decision, target.body);

@@ -20,8 +20,14 @@ const decisionBody = z
 export const GET = handle(async (req) => {
   const ctx = getContext();
   requireAdmin(ctx, req);
-  const { limit, cursor } = reviewListQuery.parse(query(req));
-  return influenceReviewQueue(ctx, { limit, cursor: cursor ?? null });
+  const { limit, cursor, kind } = reviewListQuery
+    .extend({ kind: z.enum(["all", "political"]).default("all") })
+    .parse(query(req));
+  return influenceReviewQueue(ctx, {
+    limit,
+    cursor: cursor ?? null,
+    political: kind === "political",
+  });
 });
 
 export const POST = handle(async (req) => {
