@@ -4,7 +4,8 @@ Description: GitHub Actions OIDC deploy role for the market-analysis worker
 Parameters:
   GitHubRepository:
     Type: String
-    Default: ompathak2004/market-analysis
+    Default: ompathak2004@111574914/market-analysis@1391210903
+    Description: Owner and repository identity from the GitHub OIDC subject, including immutable IDs
   GitHubBranch:
     Type: String
     Default: main

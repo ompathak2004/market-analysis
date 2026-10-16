@@ -9,7 +9,9 @@ The queue worker (`apps/worker`) runs as one ECS Fargate task in `ap-south-1`, a
 | `ssm-parameters.sh` | Copies a `.env`-style file into SSM SecureStrings `/market-analysis/prod/<NAME>` without printing values, then lists any secret the task definition needs that is still missing. |
 | `deploy.sh` | Manual deploy from a laptop: build, push `<sha>` + `latest`, register a task definition revision with the new image, roll the service, wait for stability. |
 
-CI does the same as `deploy.sh` on every push to `main` that touches the worker, after typecheck, lint, tests and `pnpm db:migrate`. The workflow lives at `infra/aws/github-workflow-worker.yml` because the automation token cannot write under `.github/workflows`; copy it to `.github/workflows/worker.yml` in a commit made with a token that has the `workflow` scope.
+CI does the same as `deploy.sh` on every push to `main` that touches the worker, after typecheck, lint, tests and `pnpm db:migrate`. The active workflow is `.github/workflows/worker.yml`; `infra/aws/github-workflow-worker.yml` is its reference template.
+
+The CI stack's `GitHubRepository` parameter matches the owner/repository portion of the OIDC subject. This repository uses `ompathak2004@111574914/market-analysis@1391210903`; the trust rule also requires the `main` branch and `sts.amazonaws.com` audience. If GitHub changes its subject format, inspect the failed `AssumeRoleWithWebIdentity` event in CloudTrail and update only the exact identity match, preserving the branch, audience and deploy permissions.
 
 ## Bootstrap order
 

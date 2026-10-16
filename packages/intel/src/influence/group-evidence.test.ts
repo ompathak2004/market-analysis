@@ -23,4 +23,30 @@ describe("group disclosure grounding", () => {
     ).toBeNull();
     expect(groupDisclosure("ESL became a part of Vedanta Group.", "Vedanta Group")).toBeNull();
   });
+
+  it("requires the affiliation to describe the reporting company", () => {
+    for (const text of [
+      "A director of the Company, Mr. Adani has been a vital part of the Adani Group since inception.",
+      "The Company guarantees CIM Tools, characterized as strategic as part of Motherson Group.",
+      "We ensure sustainable production. As part of Tata Group’s Project Aalingana, Tata Power works on biodiversity.",
+      "We invest in ESL, which is part of Vedanta Group.",
+    ]) {
+      const group = /Adani|Motherson|Tata|Vedanta/.exec(text)?.[0];
+      expect(groupDisclosure(text, `${group} Group`)).toBeNull();
+    }
+  });
+
+  it("supports explicit company subjects on either side of the affiliation", () => {
+    for (const text of [
+      "The Company, being a part of the Tata Group, uses its brand.",
+      "Being part of the Tata Group, the Company is committed to sustainability.",
+      "Founded decades ago and part of the Tata Group, we bring our heritage.",
+      "As part of the Tata Group, a global institution that upholds community well-being, we are committed to social responsibility.",
+      "We, at Tata Consumer Products, feel proud to be part of Tata Group, founded by Jamshedji Tata.",
+      "Our company is a Tata Group company.",
+      "Tata Group - Promoter group entity contributed through equity shares.",
+    ]) {
+      expect(groupDisclosure(text, "Tata Group")).not.toBeNull();
+    }
+  });
 });
