@@ -2,6 +2,8 @@
 
 ## Regional exposure and alt-data v2 rollout
 
+Production rollout on 2026-10-17 applied migrations `0014`/`0015`, deployed application commit `275e994` to Vercel and ECS task revision 10, loaded 29 official state/UT leadership observations and started a bounded 58-unit historical repair campaign. The Vercel database credential was switched from `avnadmin` to the existing read-only `ma_web` role after live verification exposed connection pressure. Both applications passed production builds; the merged regression suite passed 655 tests across 93 files and CI verification succeeded.
+
 Apply migrations `0014_altdata_provenance` and `0015_company_operating_sites` before deploying readers or the worker. They add columns and tables without deleting stored data. New tables inherit the existing role grants described below. Rebuild both applications; the workspace build filter uses double quotes so the same command works under Windows and POSIX shells.
 
 After worker deployment, run `aircraft.registry` to refresh facility jurisdictions, `influence.states` to ingest the official chief-minister directory, `aircraft.repair` to enqueue bounded historical trace reads, and `altdata.signals` after the repair campaign settles. The new schedules repeat state leadership daily at 04:20 IST and historical repair at 02:40 IST. State refresh uses the Firecrawl monthly budget; trace repair uses the existing adsb.lol HTTP bucket. Web never enqueues these jobs.
@@ -23,7 +25,7 @@ Travel/logistics model version 2 is selected explicitly by the read models. Run 
 | Archive (DB backups under `backups/`, document blobs) | S3 `market-analysis-archive-543588327217` | `backups/` expires after 90 days. |
 | Worker logs | CloudWatch Logs `/market-analysis/worker` | 14-day retention. |
 | Secrets | SSM Parameter Store `/market-analysis/prod/*` (SecureString) | Read by the task at start; `MIGRATION_DATABASE_URL` is read only by CI. |
-| Deploys | GitHub Actions (`infra/aws/github-workflow-worker.yml`, to be copied to `.github/workflows/worker.yml`) | Push to `main` touching the worker: verify → image → `pnpm db:migrate` → new task definition → rolling (stop-then-start) deploy. A failed migration stops the job before the deploy. |
+| Deploys | GitHub Actions (`.github/workflows/worker.yml`; reference template in `infra/aws/github-workflow-worker.yml`) | Push to `main` touching the worker: verify → image → `pnpm db:migrate` → new task definition → rolling (stop-then-start) deploy. A failed migration stops the job before the deploy. |
 
 ## Database roles and connection budget
 

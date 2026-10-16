@@ -19,9 +19,9 @@ A Bloomberg-like terminal for Indian equities with a genuine intelligence layer:
 | Moneycontrol research: shareholding, ratings, consensus, estimates, targets, surprises, broker report PDFs | done | `packages/ingest/src/sources/moneycontrol.ts`, `pipelines/research.ts` |
 | Cerebras intelligence layer: rule insights, company brief, broker digest, market brief, triage, broker theses | done | `packages/llm`, `packages/intel/src/insights` |
 | Alt-data: aircraft registry + adsb.lol sampling and full traces, OpenSky merge, AISStream collection, travel and logistics signals | done | `packages/ingest/src/altdata`, `packages/intel/src/altdata` |
-| Flight provenance and bounded historical repair; travel/logistics v2; relevant-vessel maps; source-backed operating regions and daily official state leadership | implemented, verified locally; deployment pending | migrations `0014`/`0015`, `docs/influence-and-altdata-research.md` |
+| Flight provenance and bounded historical repair; travel/logistics v2; relevant-vessel maps; source-backed operating regions and daily official state leadership | deployed 2026-10-17; 29 official leadership records loaded, initial 58-unit historical repair started | migrations `0014`/`0015`, `docs/influence-and-altdata-research.md` |
 | Gloomberg-style terminal UI (home, DES/GP/FA/ANR/SPLC/NEWS/JET/SHIP/INTL, SIG, MOV, custom scrollbars) | done | `apps/web/src/{app,components,styles}` |
-| Vercel deployment (read-only web app) against Aiven Postgres + managed Redis | in progress (move `DATABASE_URL` to `ma_web`, drop `CRON_SECRET`) | project `market-analysis` |
+| Vercel deployment (read-only web app) against Aiven Postgres + managed Redis | deployed; `DATABASE_URL` uses the bounded `ma_web` role | project `market-analysis` |
 | Widen data: NIFTY500 prices/fundamentals/relationships | partial | run jobs repeatedly |
 | Job platform: `@ma/jobs` contracts/ledger/lease, migrations `0003_jobs_platform` and `0011_job_mode_worker_only`, pg-boss worker with per-unit handlers, schedules, CloudWatch metrics, CLI; `job_control` is `paused|worker` only | done (cut over 2026-10-13; mode `worker`, Vercel crons and the web runner removed) | `packages/jobs`, `apps/worker` |
 | AWS deploy: ECS Fargate Spot worker, SSM secrets, alarms | in progress | `Dockerfile`, `infra/aws`, `docs/ops.md` |
