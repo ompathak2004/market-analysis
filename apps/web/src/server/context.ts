@@ -9,7 +9,7 @@ export interface AppContext extends IngestContext {
   api: Cache;
 }
 
-const WEB_POOL_MAX = 2;
+const WEB_POOL_MAX = 1;
 const WEB_STATEMENT_TIMEOUT_MS = 5_000;
 
 export function createAppContext(name: string, config: Config = loadConfig()): AppContext {

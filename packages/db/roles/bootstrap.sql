@@ -38,6 +38,7 @@ alter role ma_web set default_transaction_read_only = on;
 alter role ma_web set statement_timeout = '5s';
 alter role ma_web set lock_timeout = '1s';
 alter role ma_web set idle_in_transaction_session_timeout = '10s';
+alter role ma_web set idle_session_timeout = '15s';
 
 select format('grant connect on database %I to ma_migrator, ma_worker, ma_web', current_database())
 \gexec

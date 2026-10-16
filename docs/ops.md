@@ -4,6 +4,8 @@
 
 Production rollout on 2026-10-17 applied migrations `0014`/`0015`, deployed application commit `275e994` to Vercel and ECS task revision 10, loaded 29 official state/UT leadership observations and started a bounded 58-unit historical repair campaign. The Vercel database credential was switched from `avnadmin` to the existing read-only `ma_web` role after live verification exposed connection pressure. Both applications passed production builds; the merged regression suite passed 655 tests across 93 files and CI verification succeeded.
 
+The initial backfill exposed an ECS out-of-memory termination at the existing 1 GiB limit. The worker task now sets `NODE_OPTIONS=--max-old-space-size=512`, preserving room for native buffers and forcing earlier JavaScript garbage collection. Web uses one connection per instance and the database closes `ma_web` sessions after 15 idle seconds, including frozen Vercel instances. These settings are recorded in `infra/aws/worker.yaml`, `apps/web/src/server/context.ts` and `packages/db/roles/bootstrap.sql`. The TVS pilot imported three exact-quote-backed plant regions.
+
 Apply migrations `0014_altdata_provenance` and `0015_company_operating_sites` before deploying readers or the worker. They add columns and tables without deleting stored data. New tables inherit the existing role grants described below. Rebuild both applications; the workspace build filter uses double quotes so the same command works under Windows and POSIX shells.
 
 After worker deployment, run `aircraft.registry` to refresh facility jurisdictions, `influence.states` to ingest the official chief-minister directory, `aircraft.repair` to enqueue bounded historical trace reads, and `altdata.signals` after the repair campaign settles. The new schedules repeat state leadership daily at 04:20 IST and historical repair at 02:40 IST. State refresh uses the Firecrawl monthly budget; trace repair uses the existing adsb.lol HTTP bucket. Web never enqueues these jobs.
@@ -38,7 +40,7 @@ Aiven's free plan allows 15 connections (12 usable) and has no pooler, so the bu
 | `ma_migrator` | `pnpm db:migrate` in CI (`MIGRATION_DATABASE_URL` in SSM) | 1 | none / 10 s / none | Owner of the application tables in `public` and of schema `drizzle`; `CREATE` on `public` and the database |
 | admin (`avnadmin`) | The bootstrap script only | Aiven default | none | Creates roles, transfers ownership |
 
-A fourth worker connection fails with `too many connections for role "ma_worker"` instead of starving the web app. Every Vercel instance counts against the same 5, so keep the web pool at `max=2`.
+A fourth worker connection fails with `too many connections for role "ma_worker"` instead of starving the web app. Every Vercel instance counts against the same 5, so keep the web pool at `max=1`. `ma_web` also has a 15-second server-side idle-session timeout; a client-side pool timeout cannot release connections while Vercel freezes the JavaScript runtime.
 
 Create or update the roles (idempotent; rerun after changing `packages/db/roles/bootstrap.sql`):
 
