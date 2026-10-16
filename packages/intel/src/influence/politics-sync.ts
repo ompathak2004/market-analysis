@@ -1,4 +1,4 @@
-import { isoDate, sha256, throwIfAborted } from "@ma/core";
+import { assertTimeLeft, chunk, isoDate, sha256, throwIfAborted } from "@ma/core";
 import {
   affidavitInterests,
   and,
@@ -78,6 +78,7 @@ import {
 } from "./store.js";
 import type { PersonCandidate } from "./types.js";
 
+const PARLIAMENT_BATCH_SIZE = 25;
 const PARLIAMENT_SOURCE = "parliament";
 const MYNETA_SOURCE = "myneta";
 const BONDS_SOURCE = "eci_bonds";
@@ -264,122 +265,160 @@ async function syncHouse(
   const claims = allClaims.filter((c) => c.member.house === house);
   const today = isoDate(new Date());
 
-  return runExtraction(ctx, extraction, signal, async (tx) => {
-    const previous = (
-      await tx
-        .select({
-          id: politicalRoles.id,
-          personId: politicalRoles.personId,
-          dedupeKey: politicalRoles.dedupeKey,
-          status: politicalRoles.status,
-          office: politicalRoles.office,
-          name: persons.canonicalName,
-        })
-        .from(politicalRoles)
-        .innerJoin(persons, eq(persons.id, politicalRoles.personId))
-        .where(eq(politicalRoles.source, PARLIAMENT_SOURCE))
-    ).filter((p) => houseOfKey(p.dedupeKey) === house);
-    const firstRead = previous.length === 0;
-    const candidates = await allPersonCandidates(tx);
-    const resolved = new Map<string, Resolved>();
-    const current: (OfficeState & { edgeId: number | null; name: string })[] = [];
-    const seen = new Set<string>();
-    let edges = 0;
-    let skipped = 0;
-    let created = 0;
+  const previous = (
+    await ctx.db
+      .select({
+        id: politicalRoles.id,
+        personId: politicalRoles.personId,
+        dedupeKey: politicalRoles.dedupeKey,
+        status: politicalRoles.status,
+        office: politicalRoles.office,
+        name: persons.canonicalName,
+      })
+      .from(politicalRoles)
+      .innerJoin(persons, eq(persons.id, politicalRoles.personId))
+      .where(eq(politicalRoles.source, PARLIAMENT_SOURCE))
+  ).filter((p) => houseOfKey(p.dedupeKey) === house);
+  const firstRead = previous.length === 0;
 
-    for (const claim of claims) {
-      const { member } = claim;
-      const mk = memberKey(member);
-      let who = resolved.get(mk) ?? null;
-      if (!who) {
-        const r = await resolveMember(tx, claim, candidates, revision.id);
-        if (!r) {
-          skipped += 1;
-          continue;
+  const candidates = await ctx.db.transaction((tx) => allPersonCandidates(tx));
+  const totals = { edges: 0, skipped: 0, created: 0 };
+  for (const [index, batch] of chunk(claims, PARLIAMENT_BATCH_SIZE).entries()) {
+    throwIfAborted(signal);
+    assertTimeLeft(30_000);
+    const batchExtraction = {
+      ...extraction,
+      inputHash: sha256(`${extraction.inputHash}:batch:${index}`),
+    };
+    if (await alreadyExtracted(ctx, batchExtraction)) continue;
+    const out = await runExtraction(ctx, batchExtraction, signal, async (tx) => {
+      const resolved = new Map<string, Resolved>();
+      const seen = new Set<string>();
+      let edges = 0;
+      let skipped = 0;
+      let created = 0;
+      for (const claim of batch) {
+        throwIfAborted(signal);
+        const { member } = claim;
+        const mk = memberKey(member);
+        let who = resolved.get(mk) ?? null;
+        if (!who) {
+          const r = await resolveMember(tx, claim, candidates, revision.id);
+          if (!r) {
+            skipped += 1;
+            continue;
+          }
+          if (r.created) created += 1;
+          who = r;
+          resolved.set(mk, r);
+          await addAlias(tx, r.personId, member.name, PARLIAMENT_SOURCE);
         }
-        if (r.created) created += 1;
-        who = r;
-        resolved.set(mk, r);
-        await addAlias(tx, r.personId, member.name, PARLIAMENT_SOURCE);
-      }
-      if (seen.has(claim.key)) continue;
-      seen.add(claim.key);
-      const spanId = await spanFor(tx, revision.id, snap.content, snap.spans.get(claim.spanKey), {
-        kind: claim.office,
-        house: HOUSE_CODE[house],
-        memberId: member.memberId,
-      });
-      const fields = {
-        personId: who.personId,
-        office: claim.office,
-        party: member.party,
-        constituency: member.constituency,
-        state: member.state,
-        fromDate: claim.fromDate,
-        toDate: claim.toDate,
-        source: PARLIAMENT_SOURCE,
-        documentRevisionId: revision.id,
-        status: "current" as const,
-      };
-      const [role] = await tx
-        .insert(politicalRoles)
-        .values({ ...fields, dedupeKey: claim.key })
-        .onConflictDoUpdate({
-          target: politicalRoles.dedupeKey,
-          set: { ...fields, updatedAt: new Date() },
-        })
-        .returning({ id: politicalRoles.id });
-      if (!role) throw new Error(`political role upsert failed for ${claim.key}`);
-      const personNode = await nodeFor(tx, "person", who.personId);
-      const office = await upsertEdge(tx, {
-        fromNodeId: personNode,
-        toNodeId: await nodeOf(tx, { kind: "party", partyName: INSTITUTION[claim.office] }),
-        kind: "holds_office",
-        fact: { politicalRoleId: role.id },
-        confidence: who.confidence,
-        source: "structured_primary",
-        identifier: who.identifier,
-        inputHash: sha256(
-          JSON.stringify([
-            claim.key,
-            claim.label,
-            member.constituency,
-            member.state,
-            claim.fromDate,
-            claim.toDate,
-          ]),
-        ),
-        validFrom: claim.fromDate,
-        validTo: claim.toDate,
-        spanIds: spanId ? [spanId] : [],
-      });
-      if (office?.changed) edges += 1;
-      if (claim.office !== "minister" && member.party) {
-        const party = await upsertEdge(tx, {
+        if (seen.has(claim.key)) continue;
+        seen.add(claim.key);
+        const spanId = await spanFor(tx, revision.id, snap.content, snap.spans.get(claim.spanKey), {
+          kind: claim.office,
+          house: HOUSE_CODE[house],
+          memberId: member.memberId,
+        });
+        const fields = {
+          personId: who.personId,
+          office: claim.office,
+          party: member.party,
+          constituency: member.constituency,
+          state: member.state,
+          fromDate: claim.fromDate,
+          toDate: claim.toDate,
+          source: PARLIAMENT_SOURCE,
+          documentRevisionId: revision.id,
+          status: "current" as const,
+        };
+        const [role] = await tx
+          .insert(politicalRoles)
+          .values({ ...fields, dedupeKey: claim.key })
+          .onConflictDoUpdate({
+            target: politicalRoles.dedupeKey,
+            set: { ...fields, updatedAt: new Date() },
+          })
+          .returning({ id: politicalRoles.id });
+        if (!role) throw new Error(`political role upsert failed for ${claim.key}`);
+        const personNode = await nodeFor(tx, "person", who.personId);
+        const office = await upsertEdge(tx, {
           fromNodeId: personNode,
-          toNodeId: await nodeOf(tx, { kind: "party", partyName: member.party }),
-          kind: "member_of_party",
-          fact: {},
+          toNodeId: await nodeOf(tx, { kind: "party", partyName: INSTITUTION[claim.office] }),
+          kind: "holds_office",
+          fact: { politicalRoleId: role.id },
           confidence: who.confidence,
           source: "structured_primary",
           identifier: who.identifier,
-          inputHash: sha256(JSON.stringify([mk, member.party])),
-          validFrom: null,
-          validTo: null,
+          inputHash: sha256(
+            JSON.stringify([
+              claim.key,
+              claim.label,
+              member.constituency,
+              member.state,
+              claim.fromDate,
+              claim.toDate,
+            ]),
+          ),
+          validFrom: claim.fromDate,
+          validTo: claim.toDate,
           spanIds: spanId ? [spanId] : [],
         });
-        if (party?.changed) edges += 1;
+        if (office?.changed) edges += 1;
+        if (claim.office !== "minister" && member.party) {
+          const party = await upsertEdge(tx, {
+            fromNodeId: personNode,
+            toNodeId: await nodeOf(tx, { kind: "party", partyName: member.party }),
+            kind: "member_of_party",
+            fact: {},
+            confidence: who.confidence,
+            source: "structured_primary",
+            identifier: who.identifier,
+            inputHash: sha256(JSON.stringify([mk, member.party])),
+            validFrom: null,
+            validTo: null,
+            spanIds: spanId ? [spanId] : [],
+          });
+          if (party?.changed) edges += 1;
+        }
       }
-      current.push({
-        key: claim.key,
-        personId: who.personId,
-        label: claim.label,
-        status: "current",
-        edgeId: office?.id ?? null,
-        name: member.name,
-      });
-    }
+
+      return { rows: seen.size, edges, skipped, created };
+    });
+    totals.edges += out.edges;
+    totals.skipped += out.skipped;
+    totals.created += out.created;
+  }
+  return runExtraction(ctx, extraction, signal, async (tx) => {
+    throwIfAborted(signal);
+    const seen = new Set(claims.map((c) => c.key));
+    const roles = await tx
+      .select({
+        key: politicalRoles.dedupeKey,
+        personId: politicalRoles.personId,
+        office: politicalRoles.office,
+        status: politicalRoles.status,
+        name: persons.canonicalName,
+        edgeId: influenceEdges.id,
+      })
+      .from(politicalRoles)
+      .innerJoin(persons, eq(persons.id, politicalRoles.personId))
+      .leftJoin(
+        influenceEdges,
+        and(
+          eq(influenceEdges.politicalRoleId, politicalRoles.id),
+          eq(influenceEdges.kind, "holds_office"),
+          inArray(influenceEdges.status, ["pending", "confirmed"]),
+        ),
+      )
+      .where(eq(politicalRoles.source, PARLIAMENT_SOURCE));
+    const current = roles
+      .filter((r) => seen.has(r.key))
+      .map((r) => ({
+        ...r,
+        label: institutionOf(r.office),
+      }));
+    let edges = totals.edges;
 
     const gone = previous.filter((p) => p.status === "current" && !seen.has(p.dedupeKey));
     const closedByRole = new Map<number, number[]>();
@@ -448,7 +487,8 @@ async function syncHouse(
         }
       }
     }
-    return { rows: seen.size, edges, events, skipped, created };
+
+    return { rows: seen.size, edges, events, skipped: totals.skipped, created: totals.created };
   });
 }
 
@@ -780,6 +820,15 @@ export async function syncBonds(
 
   const out = await runExtraction(ctx, extraction, signal, async (tx) => {
     const cache = new Map<string, { counterpartyId: number | null; companyId: number | null }>();
+    for (const cp of await tx
+      .select({
+        id: counterparties.id,
+        name: counterparties.normalizedName,
+        companyId: counterparties.companyId,
+      })
+      .from(counterparties)) {
+      cache.set(cp.name, { counterpartyId: cp.id, companyId: cp.companyId });
+    }
     const parsed = docs.flatMap((d) => parseBondRows(d.pdf, d.kind).map((r) => ({ ...r, doc: d })));
     const rows: (BondRow & {
       revisionId: number;
@@ -788,6 +837,7 @@ export async function syncBonds(
       doc: BondDoc;
     })[] = [];
     for (const r of parsed) {
+      throwIfAborted(signal);
       const cp =
         r.kind === "purchase"
           ? await bondCounterparty(tx, r.name, listed, cache)
@@ -798,6 +848,39 @@ export async function syncBonds(
     const purchases = rows.filter((r) => r.kind === "purchase");
     const redemptions = rows.filter((r) => r.kind === "redemption");
     const match = matchBonds(purchases, redemptions);
+    const donationIds = new Map<number, number>();
+    const matched = match.pairs.flatMap(({ purchase: p, redemption: r }) => {
+      const purchaseRowId = ids.get(`purchase:${bondKey(p)}`);
+      const redemptionRowId = ids.get(`redemption:${bondKey(r)}`);
+      return purchaseRowId === undefined || redemptionRowId === undefined
+        ? []
+        : [
+            {
+              purchaseRowId,
+              redemptionRowId,
+              counterpartyId: p.counterpartyId,
+              party: r.name,
+              amount: p.denomination,
+              matchedOn: bondKey(p),
+            },
+          ];
+    });
+    for (const batch of chunk(matched, BOND_INSERT_CHUNK)) {
+      throwIfAborted(signal);
+      const inserted = await tx
+        .insert(politicalDonations)
+        .values(batch)
+        .onConflictDoUpdate({
+          target: politicalDonations.purchaseRowId,
+          set: {
+            counterpartyId: sql`excluded.counterparty_id`,
+            party: sql`excluded.party`,
+            amount: sql`excluded.amount`,
+          },
+        })
+        .returning({ id: politicalDonations.id, purchaseRowId: politicalDonations.purchaseRowId });
+      for (const row of inserted) donationIds.set(row.purchaseRowId, row.id);
+    }
     const byPair = new Map<
       string,
       {
@@ -808,27 +891,14 @@ export async function syncBonds(
     >();
     let donations = 0;
     for (const pair of match.pairs) {
+      throwIfAborted(signal);
       const p = pair.purchase;
       const r = pair.redemption;
       const purchaseRowId = ids.get(`purchase:${bondKey(p)}`);
       const redemptionRowId = ids.get(`redemption:${bondKey(r)}`);
       if (purchaseRowId === undefined || redemptionRowId === undefined) continue;
-      const [donation] = await tx
-        .insert(politicalDonations)
-        .values({
-          purchaseRowId,
-          redemptionRowId,
-          counterpartyId: p.counterpartyId,
-          party: r.name,
-          amount: p.denomination,
-          matchedOn: bondKey(p),
-        })
-        .onConflictDoUpdate({
-          target: politicalDonations.purchaseRowId,
-          set: { counterpartyId: p.counterpartyId, party: r.name, amount: p.denomination },
-        })
-        .returning({ id: politicalDonations.id });
-      if (!donation) continue;
+      const donationId = donationIds.get(purchaseRowId);
+      if (donationId === undefined) continue;
       donations += 1;
       if (p.counterpartyId === null) continue;
       const key = `${p.counterpartyId}|${r.name}`;
@@ -850,7 +920,7 @@ export async function syncBonds(
           if (spanId) spans.push(spanId);
         }
       }
-      entry.donations.push({ id: donation.id, amount: p.denomination, date: r.date, spans });
+      entry.donations.push({ id: donationId, amount: p.denomination, date: r.date, spans });
       byPair.set(key, entry);
     }
 

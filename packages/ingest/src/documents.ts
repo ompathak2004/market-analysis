@@ -19,7 +19,7 @@ import {
   storageObjects,
   type Tx,
 } from "@ma/db";
-import { extractText, getDocumentProxy } from "unpdf";
+import { getDocumentProxy } from "unpdf";
 import type { Firecrawl } from "./firecrawl.js";
 import type { HttpClient } from "./http.js";
 
@@ -506,21 +506,24 @@ export function pageOf(pageMap: readonly PageSpan[] | null | undefined, offset: 
 
 export async function pdfToText(body: Uint8Array, maxPages?: number): Promise<ParsedPdf> {
   const pdf = await getDocumentProxy(body);
-  const limit = maxPages === undefined ? pdf.numPages : Math.min(maxPages, pdf.numPages);
-  if (limit === pdf.numPages) {
-    const { text } = await extractText(pdf, { mergePages: false });
-    return joinPages(text.map((p) => p.trim()));
+  try {
+    const limit = maxPages === undefined ? pdf.numPages : Math.min(maxPages, pdf.numPages);
+    const pages: string[] = [];
+    for (let i = 1; i <= limit; i++) {
+      throwIfAborted();
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const items = content.items.filter((item) => "str" in item);
+      pages.push(
+        (limit === pdf.numPages
+          ? items.map((item) => item.str + (item.hasEOL ? "\n" : "")).join("")
+          : items.map((item) => item.str).join(" ")
+        ).trim(),
+      );
+      page.cleanup();
+    }
+    return joinPages(pages);
+  } finally {
+    await pdf.loadingTask.destroy();
   }
-  const pages: string[] = [];
-  for (let i = 1; i <= limit; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    pages.push(
-      content.items
-        .map((item) => ("str" in item ? item.str : ""))
-        .join(" ")
-        .trim(),
-    );
-  }
-  return joinPages(pages);
 }

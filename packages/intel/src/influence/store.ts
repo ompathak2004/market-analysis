@@ -148,6 +148,7 @@ export async function spanFor(
       startOffset: span.start,
       endOffset: span.end,
       quote: content.slice(span.start, span.end),
+      page: typeof locator.page === "number" ? locator.page : null,
       locator,
     })
     .onConflictDoUpdate({
@@ -182,11 +183,13 @@ export async function upsertEdge(tx: Tx, e: EdgeInput): Promise<EdgeOutcome | nu
   const live =
     existing.find((r) => r.status === "confirmed") ?? existing.find((r) => r.status === "pending");
   const rejected = existing.find((r) => r.status === "rejected");
-  const ruled = edgeStatus({
-    confidence: e.confidence,
-    source: e.source,
-    identifier: e.identifier,
-  });
+  const ruled = e.spanIds.length
+    ? edgeStatus({
+        confidence: e.confidence,
+        source: e.source,
+        identifier: e.identifier,
+      })
+    : "pending";
   const fact = {
     personRoleId: e.fact.personRoleId ?? null,
     ownershipId: e.fact.ownershipId ?? null,

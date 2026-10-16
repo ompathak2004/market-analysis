@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { istDateTime, shortDate } from "@/lib/format";
 import { confidenceLabel } from "@/lib/splc";
 import type { InfluenceDecision, InfluenceReviewItem } from "@/server/queries";
@@ -28,7 +29,8 @@ const QUEUE = {
   keys: { c: "confirm", r: "reject" } as Record<string, InfluenceDecision>,
   doneLabel: { confirm: "CONFIRMED", reject: "REJECTED" },
   refreshOn: [404, 409],
-  fromRow: (row: HTMLElement) => {
+  fromRow: (row: HTMLElement, decision: InfluenceDecision) => {
+    if (decision === "confirm" && row.dataset.cited !== "true") return null;
     const id = Number(row.dataset.edge);
     const version = Number(row.dataset.version);
     return Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(version)
@@ -56,6 +58,7 @@ function EdgeItem({
       data-row
       data-edge={item.edgeId}
       data-version={item.version}
+      data-cited={item.evidence.length > 0}
       data-ext={item.evidence[0]?.url}
       aria-busy={busy || undefined}
     >
@@ -83,10 +86,14 @@ function EdgeItem({
           <Quote key={`${e.documentId}:${e.page ?? ""}:${e.quote.slice(0, 40)}`} ev={e} />
         ))
       ) : (
-        <p className="review-quote neg sm">NO EVIDENCE SPAN · cannot become public</p>
+        <p className="review-quote neg sm">SOURCE CITATION REQUIRED · confirmation disabled</p>
       )}
       <div className="review-buttons">
-        <DecideButton tone="pos" disabled={busy} onClick={() => onDecide("confirm")}>
+        <DecideButton
+          tone="pos"
+          disabled={busy || item.evidence.length === 0}
+          onClick={() => onDecide("confirm")}
+        >
           CONFIRM <kbd>c</kbd>
         </DecideButton>
         <DecideButton tone="neg" disabled={busy} onClick={() => onDecide("reject")}>
@@ -102,11 +109,13 @@ export function InfluenceReviewQueue({
   nextCursor,
   paged,
   scope,
+  political,
 }: {
   items: InfluenceReviewItem[];
   nextCursor: string | null;
   paged: boolean;
   scope: string | null;
+  political: boolean;
 }) {
   const queue = useReviewQueue(QUEUE);
   const visible = items.filter((i) => !queue.done.has(i.edgeId));
@@ -116,16 +125,38 @@ export function InfluenceReviewQueue({
       title="REVIEW · INFLUENCE EDGES"
       hints="tab focus · j/k rows · c confirm · r reject · ⇧↵ source · z zoom"
       noteLabel="Influence review note"
-      idle="single-document name matches and news · oldest first"
+      idle={
+        political
+          ? "political claims · oldest first"
+          : "single-document name matches and news · oldest first"
+      }
       cursorParam="infl"
-      scope={scope}
+      scope={[scope, political ? "inflKind=political" : null].filter(Boolean).join("&") || null}
+      actions={
+        <>
+          <Link
+            className={political ? "muted" : "accent"}
+            href={scope ? `/admin/review?${scope}` : "/admin/review"}
+          >
+            ALL
+          </Link>
+          <Link
+            className={political ? "accent" : "muted"}
+            href={`/admin/review?${scope ? `${scope}&` : ""}inflKind=political`}
+          >
+            POLITICAL
+          </Link>
+        </>
+      }
       queue={queue}
       nextCursor={nextCursor}
       paged={paged}
       pending={visible.length}
       empty={{
         hint: "pending edges land after each sync",
-        text: "No pending influence edges. Confirmed edges appear in the INFL tab.",
+        text: political
+          ? "No pending political claims. Confirmed, cited links appear in the INFL tab."
+          : "No pending influence edges. Confirmed, cited edges appear in the INFL tab.",
       }}
     >
       {visible.map((item) => (
