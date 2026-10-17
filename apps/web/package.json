@@ -17,6 +17,7 @@
     "@ma/intel": "workspace:*",
     "@ma/jobs": "workspace:*",
     "next": "^15.5.4",
+    "posthog-js": "^1.438.12",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "zod": "^3.25.76"

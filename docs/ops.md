@@ -1,5 +1,15 @@
 # Operations runbook
 
+## Visitor analytics (PostHog)
+
+Enabled on [the production terminal](https://market-analysis-neon.vercel.app) on 2026-10-17 with US PostHog project `670187`. The production environment variables are configured in Vercel project `pathakom890/market-analysis`. Live browser verification confirmed one pageview on initial load and one additional pageview after client-side navigation, without PostHog errors.
+
+The web app initializes `posthog-js` in `apps/web/src/instrumentation-client.ts` for production builds when `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` is set. Set that publishable project token and `NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com` in the Vercel project's Production environment before rebuilding/deploying. These values are embedded in the browser bundle at build time; changing them requires a new build. Do not use a PostHog personal API key. For local configuration, use the gitignored `apps/web/.env.local` (Next.js loads env files from the web app directory).
+
+Pageviews include the initial load and browser history changes, so company tabs and client-side navigation appear without manual capture calls. Pageleave events provide engagement and bounce metrics. Only public pageview/pageleave events are sent: admin/API URLs and other event types are dropped by `publicPageEvent`. Click/form autocapture, person profiles, session replay and surveys are disabled. Development servers send no events. No analytics data is stored in the application database, and workers need no PostHog configuration.
+
+To verify, visit a public page in the deployed production app, navigate to another tab, and check PostHog's live events for `$pageview` events with the corresponding URLs. In Web Analytics, filter Country to India and switch the map breakdown to regions or cities. Locations are IP-based estimates and some may be unavailable or inaccurate. Visitor counts estimate browser/device identities, not verified people. Local development, blocked tracking requests and browser settings can affect coverage. To stay free, use PostHog's free plan without a payment card; its current analytics allowance is [1 million events/month](https://posthog.com/pricing), after which additional events are dropped. Pageviews and pageleaves both count toward that allowance.
+
 ## Regional exposure and alt-data v2 rollout
 
 Production rollout on 2026-10-17 applied migrations `0014`/`0015`, deployed application commit `275e994` to Vercel and ECS task revision 10, loaded 29 official state/UT leadership observations and started a bounded 58-unit historical repair campaign. The Vercel database credential was switched from `avnadmin` to the existing read-only `ma_web` role after live verification exposed connection pressure. Both applications passed production builds; the merged regression suite passed 655 tests across 93 files and CI verification succeeded.
