@@ -27,6 +27,14 @@
     --neu-wash: color-mix(in srgb, var(--neu) 14%, transparent);
     --warn-wash: color-mix(in srgb, var(--warn) 14%, transparent);
     --info-wash: color-mix(in srgb, var(--info) 14%, transparent);
+    --viz-1: #ff8800;
+    --viz-2: #4fb3ff;
+    --viz-3: #00cc66;
+    --viz-4: #c792ea;
+    --viz-5: #ffb020;
+    --viz-6: #2dd4bf;
+    --viz-7: #ff6b9a;
+    --viz-8: #8a8a8a;
     --sel: #1e1e1e;
     --hover: color-mix(in srgb, var(--fg-bright) 6%, transparent);
     --scroll-thumb: color-mix(in srgb, var(--fg) 26%, transparent);
