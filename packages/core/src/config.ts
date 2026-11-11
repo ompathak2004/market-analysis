@@ -25,6 +25,7 @@ const serviceSchema = z.object({
   LLM_BUDGET_RELATIONSHIPS: optionalPositiveInt,
   LLM_BUDGET_INSIGHTS: optionalPositiveInt,
   LLM_BUDGET_INFLUENCE: optionalPositiveInt,
+  LLM_BUDGET_CHAT: optionalPositiveInt,
   AISSTREAM_API_KEY: optionalString,
   OPENSKY_CLIENT_ID: optionalString,
   OPENSKY_CLIENT_SECRET: optionalString,
@@ -48,6 +49,16 @@ const serviceSchema = z.object({
 const webSchema = serviceSchema.extend({
   API_KEY: z.string().min(16),
   ADMIN_API_KEY: optionalString,
+  BOT_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+  BOT_MODEL: z.string().default("gpt-oss-120b"),
+  BOT_FALLBACK_MODEL: optionalString,
+  BOT_TRACE_CONTENT: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
 });
 
 export type ServiceConfig = z.infer<typeof serviceSchema>;
