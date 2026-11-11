@@ -94,7 +94,7 @@ const PUBLIC_LIMITS = {
   adminLogin: { capacity: 10, perMs: 15 * 60_000 },
   bot: { capacity: 12, perMs: 10 * 60_000 },
   botRead: { capacity: 120, perMs: 60_000 },
-  botDaily: { capacity: 60, perMs: 24 * 60 * 60_000 },
+  botDaily: { capacity: 20, perMs: 24 * 60 * 60_000 },
 } as const;
 const publicLimiters = new WeakMap<AppContext, RateLimiter>();
 
