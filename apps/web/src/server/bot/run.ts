@@ -176,6 +176,10 @@ export async function runChat(
       user: input.message,
       tools: botTools(app, conversation),
       portfolioId: portfolio?.id ?? null,
+      citationOffset: Math.max(
+        0,
+        ...conversation.turns.flatMap((t) => t.citations.map((c) => Number(c.id.slice(1)) || 0)),
+      ),
       budget: chatBudget(app),
       trace,
       signal,
@@ -205,7 +209,9 @@ export async function runChat(
       model: result.model,
       ttftMs: result.ttftMs,
       usage: result.usage,
-      invalidCitations: result.invalidCitations,
+      invalidCitations: result.invalidCitations.filter(
+        (id) => !conversation.turns.some((t) => t.citations.some((c) => c.id === id)),
+      ),
     });
   } catch (err) {
     app.logger.error({ err, traceId: trace.traceId }, "bot turn failed");

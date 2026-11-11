@@ -130,3 +130,57 @@ export const r2 = (v: number | null | undefined): number | null =>
 
 export const toneOf = (v: number | null | undefined): Tone =>
   v == null ? null : v > 0 ? "pos" : v < 0 ? "neg" : "neu";
+
+export function inr(v: number | null | undefined): string | null {
+  if (v == null || !Number.isFinite(v)) return null;
+  const abs = Math.abs(v);
+  const base = `${v < 0 ? "-" : ""}₹${Math.round(abs).toLocaleString("en-IN")}`;
+  if (abs >= 1e7) return `${base} (${v < 0 ? "-" : ""}₹${(abs / 1e7).toFixed(2)} crore)`;
+  if (abs >= 1e5) return `${base} (${v < 0 ? "-" : ""}₹${(abs / 1e5).toFixed(2)} lakh)`;
+  return base;
+}
+
+const MONEY_KEYS = new Set([
+  "totalValue",
+  "marketValue",
+  "cash",
+  "investedInOpenLots",
+  "unrealized",
+  "realized",
+  "dividends",
+  "netDeposits",
+  "totalGain",
+  "value",
+  "pnl",
+  "netFlows",
+  "startValue",
+  "endValue",
+  "contribution",
+  "before",
+  "after",
+  "change",
+  "stcg",
+  "stcl",
+  "ltcg",
+  "ltcl",
+  "exemptionUsed",
+  "taxableShortTerm",
+  "taxableLongTerm",
+  "tax",
+  "cess",
+  "total",
+  "gain",
+]);
+
+export function presentMoney<T>(data: T): T {
+  if (Array.isArray(data)) return data.map((x) => presentMoney(x)) as T;
+  if (data && typeof data === "object") {
+    return Object.fromEntries(
+      Object.entries(data as Record<string, unknown>).map(([k, v]) => [
+        k,
+        typeof v === "number" && MONEY_KEYS.has(k) ? inr(v) : presentMoney(v),
+      ]),
+    ) as T;
+  }
+  return data;
+}

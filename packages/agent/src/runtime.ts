@@ -69,6 +69,7 @@ export interface RunParams {
   user: string;
   tools: readonly AgentTool[];
   portfolioId: string | null;
+  citationOffset?: number;
   limits?: Partial<RuntimeLimits>;
   budget: TokenBudget | null;
   trace: Trace;
@@ -135,7 +136,7 @@ export async function runAgent(p: RunParams): Promise<RunResult> {
   const deadline = AbortSignal.any([p.signal, AbortSignal.timeout(limits.deadlineMs)]);
   const schemas = toolSchemas(p.tools);
   const byName = new Map(p.tools.map((t) => [t.name, t]));
-  const citations = new Citations();
+  const citations = new Citations(p.citationOffset ?? 0);
   const charts: VizSpec[] = [];
   const turnTools: TurnTool[] = [];
   const usage = { promptTokens: 0, completionTokens: 0, cachedTokens: 0, calls: 0 };

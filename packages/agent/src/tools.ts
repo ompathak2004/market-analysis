@@ -52,6 +52,8 @@ export function toolSchemas(tools: readonly AgentTool[]): ToolSchema[] {
 export class ToolInputError extends Error {}
 
 export class Citations {
+  constructor(private readonly offset = 0) {}
+
   private readonly items: Citation[] = [];
   private readonly byKey = new Map<string, string>();
 
@@ -59,7 +61,7 @@ export class Citations {
     const key = `${c.kind}|${c.ref ?? ""}|${c.url ?? ""}|${c.label}`;
     const existing = this.byKey.get(key);
     if (existing) return existing;
-    const id = `S${this.items.length + 1}`;
+    const id = `S${this.offset + this.items.length + 1}`;
     this.items.push({ ...c, id });
     this.byKey.set(key, id);
     return id;

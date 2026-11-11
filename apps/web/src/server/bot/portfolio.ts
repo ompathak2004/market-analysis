@@ -1,4 +1,5 @@
 import {
+  type AgentTool,
   allocation,
   type CorporateActions,
   compareToBenchmark,
@@ -29,7 +30,7 @@ import {
 import { z } from "zod";
 import type { AppContext } from "../context";
 import { type BotMarket, botMarket, indexLevels } from "../queries/bot";
-import { ChartBuilder, r2, toneOf } from "./charts";
+import { ChartBuilder, presentMoney, r2, toneOf } from "./charts";
 
 export const PORTFOLIO_IDS = DEMO_PORTFOLIOS.map((p) => p.id) as [string, ...string[]];
 
@@ -654,5 +655,13 @@ export function portfolioTools(app: AppContext) {
     },
   });
 
-  return [overview, performance, scenarioTool, tax];
+  return [overview, performance, scenarioTool, tax].map(
+    (t): AgentTool => ({
+      ...t,
+      run: async (input, ctx) => {
+        const out = await t.run(input, ctx);
+        return { ...out, data: presentMoney(out.data) };
+      },
+    }),
+  );
 }
