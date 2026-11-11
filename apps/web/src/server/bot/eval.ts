@@ -191,6 +191,22 @@ export const CASES: Case[] = [
     ],
   },
   {
+    id: "research-note",
+    category: "research note",
+    portfolioId: null,
+    turns: [
+      {
+        message: "Analyse SHRIPISTON",
+        expectTools: ["company_research"],
+        forbidTools: ["company_lookup"],
+        expectCitations: true,
+        expectCharts: ["kpis", "network"],
+        mustInclude: async () => ["22.8", "Q2 FY27", "Maruti"],
+        mustNotMatch: [/sector average|industry average|peer average/i, CAUSAL, ADVICE],
+      },
+    ],
+  },
+  {
     id: "missing-company",
     category: "missing data",
     portfolioId: null,
