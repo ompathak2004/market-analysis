@@ -6,13 +6,14 @@ export const CEREBRAS_HOST = "api.cerebras.ai";
 const TOKEN_KEY_TTL_S = 2 * 86_400;
 const ATTEMPT_MS = 65_000;
 
-export type LlmBudgetClass = "relationships" | "insights" | "influence" | "chat";
+export type LlmBudgetClass = "relationships" | "insights" | "influence" | "chat" | "eval";
 
 export const LLM_BUDGET_CLASSES: Readonly<Record<LlmBudgetClass, number>> = {
   relationships: 200_000,
   insights: 500_000,
   influence: 100_000,
   chat: 200_000,
+  eval: 60_000,
 };
 
 const RESERVE = `

@@ -53,13 +53,16 @@ export interface ChatInput {
 
 const budgets = new Map<string, LlmBudget>();
 
-function chatBudget(app: AppContext, maxWaitMs: number): TokenBudget {
+function chatBudget(app: AppContext, maxWaitMs: number, cls: "chat" | "eval"): TokenBudget {
   let b = budgets.get(String(maxWaitMs));
   if (!b) {
     b = new LlmBudget(app.redis, {
       rpm: app.config.CEREBRAS_RPM,
       dailyTokens: app.config.LLM_DAILY_TOKEN_BUDGET,
-      classTokens: app.config.LLM_BUDGET_CHAT ? { chat: app.config.LLM_BUDGET_CHAT } : {},
+      classTokens: {
+        ...(app.config.LLM_BUDGET_CHAT ? { chat: app.config.LLM_BUDGET_CHAT } : {}),
+        ...(app.config.LLM_BUDGET_EVAL ? { eval: app.config.LLM_BUDGET_EVAL } : {}),
+      },
       maxWaitMs,
       attemptMs: 0,
     });
@@ -69,10 +72,10 @@ function chatBudget(app: AppContext, maxWaitMs: number): TokenBudget {
   return {
     async reserve(tokens) {
       try {
-        return await budget.reserve(tokens, "chat");
+        return await budget.reserve(tokens, cls);
       } catch (err) {
         if (err instanceof LlmBudgetExceeded)
-          throw new BudgetError("budget_exhausted", "daily assistant token budget is used up");
+          throw new BudgetError("budget_exhausted", `daily ${cls} token budget is used up`);
         if (err instanceof RateLimitedError)
           throw new BudgetError(
             "rate_limited",
@@ -90,7 +93,8 @@ function chatBudget(app: AppContext, maxWaitMs: number): TokenBudget {
 
 const FAILURE_COPY: Record<string, string> = {
   rate_limited: "The model is at capacity right now. Wait about a minute and retry.",
-  budget_exhausted: "Today's assistant budget is used up. It resets at midnight UTC.",
+  budget_exhausted:
+    "The assistant's shared daily model budget (one pool for all users, not a per-person limit) is used up. It resets at 05:30 IST.",
   provider_unavailable: "The model provider is unavailable. Retry shortly.",
   timeout: "The request took too long and was stopped. Try a narrower question.",
   invalid_model_output: "The model returned an unusable answer. Retry or rephrase.",
@@ -111,7 +115,12 @@ export function turnParams(
   trace: Trace,
   signal: AbortSignal,
   emit: (e: AgentEvent) => void,
-  opts: { model?: string; fallback?: string | null; maxWaitMs?: number } = {},
+  opts: {
+    model?: string;
+    fallback?: string | null;
+    maxWaitMs?: number;
+    budgetClass?: "chat" | "eval";
+  } = {},
 ): RunParams {
   const portfolio = portfolioId ? demoPortfolio(portfolioId) : null;
   const ctxSpan = trace.span("agent.context");
@@ -154,7 +163,7 @@ export function turnParams(
       0,
       ...conversation.turns.flatMap((t) => t.citations.map((c) => Number(c.id.slice(1)) || 0)),
     ),
-    budget: chatBudget(app, opts.maxWaitMs ?? 15_000),
+    budget: chatBudget(app, opts.maxWaitMs ?? 15_000, opts.budgetClass ?? "chat"),
     trace,
     signal,
     emit,

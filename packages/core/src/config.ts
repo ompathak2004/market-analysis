@@ -26,6 +26,7 @@ const serviceSchema = z.object({
   LLM_BUDGET_INSIGHTS: optionalPositiveInt,
   LLM_BUDGET_INFLUENCE: optionalPositiveInt,
   LLM_BUDGET_CHAT: optionalPositiveInt,
+  LLM_BUDGET_EVAL: optionalPositiveInt,
   AISSTREAM_API_KEY: optionalString,
   OPENSKY_CLIENT_ID: optionalString,
   OPENSKY_CLIENT_SECRET: optionalString,

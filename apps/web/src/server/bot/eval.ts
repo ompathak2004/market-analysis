@@ -314,6 +314,7 @@ async function runCase(
           model,
           fallback: null,
           maxWaitMs: 65_000,
+          budgetClass: "eval",
         },
       ),
     );
