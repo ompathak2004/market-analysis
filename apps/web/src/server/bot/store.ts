@@ -6,7 +6,7 @@ const CONV_TTL_S = 7 * 86_400;
 const TRACE_TTL_S = 14 * 86_400;
 const TRACE_INDEX = "bot:traces";
 const TRACE_INDEX_MAX = 500;
-const LOCK_MS = 90_000;
+const LOCK_MS = 65_000;
 const DEDUPE_S = 600;
 
 export interface TraceIndexEntry {
@@ -38,6 +38,10 @@ export class BotStore {
 
   async claimRequest(requestId: string): Promise<boolean> {
     return (await this.redis.set(`bot:req:${requestId}`, "1", "EX", DEDUPE_S, "NX")) === "OK";
+  }
+
+  async releaseRequest(requestId: string): Promise<void> {
+    await this.redis.unlink(`bot:req:${requestId}`);
   }
 
   async lock(conversationId: string, token: string): Promise<boolean> {

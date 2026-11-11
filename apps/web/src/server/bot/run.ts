@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import {
   type AgentEvent,
   appendTurn,
@@ -7,7 +7,6 @@ import {
   type Conversation,
   DEMO_PORTFOLIOS,
   demoPortfolio,
-  hashText,
   newConversation,
   OpenAiCompatibleProvider,
   PROMPT_VERSION,
@@ -100,6 +99,10 @@ const FAILURE_COPY: Record<string, string> = {
 
 export class ChatConflict extends Error {}
 
+function hmac(app: AppContext, text: string): string {
+  return createHmac("sha256", app.config.API_KEY).update(text).digest("hex").slice(0, 16);
+}
+
 export function turnParams(
   app: AppContext,
   conversation: Conversation,
@@ -161,11 +164,22 @@ export function turnParams(
 export async function prepareChat(app: AppContext, input: ChatInput) {
   const store = new BotStore(app.redis);
   if (!(await store.claimRequest(input.requestId))) throw new ChatConflict("duplicate request");
-  const existing = input.conversationId ? await store.load(input.conversationId) : null;
-  const conversation = existing ?? newConversation(randomUUID(), input.portfolioId);
+  const id = input.conversationId ?? randomUUID();
   const lockToken = randomUUID();
-  if (!(await store.lock(conversation.id, lockToken))) throw new ChatConflict("conversation busy");
-  return { store, conversation, lockToken, resumed: existing != null };
+  try {
+    if (!(await store.lock(id, lockToken))) throw new ChatConflict("conversation busy");
+    try {
+      const existing = input.conversationId ? await store.load(id) : null;
+      const conversation = existing ?? newConversation(id, input.portfolioId);
+      return { store, conversation, lockToken, resumed: existing != null };
+    } catch (err) {
+      await store.unlock(id, lockToken).catch(() => undefined);
+      throw err;
+    }
+  } catch (err) {
+    await store.releaseRequest(input.requestId).catch(() => undefined);
+    throw err;
+  }
 }
 
 export async function runChat(
@@ -187,9 +201,9 @@ export async function runChat(
     "bot.portfolio_id": portfolio?.id ?? null,
     "bot.resumed": prepared.resumed,
     "bot.message_chars": input.message.length,
-    "bot.message_hash": hashText(input.message),
+    "bot.message_hash": hmac(app, input.message),
     "bot.message": app.config.BOT_TRACE_CONTENT ? input.message.slice(0, 2_000) : null,
-    "client.ip_hash": hashText(input.ip),
+    "client.ip_hash": hmac(app, input.ip),
   });
   emit({
     type: "meta",
@@ -211,12 +225,13 @@ export async function runChat(
       assistant: result.text.slice(0, 6_000),
       tools: result.tools,
       citations: result.citations,
-      charts: result.charts,
+      charts: result.charts.slice(0, 8),
       status: result.status,
       traceId: trace.traceId,
     };
     conversation = appendTurn(conversation, turn);
     await trace.wrap("bot.store.save", {}, () => store.save(conversation));
+    await store.unlock(conversation.id, lockToken).catch(() => undefined);
     emit({
       type: "done",
       status: result.status,
