@@ -632,7 +632,7 @@ function Turn({ turn }: { turn: UITurn }) {
         {id}
       </span>
     );
-  const cited = new Set([...turn.text.matchAll(/\[\s*(S\d{1,3})\s*\]/g)].map((m) => m[1]));
+  const cited = new Set([...turn.text.matchAll(/[[【]\s*(S\d{1,3})\s*[\]】]/g)].map((m) => m[1]));
   const sources = [...turn.citations].sort(
     (a, b) => Number(cited.has(b.id)) - Number(cited.has(a.id)),
   );

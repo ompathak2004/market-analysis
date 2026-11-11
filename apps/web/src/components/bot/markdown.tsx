@@ -69,7 +69,7 @@ function parse(src: string): Block[] {
   return out;
 }
 
-const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[\s*S\d{1,3}\s*\]|\*[^*\s][^*]*\*|_[^_\s][^_]*_)/g;
+const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|[[【]\s*S\d{1,3}\s*[\]】]|\*[^*\s][^*]*\*|_[^_\s][^_]*_)/g;
 
 function inline(text: string, cite: (id: string) => ReactNode): ReactNode[] {
   return text.split(INLINE).map((part, i) => {
@@ -77,7 +77,7 @@ function inline(text: string, cite: (id: string) => ReactNode): ReactNode[] {
     if (!part) return null;
     if (part.startsWith("**")) return <strong key={key}>{part.slice(2, -2)}</strong>;
     if (part.startsWith("`")) return <code key={key}>{part.slice(1, -1)}</code>;
-    const c = /^\[\s*(S\d{1,3})\s*\]$/.exec(part);
+    const c = /^[[【]\s*(S\d{1,3})\s*[\]】]$/.exec(part);
     if (c?.[1]) return <Fragment key={key}>{cite(c[1])}</Fragment>;
     if (/^(\*|_)[^*_]/.test(part) && part.length > 2 && (part.endsWith("*") || part.endsWith("_")))
       return <em key={key}>{part.slice(1, -1)}</em>;

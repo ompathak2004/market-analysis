@@ -6,6 +6,9 @@ import {
   TAX_ASSUMPTIONS,
   TAX_RULES_VERSION,
   type ToolContext,
+  ToolInputError,
+  windowFor,
+  yearOf,
 } from "@ma/agent";
 import type { Evidence } from "@ma/intel";
 import { z } from "zod";
@@ -500,6 +503,19 @@ export function researchTools(app: AppContext, conversation: Conversation) {
           topic: input.topic,
           rulesVersion: TAX_RULES_VERSION,
           sourceIds: ids,
+          appliesToSalesToday: (() => {
+            const today = new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10);
+            const w = windowFor(today);
+            return w
+              ? {
+                  date: today,
+                  act: w.act,
+                  stcg: `${w.stcgSection} ${w.stcgRate * 100}%`,
+                  ltcg: `${w.ltcgSection} ${w.ltcgRate * 100}%`,
+                  year: yearOf(today).label,
+                }
+              : null;
+          })(),
           windows: RATE_WINDOWS.map((w) => ({
             transfersFrom: w.from,
             transfersTo: w.to,
@@ -538,7 +554,7 @@ export function researchTools(app: AppContext, conversation: Conversation) {
     timeoutMs: 1_000,
     async run(input) {
       const t = conversation.turns.find((x) => x.id === input.turnId);
-      if (!t) throw new Error(`no turn ${input.turnId} in this conversation`);
+      if (!t) throw new ToolInputError(`no turn ${input.turnId} in this conversation`);
       return {
         summary: `turn ${t.id} from ${t.at}`,
         freshness: t.at,

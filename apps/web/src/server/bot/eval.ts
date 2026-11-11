@@ -130,7 +130,8 @@ export const CASES: Case[] = [
         message: "Explain STCG versus LTCG for listed Indian shares sold this year.",
         expectTools: ["tax_rules"],
         forbidTools: ["portfolio_tax"],
-        mustInclude: async () => ["20", "12.5", "1,25,000"],
+        mustInclude: async () => ["20", "12.5", "s.196", "s.198"],
+        mustNotMatch: [/1.25 crore/i],
       },
     ],
   },
@@ -279,7 +280,11 @@ function truthFor(app: AppContext): Truth {
   };
 }
 
-const norm = (s: string) => s.toLowerCase().replace(/[\s,]/g, "");
+const norm = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/s\.\s+/g, "s.")
+    .replace(/[\s,\-‑–]/g, "");
 
 async function runCase(
   app: AppContext,
@@ -321,7 +326,7 @@ async function runCase(
     const violations = (t.mustNotMatch ?? []).filter((r) => r.test(result.text)).map(String);
     const charts = result.charts.map((x) => x.kind);
     const chartMisses = (t.expectCharts ?? []).filter((k) => !charts.includes(k as never));
-    const used = [...result.text.matchAll(/\[\s*(S\d+)\s*\]/g)].length;
+    const used = [...result.text.matchAll(/[[【]\s*(S\d+)\s*[\]】]/g)].length;
     const citationOk = !t.expectCitations || used > 0;
     const pass =
       result.status === "ok" &&
