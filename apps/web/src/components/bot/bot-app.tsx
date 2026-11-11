@@ -429,7 +429,8 @@ export function BotApp({
       <aside className="bot-rail" aria-label="Assistant controls">
         <section className="bot-block">
           <h2 className="bot-block-title">Demo portfolio</h2>
-          <div className="bot-portfolios" role="group" aria-label="Demo portfolio">
+          <fieldset className="bot-portfolios">
+            <legend className="sr-only">Demo portfolio</legend>
             {portfolios.map((p) => (
               <button
                 key={p.id}
@@ -450,7 +451,7 @@ export function BotApp({
                 </span>
               </button>
             ))}
-          </div>
+          </fieldset>
           {selected ? <p className="bot-thesis">{selected.thesis}</p> : null}
           <p className="bot-synthetic">Synthetic ledgers valued at real NSE closes.</p>
         </section>

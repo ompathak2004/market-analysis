@@ -86,7 +86,6 @@ function Donut({ spec }: { spec: Spec<"donut"> }) {
               const len = (s.value / total) * c;
               const el = (
                 <circle
-                  role="img"
                   aria-label={`${s.label} ${((s.value / total) * 100).toFixed(1)}%`}
                   key={s.label}
                   cx="70"
@@ -98,8 +97,6 @@ function Donut({ spec }: { spec: Spec<"donut"> }) {
                   strokeDasharray={`${len} ${c - len}`}
                   strokeDashoffset={-offset}
                   opacity={hover == null || hover === i ? 1 : 0.35}
-                  onMouseEnter={() => setHover(i)}
-                  onMouseLeave={() => setHover(null)}
                 >
                   <title>{`${s.label}: ${fmt(s.value, spec.unit)} (${((s.value / total) * 100).toFixed(1)}%)`}</title>
                 </circle>
@@ -119,16 +116,19 @@ function Donut({ spec }: { spec: Spec<"donut"> }) {
         </svg>
         <ul className="viz-legend">
           {spec.slices.map((s, i) => (
-            <li
-              key={s.label}
-              onMouseEnter={() => setHover(i)}
-              onMouseLeave={() => setHover(null)}
-              data-active={hover === i ? "true" : undefined}
-            >
-              <i style={{ background: `var(--viz-${(i % SERIES) + 1})` }} />
-              <span className="truncate">{s.label}</span>
-              <b>{((s.value / total) * 100).toFixed(1)}%</b>
-              <em>{fmt(s.value, spec.unit, true)}</em>
+            <li key={s.label} data-active={hover === i ? "true" : undefined}>
+              <button
+                type="button"
+                onMouseEnter={() => setHover(i)}
+                onMouseLeave={() => setHover(null)}
+                onFocus={() => setHover(i)}
+                onBlur={() => setHover(null)}
+              >
+                <i style={{ background: `var(--viz-${(i % SERIES) + 1})` }} />
+                <span className="truncate">{s.label}</span>
+                <b>{((s.value / total) * 100).toFixed(1)}%</b>
+                <em>{fmt(s.value, spec.unit, true)}</em>
+              </button>
             </li>
           ))}
         </ul>
@@ -380,7 +380,6 @@ function Timeline({ spec, onSource }: { spec: Spec<"timeline">; onSource?: (id: 
 }
 
 function Network({ spec }: { spec: Spec<"network"> }) {
-  const [hover, setHover] = useState<string | null>(null);
   const layout = useMemo(() => {
     const center = spec.nodes.find((n) => n.role === "center") ?? spec.nodes[0];
     const depth = new Map<string, number>();
@@ -409,10 +408,6 @@ function Network({ spec }: { spec: Spec<"network"> }) {
     return pos;
   }, [spec]);
   const label = new Map(spec.nodes.map((n) => [n.id, n]));
-  const linked = (id: string) =>
-    hover == null ||
-    id === hover ||
-    spec.edges.some((e) => (e.from === hover && e.to === id) || (e.to === hover && e.from === id));
   return (
     <Frame spec={spec} wide>
       <svg
@@ -433,7 +428,6 @@ function Network({ spec }: { spec: Spec<"network"> }) {
               x2={b.x}
               y2={b.y}
               className="viz-edge"
-              data-dim={hover && !(e.from === hover || e.to === hover) ? "true" : undefined}
             >
               {e.label ? <title>{e.label}</title> : null}
             </line>
@@ -447,16 +441,11 @@ function Network({ spec }: { spec: Spec<"network"> }) {
               key={n.id}
               transform={`translate(${p.x} ${p.y})`}
               className="viz-node"
-              role="img"
-              aria-label={n.label}
               data-role={n.role}
-              data-dim={linked(n.id) ? undefined : "true"}
-              onMouseEnter={() => setHover(n.id)}
-              onMouseLeave={() => setHover(null)}
             >
               <circle r={n.role === "center" ? 9 : 6} />
               <text y={n.role === "center" ? -13 : -9} textAnchor="middle">
-                {(label.get(n.id)?.label ?? n.id).slice(0, hover === n.id ? 80 : 22)}
+                {(label.get(n.id)?.label ?? n.id).slice(0, 22)}
               </text>
               <title>{n.label}</title>
             </g>
