@@ -212,7 +212,7 @@ export function intelTools(app: AppContext) {
         sourceId: string;
         materiality: string | null;
         via: string | null;
-        observedMovePct: number | null;
+        holdingMoveSinceEventPct: number | null;
         exposurePctOfPortfolio: number | null;
         exposureBasis: string;
       };
@@ -226,7 +226,7 @@ export function intelTools(app: AppContext) {
           sourceId: citeFiling(f),
           materiality: f.materiality,
           via: null,
-          observedMovePct: reaction(f.symbol, f.publishedAt),
+          holdingMoveSinceEventPct: reaction(f.symbol, f.publishedAt),
           exposurePctOfPortfolio: r2(weight.get(f.symbol) ?? null),
           exposureBasis: "observed: full holding weight",
         });
@@ -246,7 +246,7 @@ export function intelTools(app: AppContext) {
             sourceId: citeFiling(f),
             materiality: f.materiality,
             via: `${l.counterparty} is a disclosed ${l.side} of ${l.holding}${l.valueCr != null ? ` (est. ₹${r2(l.valueCr)} Cr/yr)` : ""}`,
-            observedMovePct: reaction(l.holding, f.publishedAt),
+            holdingMoveSinceEventPct: reaction(l.holding, f.publishedAt),
             exposurePctOfPortfolio:
               share != null ? r2(((weight.get(l.holding) ?? 0) * share) / 100) : null,
             exposureBasis:
@@ -273,7 +273,7 @@ export function intelTools(app: AppContext) {
             sourceId: id,
             materiality: null,
             via: `tagged to policy sector ${e.sectors.join(", ")}`,
-            observedMovePct: reaction(h, e.publishedAt),
+            holdingMoveSinceEventPct: reaction(h, e.publishedAt),
             exposurePctOfPortfolio: null,
             exposureBasis: "inference: sector tag only, magnitude unknown",
           });
@@ -392,6 +392,11 @@ export function intelTools(app: AppContext) {
           topic,
           channels: channels.slice(0, 40),
           perHolding,
+          quantifiedExposurePctOfPortfolio: r2(
+            perHolding.reduce((s, x) => s + (x.maxQuantifiedExposurePct ?? 0), 0),
+          ),
+          quantifiedExposureBasis:
+            "sum over holdings of the largest quantified channel per holding; model estimate",
           supplyChainLinksConsidered: links.length,
           linkEvidence: [...linkCites.entries()].map(([k, id]) => ({
             link: k.replace("|", " ↔ "),
@@ -423,7 +428,7 @@ export function intelTools(app: AppContext) {
             "direct_filing: observed event at the holding itself.",
             "customer_event/supplier_event: observed event at a disclosed counterparty; effect on the holding is an inference.",
             "policy_sector: government event tagged to the holding's policy sector; relevance is an inference.",
-            "observedMovePct is the holding's close-to-close change since the event, which includes all other news; it is not attributable to the event.",
+            "holdingMoveSinceEventPct is the holding's close-to-close change since the event; it includes every other influence and must not be attributed to the event or described as the market reacting to it.",
           ],
         },
       };
