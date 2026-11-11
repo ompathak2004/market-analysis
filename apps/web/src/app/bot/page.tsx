@@ -6,6 +6,14 @@ export const metadata: Metadata = { title: "Analyst · MA Terminal" };
 
 const SUGGESTIONS = [
   {
+    label: "Research notes",
+    items: [
+      "Write a research note on SHRIPISTON",
+      "Write a research note on BEL",
+      "Write a research note on RELIANCE",
+    ],
+  },
+  {
     label: "Portfolio",
     items: [
       "Analyze my portfolio",

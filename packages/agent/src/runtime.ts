@@ -25,7 +25,7 @@ export const DEFAULT_LIMITS: RuntimeLimits = {
   maxSteps: 3,
   maxToolCalls: 8,
   deadlineMs: 55_000,
-  maxOutputTokens: 1_400,
+  maxOutputTokens: 1_800,
   toolResultChars: 5_000,
   totalToolChars: 16_000,
 };
@@ -411,7 +411,7 @@ export async function runAgent(p: RunParams): Promise<RunResult> {
       });
       const cap = Math.max(
         800,
-        Math.min(limits.toolResultChars, limits.totalToolChars - toolChars),
+        Math.min(tool.maxResultChars ?? limits.toolResultChars, limits.totalToolChars - toolChars),
       );
       const truncated = content.length > cap;
       if (truncated)

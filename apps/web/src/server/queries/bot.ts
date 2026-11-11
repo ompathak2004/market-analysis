@@ -506,3 +506,22 @@ export async function lookupCompanies(ctx: AppContext, q: string): Promise<BotCo
     marketCapCr: r.market_cap_cr == null ? null : Number(r.market_cap_cr),
   }));
 }
+
+export async function latestRevenueCr(
+  ctx: AppContext,
+  symbols: readonly string[],
+): Promise<Map<string, number>> {
+  if (!symbols.length) return new Map();
+  const rows = await ctx.api.getOrLoad(
+    `financials:bot:revenue:${[...symbols].sort().join(",")}`,
+    () =>
+      ctx.db.execute<{ symbol: string; revenue: number }>(sql`
+        select distinct on (c.id) c.nse_symbol as symbol, f.revenue
+        from fundamentals f join companies c on c.id = f.company_id
+        where c.nse_symbol in (${symbolList(symbols)}) and f.period_type = 'annual'
+          and f.revenue is not null and f.revenue > 0
+        order by c.id, f.period_end desc`),
+    { ttlMs: 6 * HOUR, staleMs: 24 * HOUR },
+  );
+  return new Map((rows ?? []).map((r) => [r.symbol, Number(r.revenue)]));
+}
