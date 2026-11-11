@@ -36,7 +36,7 @@ const likeOf = (q: string | null) =>
     ? `%${q
         .toLowerCase()
         .slice(0, 60)
-        .replace(/[%_]/g, (m) => `\${m}`)}%`
+        .replace(/[\\%_]/g, (m) => `\\${m}`)}%`
     : null;
 
 export async function botMarket(
