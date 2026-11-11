@@ -32,6 +32,7 @@ Conversational assistant over the terminal's own data: demo portfolios, prices, 
 | `portfolio_signals` | `signals` (active versions) | distress, customer/supplier momentum, concentration, travel, logistics with nature labels; table |
 | `portfolio_news_impact` | filings with triage, PIB/PRS policy tags, SPLC edges | channels per holding (direct, policy sector, customer/supplier event), exposure where quantified; network, timeline |
 | `supply_chain` | SPLC edges, estimates, evidence spans | customers/suppliers with evidence; network |
+| `company_research` | every company read model plus counterparty revenue | one dossier: valuation, price, CAGR and margins, fiscal-quarter YoY, cleaned supply chain (generic labels, regulators, depositories, director/compliance text, award-direction errors and implausible estimates set aside), graph signals, JET, SHIP, ownership, street view, material filings, AI brief, data gaps; KPI, bar, network, table, timeline |
 | `event_impact` | `eventImpact` OLS | exposure coefficient, ΔR², missing suppliers; bar |
 | `company_lookup`, `company_snapshot`, `company_financials`, `company_prices`, `broker_research` | read models | stats, AI brief with evidence, statements, closes, broker calls; KPI, bar, line |
 | `market_news`, `tax_rules`, `conversation_recall` | filings/policy, rules table, Redis conversation | timeline, rules with `appliesToSalesToday`, earlier turn |
@@ -51,6 +52,8 @@ Failures the first run exposed and their fixes: unit conversion of rupee amounts
 Latency is dominated by the shared 5 RPM limit on the Free Trial key: an unqueued two-call turn completes in 4–7 s (first token 3–6 s), but a burst waits for the RPM bucket. Objective: p50 under 10 s and p95 under 30 s once the key is on the Developer tier; today p95 is not met under load.
 
 ## Known limitations
+
+- Research notes are only as good as the SPLC graph: the dossier sets aside rows it can show are wrong (for SHRIPISTON, carmakers recorded as suppliers because filings mention supplier awards they gave) but cannot verify every remaining estimate. Company names resolve through `companies.name` and aliases only; former names (for example Shriram Pistons) are not found.
 
 - The SPLC estimator copies one company-level aggregate to many edges (BEL: 90 % of revenue on every customer). The assistant suppresses shared estimates; the SPLC pane and momentum weights do not.
 - Corporate actions start in late 2026 and bonuses are not ingested; demo ledgers avoid affected names. Grandfathering needs the 31 Jan 2018 FMV, which is not stored, so pre-2018 lots are reported as inexact.
