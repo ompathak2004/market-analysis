@@ -112,7 +112,7 @@ class RunAbort extends Error {
 }
 
 const LEAK = /^\s*(\{|\[|<\||<tool|```json|```\s*\{)/;
-const CITE = /\[(S\d{1,3})\]/g;
+const CITE = /\[\s*(S\d{1,3})\s*\]/g;
 
 function failureOf(
   err: unknown,
