@@ -3,7 +3,7 @@ import { z } from "zod";
 import { PORTFOLIO_IDS } from "@/server/bot/portfolio";
 import { ChatConflict, prepareChat, runChat } from "@/server/bot/run";
 import { getContext } from "@/server/context";
-import { clientIp, limitPublic } from "@/server/http/auth";
+import { clientIp, limitPublic, rateSubject } from "@/server/http/auth";
 import { errorResponse, jsonBody } from "@/server/http/respond";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +25,8 @@ export async function POST(req: Request): Promise<Response> {
   try {
     if (!ctx.config.BOT_ENABLED) throw new AppError("assistant is disabled", "BOT_DISABLED", 503);
     input = schema.parse(await jsonBody(req));
-    await limitPublic(ctx, req, "bot");
+    await limitPublic(ctx, req, "bot", rateSubject(ip));
+    await limitPublic(ctx, req, "botDaily", rateSubject(ip));
     prepared = await prepareChat(ctx, { ...input, ip });
   } catch (err) {
     if (err instanceof ChatConflict)
@@ -34,6 +35,7 @@ export async function POST(req: Request): Promise<Response> {
   }
   const encoder = new TextEncoder();
   const abort = new AbortController();
+  if (req.signal.aborted) abort.abort();
   req.signal.addEventListener("abort", () => abort.abort(), { once: true });
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
