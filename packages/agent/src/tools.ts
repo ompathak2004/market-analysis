@@ -57,7 +57,8 @@ export class Citations {
   private readonly items: Citation[] = [];
   private readonly byKey = new Map<string, string>();
 
-  add(c: Omit<Citation, "id">): string {
+  add(raw: Omit<Citation, "id">): string {
+    const c = { ...raw, url: raw.url && /^https?:\/\//i.test(raw.url) ? raw.url : null };
     const key = `${c.kind}|${c.ref ?? ""}|${c.url ?? ""}|${c.label}`;
     const existing = this.byKey.get(key);
     if (existing) return existing;

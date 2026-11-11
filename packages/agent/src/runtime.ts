@@ -1,3 +1,4 @@
+import { AppError } from "@ma/core";
 import { estimateTokens } from "@ma/llm";
 import type { TurnStatus, TurnTool } from "./context.js";
 import {
@@ -7,7 +8,7 @@ import {
   type ToolCallMessage,
   type Usage,
 } from "./provider.js";
-import { type AgentTool, type Citation, Citations, toolSchemas } from "./tools.js";
+import { type AgentTool, type Citation, Citations, ToolInputError, toolSchemas } from "./tools.js";
 import { hashText, redact, type Trace } from "./trace.js";
 import { checkViz, type VizSpec } from "./viz.js";
 
@@ -112,7 +113,7 @@ class RunAbort extends Error {
 }
 
 const LEAK = /^\s*(\{|\[|<\||<tool|```json|```\s*\{)/;
-const CITE = /\[\s*(S\d{1,3})\s*\]/g;
+const CITE = /[[【]\s*(S\d{1,3})\s*[\]】]/g;
 
 function failureOf(
   err: unknown,
@@ -328,8 +329,13 @@ export async function runAgent(p: RunParams): Promise<RunResult> {
       root,
     );
     const started = p.trace.elapsed();
-    const fail = (kind: string, message: string, args: Record<string, unknown> = {}) => {
-      span.end("error", { "error.type": kind, "error.message": message.slice(0, 300) });
+    const fail = (
+      kind: string,
+      message: string,
+      args: Record<string, unknown> = {},
+      detail: string = message,
+    ) => {
+      span.end("error", { "error.type": kind, "error.message": detail.slice(0, 300) });
       turnTools.push({
         callId: call.id,
         name: call.function.name,
@@ -437,8 +443,15 @@ export async function runAgent(p: RunParams): Promise<RunResult> {
       return content;
     } catch (err) {
       if (p.signal.aborted) throw err;
-      const message = err instanceof Error ? err.message : String(err);
-      return fail(signal.aborted ? "timeout" : "tool_error", message, args);
+      const detail = err instanceof Error ? err.message : String(err);
+      const exposable =
+        err instanceof ToolInputError || (err instanceof AppError && err.status < 500);
+      const message = signal.aborted
+        ? `tool timed out after ${tool.timeoutMs} ms`
+        : exposable
+          ? detail
+          : "tool failed with an internal error";
+      return fail(signal.aborted ? "timeout" : "tool_error", message, args, detail);
     }
   };
 

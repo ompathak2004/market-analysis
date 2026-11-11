@@ -197,6 +197,7 @@ export interface BotLink {
   counterpartyKind: string;
   valueCr: number | null;
   holdingRevenuePct: number | null;
+  sharedEstimate: boolean;
   confidence: number;
   lastDisclosedAt: string | null;
   url: string | null;
@@ -263,19 +264,40 @@ export async function holdingLinks(
         where k.rn <= 12`),
     { ttlMs: 30 * MINUTE, staleMs: 6 * HOUR },
   );
-  return (rows ?? []).map((r) => ({
+  const list = rows ?? [];
+  const shared = sharedEstimates(
+    list.map((r) => ({ group: `${r.holding}|${r.side}`, valueCr: r.value_cr, pct: r.revenue_pct })),
+  );
+  return list.map((r, i) => ({
     holding: r.holding,
     side: r.side,
     counterparty: r.counterparty,
     counterpartySymbol: r.counterparty_symbol,
     counterpartyKind: r.counterparty_kind,
-    valueCr: r.value_cr == null ? null : Number(r.value_cr),
-    holdingRevenuePct: r.revenue_pct == null ? null : Number(r.revenue_pct),
+    valueCr: shared[i] || r.value_cr == null ? null : Number(r.value_cr),
+    holdingRevenuePct: shared[i] || r.revenue_pct == null ? null : Number(r.revenue_pct),
+    sharedEstimate: shared[i] ?? false,
     confidence: Number(r.confidence),
     lastDisclosedAt: r.last_disclosed_at,
     url: r.url,
     quote: r.quote,
   }));
+}
+
+export function sharedEstimates(
+  items: ReadonlyArray<{ group: string; valueCr: number | null; pct: number | null }>,
+): boolean[] {
+  const counts = new Map<string, number>();
+  const key = (x: (typeof items)[number]) =>
+    x.valueCr == null && x.pct == null ? null : `${x.group}|${x.valueCr}|${x.pct}`;
+  for (const x of items) {
+    const k = key(x);
+    if (k) counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return items.map((x) => {
+    const k = key(x);
+    return k != null && (counts.get(k) ?? 0) > 1;
+  });
 }
 
 export interface BotFiling {

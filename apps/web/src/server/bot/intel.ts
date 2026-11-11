@@ -1,4 +1,10 @@
-import { defineTool, portfolioSymbols, replay, value as valuePortfolio } from "@ma/agent";
+import {
+  defineTool,
+  portfolioSymbols,
+  replay,
+  ToolInputError,
+  value as valuePortfolio,
+} from "@ma/agent";
 import { eventImpact } from "@ma/intel";
 import { z } from "zod";
 import type { AppContext } from "../context";
@@ -11,6 +17,7 @@ import {
   holdingLinks,
   marketFilings,
   policyEventsFor,
+  sharedEstimates,
 } from "../queries/bot";
 import { ChartBuilder, r2 } from "./charts";
 import { loadState, PORTFOLIO_IDS, resolvePortfolio } from "./portfolio";
@@ -252,7 +259,9 @@ export function intelTools(app: AppContext) {
             exposureBasis:
               share != null
                 ? "model estimate: holding weight × estimated share of holding revenue from this customer"
-                : "unquantified: link disclosed but no revenue share estimate",
+                : l.sharedEstimate
+                  ? "unquantified: only a company-level aggregate estimate exists for this link"
+                  : "unquantified: link disclosed but no revenue share estimate",
           });
         }
       }
@@ -477,8 +486,26 @@ export function intelTools(app: AppContext) {
               sourceId,
             };
           });
-      const customers = pick("customers");
-      const suppliers = pick("suppliers");
+      const unshare = (rows: ReturnType<typeof pick>) => {
+        const shared = sharedEstimates(
+          rows.map((x) => ({ group: "side", valueCr: x.valueCr, pct: x.supplierRevenuePct })),
+        );
+        return rows.map((x, i) =>
+          shared[i]
+            ? {
+                ...x,
+                valueCr: null,
+                rangeCr: null,
+                supplierRevenuePct: null,
+                customerCostPct: null,
+                estimateNote:
+                  "the estimator assigned one company-level aggregate to several counterparties; no per-counterparty value is available",
+              }
+            : { ...x, estimateNote: null },
+        );
+      };
+      const customers = unshare(pick("customers"));
+      const suppliers = unshare(pick("suppliers"));
       const c = new ChartBuilder(ctx.callId);
       const nodes = [
         { id: r.company.symbol, label: r.company.symbol, role: "center" as const },
@@ -564,16 +591,19 @@ export function intelTools(app: AppContext) {
       if (
         !/^\d{4}-\d{2}-\d{2}$/.test(input.from) ||
         !/^\d{4}-\d{2}-\d{2}$/.test(input.to) ||
-        input.from >= input.to
+        input.from >= input.to ||
+        Date.parse(input.to) - Date.parse(input.from) > 366 * 86_400_000
       )
-        throw new Error("from/to must be YYYY-MM-DD with from < to");
+        throw new ToolInputError(
+          "from/to must be YYYY-MM-DD with from < to and at most 366 days apart",
+        );
       const co = await findCompany(app, input.symbol);
       const r = await app.api.getOrLoad(
         `event:${co.id}:${input.from}:${input.to}:0`,
         () => eventImpact(app.db, co.id, input.from, input.to, {}),
         { ttlMs: 30 * 60_000, staleMs: 6 * 3_600_000 },
       );
-      if (!r) throw new Error("event impact unavailable");
+      if (!r) throw new ToolInputError("event impact unavailable");
       const k = r.withExposure?.coefficients.length ?? 0;
       const coef = r.exposureCoefficient;
       const t = r.withExposure && k ? r.withExposure.tStats[k - 1] : null;

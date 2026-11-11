@@ -81,10 +81,9 @@ function toolNote(t: Turn): string {
 
 export function memoryLine(t: Turn): string {
   const tools = t.tools.map((x) => `${x.name}(${argsBrief(x.args)})`).join(", ");
-  const sources = t.citations
-    .map((c) => c.label)
-    .slice(0, 3)
-    .join("; ");
+  const sources = t.citations.length
+    ? `${t.citations.length} (${t.citations[0]?.id}-${t.citations.at(-1)?.id})`
+    : "";
   return [
     `- turn ${t.id} (${t.at.slice(0, 10)}, portfolio ${t.portfolioId ?? "none"}, ${t.status})`,
     `Q: ${clip(t.user, 140)}`,
