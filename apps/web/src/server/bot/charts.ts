@@ -167,6 +167,7 @@ const MONEY_KEYS = new Set([
   "taxableShortTerm",
   "taxableLongTerm",
   "tax",
+  "incrementalTax",
   "cess",
   "total",
   "gain",

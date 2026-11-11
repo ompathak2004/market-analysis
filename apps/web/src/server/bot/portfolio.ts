@@ -23,9 +23,11 @@ import {
   TAX_RULES_VERSION,
   type TaxLotInput,
   type ToolContext,
+  ToolInputError,
   value as valuePortfolio,
   valueSeries,
   xirr,
+  yearOf,
 } from "@ma/agent";
 import { z } from "zod";
 import type { AppContext } from "../context";
@@ -41,7 +43,8 @@ const portfolioId = z
 
 export function resolvePortfolio(id: string | null, ctx: ToolContext): DemoPortfolio {
   const p = demoPortfolio(id ?? ctx.portfolioId ?? "");
-  if (!p) throw new Error("no portfolio selected; ask the user to choose a demo portfolio");
+  if (!p)
+    throw new ToolInputError("no portfolio selected; ask the user to choose a demo portfolio");
   return p;
 }
 
@@ -290,6 +293,9 @@ export function portfolioTools(app: AppContext) {
         notes.push(
           `benchmark ${s.portfolio.benchmark} levels cover only ${cmp.sessions} of ${pts.length} sessions`,
         );
+      notes.push(
+        "bars are price moves on held quantities; dividends and realized P&L are in the window P&L but not in the bars",
+      );
       if (mv?.tradedInWindow)
         notes.push("trades inside the window: contributions use end-of-window quantities");
       const charts = [
@@ -515,38 +521,51 @@ export function portfolioTools(app: AppContext) {
       const open = ledger.lots.filter((l) => !sym || l.symbol === sym);
       const unpriced = open.filter((l) => !s.quotes.has(l.symbol)).map((l) => l.symbol);
       const priced = open.filter((l) => s.quotes.has(l.symbol));
-      let scenarios: Array<{ name: string; estimate: ReturnType<typeof estimateGains> }> = [];
+      const booked = ledger.disposals.map((d) => lotInput(d, d.sold, d.pricePerShare));
+      const total = (e: ReturnType<typeof estimateGains>) =>
+        e.years.reduce((t, y) => t + y.total, 0);
+      const scenario = (name: string, lots: TaxLotInput[]) => {
+        const years = new Set(lots.map((l) => yearOf(l.disposed).label));
+        const sameYear = booked.filter((l) => years.has(yearOf(l.disposed).label));
+        const estimate = estimateGains([...sameYear, ...lots]);
+        return {
+          name,
+          estimate,
+          incremental: total(estimate) - total(estimateGains(sameYear)),
+          bookedLotsIncluded: sameYear.length,
+        };
+      };
+      let scenarios: Array<ReturnType<typeof scenario>> = [];
       if (input.mode === "realized") {
-        const lots = ledger.disposals
-          .filter((d) => !sym || d.symbol === sym)
-          .map((d) => lotInput(d, d.sold, d.pricePerShare));
-        scenarios = [{ name: "realized", estimate: estimateGains(lots) }];
-      } else if (input.mode === "if_sold_today") {
+        const estimate = estimateGains(booked);
         scenarios = [
           {
-            name: `sell on ${s.asOf} at last close`,
-            estimate: estimateGains(
-              priced.map((l) => lotInput(l, s.asOf, (s.quotes.get(l.symbol) as Quote).close)),
-            ),
+            name: "realized (all symbols, aggregate per year)",
+            estimate,
+            incremental: total(estimate),
+            bookedLotsIncluded: booked.length,
           },
+        ];
+      } else if (input.mode === "if_sold_today") {
+        scenarios = [
+          scenario(
+            `sell on ${s.asOf} at last close`,
+            priced.map((l) => lotInput(l, s.asOf, (s.quotes.get(l.symbol) as Quote).close)),
+          ),
         ];
       } else {
         const shortLots = priced.filter((l) => longTermFrom(l.acquired) > s.asOf);
         scenarios = [
-          {
-            name: `sell short-term lots on ${s.asOf}`,
-            estimate: estimateGains(
-              shortLots.map((l) => lotInput(l, s.asOf, (s.quotes.get(l.symbol) as Quote).close)),
+          scenario(
+            `sell short-term lots on ${s.asOf}`,
+            shortLots.map((l) => lotInput(l, s.asOf, (s.quotes.get(l.symbol) as Quote).close)),
+          ),
+          scenario(
+            "sell each lot on its first long-term day at the same price",
+            shortLots.map((l) =>
+              lotInput(l, longTermFrom(l.acquired), (s.quotes.get(l.symbol) as Quote).close),
             ),
-          },
-          {
-            name: "sell each lot on its first long-term day at the same price",
-            estimate: estimateGains(
-              shortLots.map((l) =>
-                lotInput(l, longTermFrom(l.acquired), (s.quotes.get(l.symbol) as Quote).close),
-              ),
-            ),
-          },
+          ),
         ];
       }
       const statute = ctx.cite({
@@ -597,7 +616,7 @@ export function portfolioTools(app: AppContext) {
                 "inr",
                 scenarios.map((x) => ({
                   label: x.name.slice(0, 60),
-                  value: r2(x.estimate.years.reduce((t, y) => t + y.total, 0)) ?? 0,
+                  value: r2(x.incremental) ?? 0,
                   tone: "accent" as const,
                 })),
               ),
@@ -608,7 +627,7 @@ export function portfolioTools(app: AppContext) {
         summary: scenarios
           .map(
             (x) =>
-              `${x.name}: tax ≈ ₹${Math.round(x.estimate.years.reduce((t, y) => t + y.total, 0)).toLocaleString("en-IN")}`,
+              `${x.name}: additional tax ≈ ₹${Math.round(x.incremental).toLocaleString("en-IN")}`,
           )
           .join("; "),
         freshness: s.asOf,
@@ -619,6 +638,8 @@ export function portfolioTools(app: AppContext) {
           rulesVersion: TAX_RULES_VERSION,
           scenarios: scenarios.map((x) => ({
             name: x.name,
+            incrementalTax: r2(x.incremental),
+            bookedSameYearLotsIncluded: x.bookedLotsIncluded,
             exact: x.estimate.exact,
             missingInputs: x.estimate.missing,
             years: x.estimate.years.map((y) => ({

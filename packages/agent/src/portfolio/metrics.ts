@@ -243,6 +243,7 @@ export function valueSeries(
   const points: SeriesPoint[] = [];
   const limitedBy = new Set<string>();
   let forwardFilled = 0;
+  let prevDate: string | null = null;
   for (const d of sorted) {
     const ledger = replay(p, d, actions);
     let total = ledger.cash;
@@ -261,7 +262,10 @@ export function valueSeries(
       if (q.date !== d) forwardFilled++;
       total += l.quantity * splitFactorAfter(splits, l.symbol, d) * q.close;
     }
-    const flow = -ledger.flows.filter((f) => f.date === d).reduce((s, f) => s + f.amount, 0);
+    const flow = -ledger.flows
+      .filter((f) => f.date <= d && (prevDate == null || f.date > prevDate))
+      .reduce((s, f) => s + f.amount, 0);
+    prevDate = d;
     if (!valid) {
       points.length = 0;
       forwardFilled = 0;
