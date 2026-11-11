@@ -7,7 +7,8 @@
     "dev": "next dev -p 3000 -H 0.0.0.0",
     "build": "next build",
     "start": "next start -p 3000 -H 0.0.0.0",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "bot:eval": "tsx --conditions=@ma/source src/server/bot/eval.ts"
   },
   "dependencies": {
     "@ma/agent": "workspace:*",
