@@ -30,6 +30,7 @@ export interface AgentTool<I = unknown> {
   description: string;
   input: z.ZodType<I, z.ZodTypeDef, unknown>;
   timeoutMs: number;
+  maxResultChars?: number;
   run(input: I, ctx: ToolContext): Promise<ToolOutput>;
 }
 
