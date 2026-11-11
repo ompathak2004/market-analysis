@@ -24,10 +24,20 @@ export interface BotMarket {
 }
 
 const symbolList = (symbols: readonly string[]) =>
-  sql.join(
-    [...new Set(symbols.map((s) => s.toUpperCase()))].map((s) => sql`${s}`),
-    sql`, `,
-  );
+  symbols.length
+    ? sql.join(
+        [...new Set(symbols.map((s) => s.toUpperCase()))].map((s) => sql`${s}`),
+        sql`, `,
+      )
+    : sql`null`;
+
+const likeOf = (q: string | null) =>
+  q
+    ? `%${q
+        .toLowerCase()
+        .slice(0, 60)
+        .replace(/[%_]/g, (m) => `\${m}`)}%`
+    : null;
 
 export async function botMarket(
   ctx: AppContext,
@@ -327,7 +337,7 @@ export async function filingsFor(
   days: number,
   query: string | null,
 ): Promise<BotFiling[]> {
-  const like = query ? `%${query.toLowerCase()}%` : null;
+  const like = likeOf(query);
   const rows = await ctx.api.getOrLoad(
     `announcements:bot:${[...symbols].sort().join(",")}:${days}:${like ?? ""}`,
     () =>
@@ -369,7 +379,7 @@ export async function marketFilings(
   days: number,
   query: string | null,
 ): Promise<BotFiling[]> {
-  const like = query ? `%${query.toLowerCase()}%` : null;
+  const like = likeOf(query);
   const rows = await ctx.api.getOrLoad(
     `announcements:bot:market:${days}:${like ?? ""}`,
     () =>
@@ -411,7 +421,7 @@ export async function policyEventsFor(
   days: number,
   query: string | null,
 ): Promise<BotPolicyEvent[]> {
-  const like = query ? `%${query.toLowerCase()}%` : null;
+  const like = likeOf(query);
   const scope = symbols?.length ? [...symbols].sort().join(",") : "all";
   const rows = await ctx.api.getOrLoad(
     `influence:bot:policy:${scope}:${days}:${like ?? ""}`,

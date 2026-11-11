@@ -27,7 +27,7 @@ const portfolioId = z
   .nullable()
   .describe("Demo portfolio id; null means the portfolio selected in the UI");
 
-const symbol = z.string().describe("NSE symbol, e.g. HAL");
+const symbol = z.string().max(30).describe("NSE symbol, e.g. HAL");
 
 const SIGNAL_NATURE: Record<string, string> = {
   distress_score: "model estimate: DuPont-feature logistic ordering score 0-1, not a probability",
@@ -162,6 +162,7 @@ export function intelTools(app: AppContext) {
       portfolioId,
       topic: z
         .string()
+        .max(60)
         .nullable()
         .describe("Keyword to filter events, or null for all material events"),
       days: z.number().int().min(1).max(30).describe("Lookback in days"),

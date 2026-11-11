@@ -26,7 +26,7 @@ import {
 import { lookupCompanies, marketFilings, policyEventsFor } from "../queries/bot";
 import { ChartBuilder, r2, toneOf } from "./charts";
 
-const symbol = z.string().describe("NSE symbol, e.g. BEL");
+const symbol = z.string().max(30).describe("NSE symbol, e.g. BEL");
 
 function remapEvidence(value: unknown, ids: Map<string, string>): unknown {
   if (Array.isArray(value)) return value.map((v) => remapEvidence(v, ids));
@@ -74,7 +74,7 @@ export function researchTools(app: AppContext, conversation: Conversation) {
     name: "company_lookup",
     description:
       "Resolve a company name or partial symbol to NSE symbols in our universe. Use before company tools when the symbol is uncertain.",
-    input: z.object({ query: z.string().describe("Name or symbol fragment") }),
+    input: z.object({ query: z.string().max(60).describe("Name or symbol fragment") }),
     timeoutMs: 4_000,
     async run(input) {
       const hits = await lookupCompanies(app, input.query);
@@ -391,7 +391,7 @@ export function researchTools(app: AppContext, conversation: Conversation) {
     description:
       "Market-wide recent material NSE filings (LLM-triaged high/medium) and government policy events (PIB/PRS), optionally filtered by keyword, plus the latest AI market brief. Use for 'today's RBI announcement', tariffs, sector news. Our news coverage is filings and official releases, not a newswire.",
     input: z.object({
-      query: z.string().nullable().describe("Keyword filter or null"),
+      query: z.string().max(60).nullable().describe("Keyword filter or null"),
       days: z.number().int().min(1).max(14),
     }),
     timeoutMs: 9_000,
@@ -550,7 +550,7 @@ export function researchTools(app: AppContext, conversation: Conversation) {
     name: "conversation_recall",
     description:
       "Read an earlier turn of this conversation in full by its turn id (listed in the compacted history). Use only when the compacted note is not enough.",
-    input: z.object({ turnId: z.string() }),
+    input: z.object({ turnId: z.string().max(40) }),
     timeoutMs: 1_000,
     async run(input) {
       const t = conversation.turns.find((x) => x.id === input.turnId);
