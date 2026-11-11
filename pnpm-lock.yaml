@@ -116,6 +116,19 @@ importers:
         specifier: ^5.9.2
         version: 5.9.3
 
+  packages/agent:
+    dependencies:
+      '@ma/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.18.0
+        version: 22.20.4
+
   packages/cache:
     dependencies:
       '@ma/core':
