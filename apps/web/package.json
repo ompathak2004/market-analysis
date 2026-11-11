@@ -10,12 +10,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@ma/agent": "workspace:*",
     "@ma/cache": "workspace:*",
     "@ma/core": "workspace:*",
     "@ma/db": "workspace:*",
     "@ma/ingest": "workspace:*",
     "@ma/intel": "workspace:*",
     "@ma/jobs": "workspace:*",
+    "@ma/llm": "workspace:*",
     "next": "^15.5.4",
     "posthog-js": "^1.438.12",
     "react": "^19.1.1",

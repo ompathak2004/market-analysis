@@ -20,6 +20,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@ma/agent':
+        specifier: workspace:*
+        version: link:../../packages/agent
       '@ma/cache':
         specifier: workspace:*
         version: link:../../packages/cache
@@ -38,6 +41,9 @@ importers:
       '@ma/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
+      '@ma/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
       next:
         specifier: ^15.5.4
         version: 15.5.26(@opentelemetry/api@1.9.1)(@types/node@22.20.4)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -121,6 +127,9 @@ importers:
       '@ma/core':
         specifier: workspace:*
         version: link:../core
+      '@ma/llm':
+        specifier: workspace:*
+        version: link:../llm
       zod:
         specifier: ^3.25.76
         version: 3.25.76
