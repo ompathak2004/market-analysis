@@ -333,3 +333,61 @@ Migrations are additive (expand/contract), so the previous image runs against th
 ## Cost
 
 Expected ≈ $11/month on Spot (≈ $6–7 compute, ≈ $3.6 for the task's public IPv4 address, under $2 for S3, logs, metrics, alarms and ECR); ≈ $24 on on-demand Fargate, which exceeds the default $20 budget. Breakdown and assumptions in `infra/aws/README.md`. Check AWS Cost Explorer (service and usage type) a week after launch against this estimate.
+
+## Assistant (/bot)
+
+Chat analyst at `/bot` (`apps/web/src/app/bot`, `apps/web/src/components/bot`) over synthetic demo portfolios (`packages/agent/src/portfolio/demo.ts`) valued at real NSE closes. Implemented on branch `feat/bot`; not yet deployed. Storage is Redis only and the web app stays read-only (no migration).
+
+Routes:
+
+- `POST /api/v1/bot/chat`: public, NDJSON stream.
+- `GET` / `DELETE /api/v1/bot/conversations/:id`: public, bucket `botRead` (120 per minute per IP).
+- `GET /api/v1/bot/traces/:id` and `GET /api/v1/bot/traces/recent`: admin (`x-admin-key` or the `ma_admin` cookie).
+
+Env (`packages/core/src/config.ts`):
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `BOT_ENABLED` | `true` | `false` answers 503 on chat. |
+| `BOT_MODEL` | `gpt-oss-120b` | Primary Cerebras model. |
+| `BOT_FALLBACK_MODEL` | `CEREBRAS_FALLBACK_MODEL` | Fallback model. |
+| `BOT_TRACE_CONTENT` | `false` | `true` keeps the first 2,000 characters of each user message in traces. |
+| `LLM_BUDGET_CHAT` | `200000` | Daily token cap for the `chat` budget class, inside `LLM_DAILY_TOKEN_BUDGET`. |
+
+Disable: set `BOT_ENABLED=false` in the Vercel project and redeploy. Re-enable by removing it or setting `true`.
+
+Limits and budgets:
+
+- Per IP: 12 chats per 10 minutes (bucket `bot`) and 60 per day (`botDaily`). IPv6 addresses are keyed by /64.
+- The production Cerebras key reports Free Trial limits (5 requests/min, 30k tokens/min, 1M tokens/day). The worker already uses about 560k-670k tokens/day, so `LLM_BUDGET_CHAT` is deliberately small. Raise it only after the key leaves the trial tier.
+- The bot shares the worker's Redis RPM bucket `ratelimit:api.cerebras.ai` (`CEREBRAS_RPM`), so a burst of chat turns slows the worker and the reverse.
+
+Redis keys:
+
+| Key | TTL | Holds |
+| --- | --- | --- |
+| `bot:conv:<uuid>` | 7 d | Conversation, at most 30 turns. |
+| `bot:trace:<uuid>` | 14 d | One trace record per turn. |
+| `bot:traces` | none | Index list of trace ids, capped at 500. |
+| `bot:req:<uuid>` | 10 min | Request dedupe (`SET NX`). |
+| `bot:lock:<conversationId>` | 65 s | Per-conversation lock while a turn runs. |
+
+Reading a trace: each answer shows the first 8 characters of its trace id. `/admin/traces` lists the 100 most recent turns (status, failure, duration); open one, or `/admin/traces?id=<traceId>`, for the span waterfall with model, token, tool, context and citation attributes. `GET /api/v1/bot/traces/recent` returns the same list as JSON.
+
+Failure categories shown to users, and what to check:
+
+| Category | Meaning | Check |
+| --- | --- | --- |
+| `rate_limited` | Cerebras 429 or the shared RPM bucket stayed full after one retry (an exhausted IP bucket returns HTTP 429 before streaming). | Redis buckets for the IP; `ratelimit:api.cerebras.ai`; Free Trial RPM (5/min). |
+| `budget_exhausted` | The `chat` class has spent `LLM_BUDGET_CHAT` today. | Remaining `chat` budget in Redis; wait for the daily reset or raise the cap. |
+| `provider_unavailable` | Cerebras 5xx or timeout on both models. | Provider status; model spans in the trace; `BOT_FALLBACK_MODEL`. |
+| `timeout` | The turn or a model call passed its deadline. | Longest span in the waterfall. |
+| `invalid_model_output` | The model returned an empty answer, or raw tool-call syntax twice. | `agent.leaked_tool_text` and finish reasons on the `gen_ai.chat` spans; rerun the eval for the model. |
+| `cancelled` | The client closed the stream first. | Usually benign; repeated cases suggest a proxy or network issue. |
+| `internal` | Unexpected error. | Web logs for the request and the error span in the trace. |
+
+Evaluation (12 golden cases in `apps/web/src/server/bot/eval.ts`; each case consumes the `chat` budget, so run it sparingly):
+
+```bash
+set -a && . ./.env && set +a && pnpm --filter @ma/web bot:eval -- --model=gpt-oss-120b [--cases=a,b] [--out=file.json]
+```

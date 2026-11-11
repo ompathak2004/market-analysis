@@ -174,6 +174,9 @@ export function TerminalController() {
       case "nav.home":
         router.push("/");
         return true;
+      case "nav.bot":
+        router.push("/bot");
+        return true;
       case "nav.signals":
         router.push("/signals");
         return true;

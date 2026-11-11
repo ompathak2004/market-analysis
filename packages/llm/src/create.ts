@@ -24,6 +24,7 @@ export function createLlmClient(deps: {
           : {}),
         ...(config.LLM_BUDGET_INSIGHTS ? { insights: config.LLM_BUDGET_INSIGHTS } : {}),
         ...(config.LLM_BUDGET_INFLUENCE ? { influence: config.LLM_BUDGET_INFLUENCE } : {}),
+        ...(config.LLM_BUDGET_CHAT ? { chat: config.LLM_BUDGET_CHAT } : {}),
       },
     }),
     ...(record ? { record } : {}),

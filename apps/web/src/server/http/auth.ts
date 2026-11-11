@@ -92,10 +92,17 @@ export function requireAdmin(
 const PUBLIC_LIMITS = {
   search: { capacity: 60, perMs: 60_000 },
   adminLogin: { capacity: 10, perMs: 15 * 60_000 },
+  bot: { capacity: 12, perMs: 10 * 60_000 },
+  botRead: { capacity: 120, perMs: 60_000 },
+  botDaily: { capacity: 60, perMs: 24 * 60 * 60_000 },
 } as const;
 const publicLimiters = new WeakMap<AppContext, RateLimiter>();
 
-function clientIp(req: HeaderSource): string {
+export function rateSubject(ip: string): string {
+  return ip.includes(":") ? `${ip.split(":").slice(0, 4).join(":")}::/64` : ip;
+}
+
+export function clientIp(req: HeaderSource): string {
   const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   return forwarded || req.headers.get("x-real-ip") || "unknown";
 }
@@ -104,12 +111,13 @@ export async function limitPublic(
   ctx: AppContext,
   req: HeaderSource,
   bucket: keyof typeof PUBLIC_LIMITS,
+  subject: string = clientIp(req),
 ): Promise<void> {
   let limiter = publicLimiters.get(ctx);
   if (!limiter) {
     limiter = new RateLimiter(ctx.redis, PUBLIC_LIMITS);
     publicLimiters.set(ctx, limiter);
   }
-  const wait = await limiter.tryAcquire(bucket, clientIp(req));
+  const wait = await limiter.tryAcquire(bucket, subject);
   if (wait > 0) throw new RateLimitedError(bucket, wait);
 }

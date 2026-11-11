@@ -21,6 +21,7 @@ import "@/styles/charts.css";
 import "@/styles/utilities.css";
 import "@/styles/admin.css";
 import "@/styles/infl.css";
+import "@/styles/bot.css";
 
 export const metadata: Metadata = {
   title: "MA Terminal",

@@ -23,3 +23,5 @@ Deploy `apps/web` to Vercel and `apps/worker` to ECS (`docs/ops.md`); the worker
 ## Terminal commands
 
 `CTRL+K` then `DES RELIANCE`, `GP INFY`, `FA TCS`, `ANR INDGN`, `SPLC SONACOMS`, `NEWS RELIANCE`, `HOME`, `MOV`, `SIG distress_score`. Keys `1`–`9` switch company tabs (DES, GP, FA, ANR, SPLC, NEWS, JET, SHIP, INTL).
+
+`/bot` is a separate chat analyst over synthetic demo portfolios valued at NSE closes (not a terminal pane); see the Assistant section of [`docs/ops.md`](docs/ops.md).
