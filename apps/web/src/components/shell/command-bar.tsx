@@ -20,7 +20,7 @@ interface Option {
   href: string;
 }
 
-const PLACEHOLDER = "DES RELIANCE · ANR INFY · SHIP ADANIPORTS · INTL TCS · MOV";
+const PLACEHOLDER = "DES RELIANCE · ANR INFY · SHIP ADANIPORTS · INTL TCS · MOV · BOT";
 
 function currentSymbol(pathname: string | null): string | null {
   const m = pathname?.match(/^\/c\/([^/]+)/);

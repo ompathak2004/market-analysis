@@ -61,6 +61,7 @@ export const KEYMAP: readonly Binding[] = [
   { id: "range.next", keys: ["]"], when: "idle", label: "Longer chart range", group: "Views" },
   { id: "nav.home", keys: ["Shift+h"], when: "idle", label: "Go to HOME", group: "Views" },
   { id: "nav.signals", keys: ["Shift+s"], when: "idle", label: "Go to SIG", group: "Views" },
+  { id: "nav.bot", keys: ["Shift+a"], when: "idle", label: "Go to BOT (analyst)", group: "Views" },
   { id: "density.toggle", keys: [","], when: "idle", label: "Toggle density", group: "Display" },
 ];
 
