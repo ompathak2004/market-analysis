@@ -11,6 +11,7 @@ import {
   newConversation,
   OpenAiCompatibleProvider,
   PROMPT_VERSION,
+  type RunParams,
   type RunResult,
   runAgent,
   systemPrompt,
@@ -51,19 +52,19 @@ export interface ChatInput {
   ip: string;
 }
 
-const budgets = new WeakMap<AppContext, LlmBudget>();
+const budgets = new Map<string, LlmBudget>();
 
-function chatBudget(app: AppContext): TokenBudget {
-  let b = budgets.get(app);
+function chatBudget(app: AppContext, maxWaitMs: number): TokenBudget {
+  let b = budgets.get(String(maxWaitMs));
   if (!b) {
     b = new LlmBudget(app.redis, {
       rpm: app.config.CEREBRAS_RPM,
       dailyTokens: app.config.LLM_DAILY_TOKEN_BUDGET,
       classTokens: app.config.LLM_BUDGET_CHAT ? { chat: app.config.LLM_BUDGET_CHAT } : {},
-      maxWaitMs: 15_000,
+      maxWaitMs,
       attemptMs: 0,
     });
-    budgets.set(app, b);
+    budgets.set(String(maxWaitMs), b);
   }
   const budget = b;
   return {
@@ -98,6 +99,64 @@ const FAILURE_COPY: Record<string, string> = {
 };
 
 export class ChatConflict extends Error {}
+
+export function turnParams(
+  app: AppContext,
+  conversation: Conversation,
+  portfolioId: string | null,
+  message: string,
+  trace: Trace,
+  signal: AbortSignal,
+  emit: (e: AgentEvent) => void,
+  opts: { model?: string; fallback?: string | null; maxWaitMs?: number } = {},
+): RunParams {
+  const portfolio = portfolioId ? demoPortfolio(portfolioId) : null;
+  const ctxSpan = trace.span("agent.context");
+  const assembled = assembleContext(conversation, portfolio?.id ?? null);
+  const system = systemPrompt({
+    today: new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10),
+    portfolio: portfolio && {
+      id: portfolio.id,
+      name: portfolio.name,
+      benchmark: portfolio.benchmark,
+    },
+    portfolios: DEMO_PORTFOLIOS.map((p) => ({ id: p.id, name: p.name })),
+    memory: assembled.memory,
+    portfolioChanged: assembled.portfolioChanged,
+  });
+  ctxSpan.end("ok", {
+    "agent.context.stored_turns": assembled.stats.storedTurns,
+    "agent.context.verbatim_turns": assembled.stats.verbatim,
+    "agent.context.compacted_turns": assembled.stats.compacted,
+    "agent.context.dropped_turns": assembled.stats.dropped,
+    "agent.context.history_tokens": assembled.stats.tokens,
+    "agent.context.portfolio_changed": assembled.portfolioChanged != null,
+  });
+  const fallback =
+    opts.fallback !== undefined
+      ? opts.fallback
+      : (app.config.BOT_FALLBACK_MODEL ?? app.config.CEREBRAS_FALLBACK_MODEL);
+  return {
+    provider: new OpenAiCompatibleProvider("cerebras", {
+      apiKey: app.config.CEREBRAS_API_KEY,
+      baseUrl: "https://api.cerebras.ai/v1",
+    }),
+    models: { primary: opts.model ?? app.config.BOT_MODEL, fallback },
+    system,
+    history: assembled.history,
+    user: message,
+    tools: botTools(app, conversation),
+    portfolioId: portfolio?.id ?? null,
+    citationOffset: Math.max(
+      0,
+      ...conversation.turns.flatMap((t) => t.citations.map((c) => Number(c.id.slice(1)) || 0)),
+    ),
+    budget: chatBudget(app, opts.maxWaitMs ?? 15_000),
+    trace,
+    signal,
+    emit,
+  };
+}
 
 export async function prepareChat(app: AppContext, input: ChatInput) {
   const store = new BotStore(app.redis);
@@ -141,50 +200,9 @@ export async function runChat(
   });
   let result: RunResult | null = null;
   try {
-    const ctxSpan = trace.span("agent.context");
-    const assembled = assembleContext(conversation, portfolio?.id ?? null);
-    const system = systemPrompt({
-      today: new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10),
-      portfolio: portfolio && {
-        id: portfolio.id,
-        name: portfolio.name,
-        benchmark: portfolio.benchmark,
-      },
-      portfolios: DEMO_PORTFOLIOS.map((p) => ({ id: p.id, name: p.name })),
-      memory: assembled.memory,
-      portfolioChanged: assembled.portfolioChanged,
-    });
-    ctxSpan.end("ok", {
-      "agent.context.stored_turns": assembled.stats.storedTurns,
-      "agent.context.verbatim_turns": assembled.stats.verbatim,
-      "agent.context.compacted_turns": assembled.stats.compacted,
-      "agent.context.dropped_turns": assembled.stats.dropped,
-      "agent.context.history_tokens": assembled.stats.tokens,
-      "agent.context.portfolio_changed": assembled.portfolioChanged != null,
-    });
-    result = await runAgent({
-      provider: new OpenAiCompatibleProvider("cerebras", {
-        apiKey: app.config.CEREBRAS_API_KEY,
-        baseUrl: "https://api.cerebras.ai/v1",
-      }),
-      models: {
-        primary: app.config.BOT_MODEL,
-        fallback: app.config.BOT_FALLBACK_MODEL ?? app.config.CEREBRAS_FALLBACK_MODEL,
-      },
-      system,
-      history: assembled.history,
-      user: input.message,
-      tools: botTools(app, conversation),
-      portfolioId: portfolio?.id ?? null,
-      citationOffset: Math.max(
-        0,
-        ...conversation.turns.flatMap((t) => t.citations.map((c) => Number(c.id.slice(1)) || 0)),
-      ),
-      budget: chatBudget(app),
-      trace,
-      signal,
-      emit,
-    });
+    result = await runAgent(
+      turnParams(app, conversation, portfolio?.id ?? null, input.message, trace, signal, emit),
+    );
     const turn: Turn = {
       id: turnId,
       at: new Date().toISOString(),
