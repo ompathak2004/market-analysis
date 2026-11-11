@@ -1039,3 +1039,52 @@
     }
   }
 }
+
+@layer controls {
+  .trace-view {
+    display: grid;
+    gap: 6px;
+  }
+
+  .trace-attrs {
+    margin: 0;
+    padding: 6px var(--pad-x);
+    white-space: pre-wrap;
+    color: var(--fg-dim);
+    font-size: var(--fs-sm);
+    background: var(--surface-2);
+  }
+
+  .trace-spans {
+    table-layout: auto;
+  }
+
+  .trace-spans tr[data-status="error"] td:first-child {
+    color: var(--neg);
+  }
+
+  .trace-bar {
+    position: relative;
+    display: block;
+    width: 220px;
+    height: 8px;
+    background: var(--surface-3);
+  }
+
+  .trace-bar i {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: var(--accent);
+  }
+
+  .trace-attr-cell {
+    max-width: 520px;
+    color: var(--fg-muted);
+    font-size: var(--fs-sm);
+  }
+
+  .trace-empty {
+    padding: 8px var(--pad-x);
+  }
+}

@@ -253,7 +253,7 @@ export async function runChat(
         : null;
     const record = trace.finish({
       "bot.status": result?.status ?? "failed",
-      "bot.failure": result?.failure ?? "internal",
+      "bot.failure": result ? result.failure : "internal",
       "bot.failure_message": result?.failureMessage?.slice(0, 300) ?? null,
       "gen_ai.response.model": result?.model ?? null,
       "bot.cost_usd": cost == null ? null : Math.round(cost * 1e6) / 1e6,
