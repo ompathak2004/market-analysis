@@ -71,7 +71,16 @@ function parse(src: string): Block[] {
 
 const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|[[【]\s*S\d{1,3}\s*[\]】]|\*[^*\s][^*]*\*|_[^_\s][^_]*_)/g;
 
+const BREAK = /<br\s*\/?>/i;
+
 function inline(text: string, cite: (id: string) => ReactNode): ReactNode[] {
+  if (BREAK.test(text))
+    return text
+      .split(new RegExp(BREAK.source, "gi"))
+      .flatMap((line, i) => [
+        ...(i ? [<br key={`br-${String(i)}`} />] : []),
+        <Fragment key={`ln-${String(i)}`}>{inline(line, cite)}</Fragment>,
+      ]);
   return text.split(INLINE).map((part, i) => {
     const key = String(i);
     if (!part) return null;

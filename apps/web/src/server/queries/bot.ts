@@ -525,3 +525,97 @@ export async function latestRevenueCr(
   );
   return new Map((rows ?? []).map((r) => [r.symbol, Number(r.revenue)]));
 }
+
+export interface PeerMetrics {
+  symbol: string;
+  name: string;
+  industry: string | null;
+  marketCapCr: number | null;
+  peLatestFy: number | null;
+  roePct: number | null;
+  opmPct: number | null;
+  revenueGrowthPct: number | null;
+  latestFy: string | null;
+  self: boolean;
+}
+
+export async function industryPeers(
+  ctx: AppContext,
+  companyId: number,
+  limit = 5,
+): Promise<PeerMetrics[]> {
+  const rows = await ctx.api.getOrLoad(
+    `financials:bot:peers:${companyId}:${limit}`,
+    () =>
+      ctx.db.execute<{
+        company_id: number;
+        symbol: string;
+        name: string;
+        industry: string | null;
+        market_cap_cr: number | null;
+        revenue: number | null;
+        prev_revenue: number | null;
+        operating_profit: number | null;
+        net_income: number | null;
+        total_equity: number | null;
+        period_end: string | null;
+      }>(sql`
+        with me as (
+          select id, industry, sector, market_cap_cr from companies where id = ${companyId}
+        ), pool as (
+          select c.* from companies c, me
+          where c.nse_symbol is not null and c.id <> me.id and c.market_cap_cr is not null
+            and (c.industry = me.industry
+              or (not exists (select 1 from companies x where x.industry = me.industry and x.id <> me.id)
+                  and c.sector = me.sector))
+          order by abs(ln(greatest(c.market_cap_cr, 1)) - ln(greatest(coalesce(me.market_cap_cr, 1), 1)))
+          limit ${limit}
+        ), chosen as (
+          select id from pool union select id from me
+        )
+        select c.id as company_id, c.nse_symbol as symbol, c.name, c.industry, c.market_cap_cr,
+               f.revenue, f.operating_profit, f.net_income, f.total_equity, f.period_end::text,
+               (select p.revenue from fundamentals p where p.company_id = c.id and p.period_type = 'annual'
+                  and p.period_end < f.period_end and p.revenue is not null
+                order by p.period_end desc limit 1) as prev_revenue
+        from companies c join chosen ch on ch.id = c.id
+        left join lateral (
+          select * from fundamentals f where f.company_id = c.id and f.period_type = 'annual'
+            and f.revenue is not null and f.net_income is not null
+          order by f.period_end desc limit 1
+        ) f on true`),
+    { ttlMs: 6 * HOUR, staleMs: 24 * HOUR },
+  );
+  const n = (v: unknown) => (v == null ? null : Number(v));
+  const ratio = (a: number | null, b: number | null, k = 1) =>
+    a == null || b == null || b <= 0 ? null : (a / b) * k;
+  return (rows ?? [])
+    .map((r) => {
+      const mcap = n(r.market_cap_cr);
+      const rev = n(r.revenue);
+      const prev = n(r.prev_revenue);
+      const ni = n(r.net_income);
+      return {
+        symbol: r.symbol,
+        name: r.name,
+        industry: r.industry,
+        marketCapCr: mcap,
+        peLatestFy: ni != null && ni > 0 ? ratio(mcap, ni) : null,
+        roePct: ratio(ni, n(r.total_equity), 100),
+        opmPct: ratio(n(r.operating_profit), rev, 100),
+        revenueGrowthPct: rev != null && prev != null && prev > 0 ? (rev / prev - 1) * 100 : null,
+        latestFy: r.period_end,
+        self: Number(r.company_id) === companyId,
+      };
+    })
+    .sort((a, b) => Number(b.self) - Number(a.self) || (b.marketCapCr ?? 0) - (a.marketCapCr ?? 0));
+}
+
+export function median(values: Array<number | null>): number | null {
+  const v = values
+    .filter((x): x is number => x != null && Number.isFinite(x))
+    .sort((a, b) => a - b);
+  if (!v.length) return null;
+  const m = Math.floor(v.length / 2);
+  return v.length % 2 ? (v[m] as number) : ((v[m - 1] as number) + (v[m] as number)) / 2;
+}

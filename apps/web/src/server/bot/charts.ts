@@ -40,12 +40,14 @@ export class ChartBuilder {
     unit: VizFormat,
     bars: Array<{ label: string; value: number; compare?: number | null; tone?: Tone }>,
     compareLabel: string | null = null,
+    valueLabel: string | null = null,
   ) {
     return {
       ...this.base("bar", b),
       kind: "bar",
       unit,
       compareLabel,
+      valueLabel,
       bars: bars.slice(0, 30).map((x) => ({
         label: x.label.slice(0, 80),
         value: x.value,

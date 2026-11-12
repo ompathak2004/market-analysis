@@ -12,13 +12,13 @@ import {
   findCompany,
   keyStats,
   latestSignals,
-  peers,
   rangeStats,
   type SupplyChainEdge,
   supplyChain,
 } from "../queries";
-import { latestRevenueCr, lookupCompanies, sharedEstimates } from "../queries/bot";
+import { industryPeers, latestRevenueCr, lookupCompanies, sharedEstimates } from "../queries/bot";
 import { ChartBuilder, r2 } from "./charts";
+import { peerComparison } from "./peers";
 
 export const DOSSIER_VERSION = 1;
 
@@ -223,7 +223,7 @@ export function dossierTool(app: AppContext) {
       ] = await Promise.all([
         settle(keyStats(app, sym)),
         settle(rangeStats(app, sym)),
-        settle(peers(app, sym, 6)),
+        settle(industryPeers(app, co.id, 5)),
         settle(financials(app, sym)),
         settle(supplyChain(app, sym)),
         settle(companyResearch(app, sym)),
@@ -334,6 +334,7 @@ export function dossierTool(app: AppContext) {
               tone: "accent" as const,
             })),
             "Net profit",
+            "Revenue",
           ),
         );
       } else gaps.push("fewer than two annual statements stored");
@@ -622,6 +623,12 @@ export function dossierTool(app: AppContext) {
         findings.push(`Street view (consensus, not our view): ${parts.join("; ")}.`);
       } else gaps.push("no broker coverage stored");
 
+      const peerView = peerComparison(sym, co.sector, peerList ?? []);
+      if (peerView) {
+        findings.push(`${peerView.line} [${statsId}].`);
+        charts.push(c.table(peerView.table.base, peerView.table.columns, peerView.table.rows));
+      } else gaps.push("no listed industry peers with comparable statements");
+
       const material = (filings ?? [])
         .filter((f) => f.materiality === "high" || f.materiality === "medium")
         .slice(0, 8)
@@ -689,7 +696,7 @@ export function dossierTool(app: AppContext) {
       return {
         summary: `${sym} dossier: ${findings.length} findings, ${customers.length + suppliers.length} supply-chain links (${topC.length + topS.length} usable shown), ${gaps.length} data gaps`,
         freshness: range?.lastDate ?? stats?.latestQuarter ?? null,
-        charts: charts.slice(0, 6),
+        charts: charts.slice(0, 7),
         data: {
           dossierVersion: DOSSIER_VERSION,
           company: { symbol: sym, name: co.name, sector: co.sector, industry: co.industry },
@@ -701,13 +708,7 @@ export function dossierTool(app: AppContext) {
             .sort((a, b) => (a.quality === "weak" ? 0 : 1) - (b.quality === "weak" ? 0 : 1))
             .slice(0, 8)
             .map((r) => `${r.name}: ${r.reason}`),
-          peers: (peerList ?? [])
-            .filter((p) => !p.self && p.industry != null && p.industry === co.industry)
-            .map((p) => ({
-              symbol: p.symbol,
-              marketCapCr: r2(p.marketCapCr),
-              distress: r2(p.distress),
-            })),
+          peers: peerView?.rows ?? [],
           material,
           aiView,
           dataGaps: gaps,

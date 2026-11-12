@@ -23,8 +23,9 @@ import {
   marketBrief,
   priceSnapshot,
 } from "../queries";
-import { lookupCompanies, marketFilings, policyEventsFor } from "../queries/bot";
+import { industryPeers, lookupCompanies, marketFilings, policyEventsFor } from "../queries/bot";
 import { ChartBuilder, r2, toneOf } from "./charts";
+import { peerComparison } from "./peers";
 
 const symbol = z.string().max(30).describe("NSE symbol, e.g. BEL");
 
@@ -98,10 +99,11 @@ export function researchTools(app: AppContext, conversation: Conversation) {
     async run(input, ctx) {
       const co = await findCompany(app, input.symbol);
       const sym = co.nseSymbol ?? input.symbol.toUpperCase();
-      const [stats, brief, sigs] = await Promise.all([
+      const [stats, brief, sigs, peerList] = await Promise.all([
         keyStats(app, sym),
         companyBrief(app, sym).catch(() => null),
         latestSignals(app, co.id),
+        industryPeers(app, co.id, 5).catch(() => []),
       ]);
       const ids = brief ? citeEvidence(ctx, brief.evidence, sym) : new Map<string, string>();
       const statSrc = ctx.cite({
@@ -149,6 +151,8 @@ export function researchTools(app: AppContext, conversation: Conversation) {
           stats: Object.fromEntries(
             Object.entries(stats).map(([k, v]) => [k, typeof v === "number" ? r2(v) : v]),
           ),
+          peers: peerComparison(sym, co.sector, peerList)?.rows ?? [],
+          peerSummary: peerComparison(sym, co.sector, peerList)?.line ?? null,
           signals: (sigs ?? []).map((x) => ({
             kind: x.kind,
             value: r2(x.value),
@@ -230,6 +234,7 @@ export function researchTools(app: AppContext, conversation: Conversation) {
                 tone: "accent" as const,
               })),
               "Net income",
+              "Revenue",
             ),
           ]
         : [];

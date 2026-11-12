@@ -138,6 +138,7 @@ function Donut({ spec }: { spec: Spec<"donut"> }) {
 }
 
 function Bars({ spec }: { spec: Spec<"bar"> }) {
+  const hasCompare = spec.bars.some((b) => b.compare != null);
   const values = spec.bars.flatMap((b) => [b.value, b.compare ?? 0]);
   const max = Math.max(0, ...values);
   const min = Math.min(0, ...values);
@@ -145,43 +146,70 @@ function Bars({ spec }: { spec: Spec<"bar"> }) {
   const zero = (-min / span) * 100;
   const pos = (v: number) => ({
     left: `${Math.min(zero, ((v - min) / span) * 100)}%`,
-    width: `${Math.max(0.6, (Math.abs(v) / span) * 100)}%`,
+    width: `${Math.max(0.8, (Math.abs(v) / span) * 100)}%`,
   });
+  const ticks = [min, min + span / 2, max];
   return (
     <Frame spec={spec}>
-      {spec.compareLabel ? (
+      {hasCompare ? (
         <div className="viz-bars-legend">
           <span>
-            <i data-series="a" /> value
+            <i data-series="a" /> {spec.valueLabel ?? "Value"}
           </span>
           <span>
-            <i data-series="b" /> {spec.compareLabel}
+            <i data-series="b" /> {spec.compareLabel ?? "Compare"}
           </span>
         </div>
       ) : null}
-      <ul className="viz-bars" aria-label={spec.title}>
+      <ul
+        className="viz-bars"
+        data-grouped={hasCompare ? "true" : undefined}
+        aria-label={spec.title}
+      >
         {spec.bars.map((b, i) => (
           <li
             key={`${b.label}-${String(i)}`}
-            title={`${b.label}: ${fmt(b.value, spec.unit)}${b.compare != null ? ` · ${spec.compareLabel ?? "compare"} ${fmt(b.compare, spec.unit)}` : ""}`}
+            title={`${b.label}: ${spec.valueLabel ?? "value"} ${fmt(b.value, spec.unit)}${b.compare != null ? ` · ${spec.compareLabel ?? "compare"} ${fmt(b.compare, spec.unit)}` : ""}`}
           >
             <span className="viz-bar-label truncate">{b.label}</span>
-            <span className="viz-bar-track">
+            <span className="viz-bar-area">
+              <span className="viz-bar-grid" style={{ left: "50%" }} />
               {min < 0 ? <span className="viz-bar-zero" style={{ left: `${zero}%` }} /> : null}
-              <span className="viz-bar-fill" data-tone={b.tone ?? undefined} style={pos(b.value)} />
-              {b.compare != null ? (
-                <span className="viz-bar-compare" style={pos(b.compare)} />
+              <span className="viz-bar-row">
+                <span
+                  className="viz-bar-fill"
+                  data-tone={b.tone ?? undefined}
+                  style={pos(b.value)}
+                />
+              </span>
+              {hasCompare ? (
+                <span className="viz-bar-row" data-series="b">
+                  {b.compare != null ? (
+                    <span className="viz-bar-compare" style={pos(b.compare)} />
+                  ) : null}
+                </span>
               ) : null}
             </span>
-            <span
-              className="viz-bar-value"
-              data-tone={b.tone === "pos" || b.tone === "neg" ? b.tone : undefined}
-            >
-              {fmt(b.value, spec.unit, true)}
+            <span className="viz-bar-value">
+              <b data-tone={b.tone === "pos" || b.tone === "neg" ? b.tone : undefined}>
+                {fmt(b.value, spec.unit, true)}
+              </b>
+              {hasCompare ? (
+                <em>{b.compare != null ? fmt(b.compare, spec.unit, true) : "—"}</em>
+              ) : null}
             </span>
           </li>
         ))}
       </ul>
+      <div className="viz-bars-axis" aria-hidden="true">
+        <span />
+        <span className="viz-bars-ticks">
+          {ticks.map((t, i) => (
+            <span key={String(i)}>{fmt(t, spec.unit, true)}</span>
+          ))}
+        </span>
+        <span />
+      </div>
     </Frame>
   );
 }
@@ -379,62 +407,99 @@ function Timeline({ spec, onSource }: { spec: Spec<"timeline">; onSource?: (id: 
   );
 }
 
+const NET_W = 680;
+const NET_ROW = 30;
+const NET_MAX_ROWS = 12;
+const ROLE_COLUMN: Record<string, number> = { supplier: 0, center: 1, customer: 2 };
+
 function Network({ spec }: { spec: Spec<"network"> }) {
   const layout = useMemo(() => {
     const center = spec.nodes.find((n) => n.role === "center") ?? spec.nodes[0];
-    const depth = new Map<string, number>();
-    if (center) depth.set(center.id, 0);
-    for (let d = 0; d < 3; d++)
-      for (const e of spec.edges) {
-        const a = depth.get(e.from);
-        const b = depth.get(e.to);
-        if (a === d && b == null) depth.set(e.to, d + 1);
-        if (b === d && a == null) depth.set(e.from, d + 1);
-      }
-    const rings = new Map<number, string[]>();
-    for (const n of spec.nodes) {
-      const d = depth.get(n.id) ?? 2;
-      rings.set(d, [...(rings.get(d) ?? []), n.id]);
+    const sided = spec.nodes.some((n) => n.role === "supplier" || n.role === "customer");
+    const column = new Map<string, number>();
+    if (sided) {
+      for (const n of spec.nodes) column.set(n.id, ROLE_COLUMN[n.role] ?? 2);
+    } else {
+      if (center) column.set(center.id, 0);
+      for (let d = 0; d < 3; d++)
+        for (const e of spec.edges) {
+          const a = column.get(e.from);
+          const b = column.get(e.to);
+          if (a === d && b == null) column.set(e.to, d + 1);
+          if (b === d && a == null) column.set(e.from, d + 1);
+        }
+      for (const n of spec.nodes) if (!column.has(n.id)) column.set(n.id, 2);
     }
-    const maxDepth = Math.max(1, ...rings.keys());
-    const pos = new Map<string, { x: number; y: number }>();
-    for (const [d, ids] of rings) {
-      const radius = d === 0 ? 0 : (d / maxDepth) * 150;
-      ids.forEach((id, i) => {
-        const a = (i / ids.length) * Math.PI * 2 - Math.PI / 2 + d * 0.3;
-        pos.set(id, { x: 300 + Math.cos(a) * radius * 1.45, y: 175 + Math.sin(a) * radius });
+    const used = [...new Set(column.values())].sort((a, b) => a - b);
+    const cols = used.map((c) => spec.nodes.filter((n) => column.get(n.id) === c));
+    const hidden = cols.map((c) => Math.max(0, c.length - NET_MAX_ROWS));
+    const shown = cols.map((c) => c.slice(0, NET_MAX_ROWS));
+    const rows = Math.max(1, ...shown.map((c, i) => c.length + ((hidden[i] ?? 0) > 0 ? 1 : 0)));
+    const height = Math.max(120, rows * NET_ROW + 24);
+    const pad = 96;
+    const colX = (i: number) =>
+      shown.length === 1 ? NET_W / 2 : pad + (i * (NET_W - pad * 2)) / (shown.length - 1);
+    const pos = new Map<string, { x: number; y: number; w: number }>();
+    shown.forEach((nodes, ci) => {
+      const total = nodes.length + ((hidden[ci] ?? 0) > 0 ? 1 : 0);
+      const top = (height - total * NET_ROW) / 2 + NET_ROW / 2;
+      nodes.forEach((n, ri) => {
+        const w = Math.min(176, Math.max(56, n.label.length * 6.6 + 18));
+        pos.set(n.id, { x: colX(ci), y: top + ri * NET_ROW, w });
       });
-    }
-    return pos;
+    });
+    const more = shown
+      .map((nodes, ci) => ({
+        ci,
+        count: hidden[ci] ?? 0,
+        x: colX(ci),
+        y: (height - (nodes.length + 1) * NET_ROW) / 2 + NET_ROW / 2 + nodes.length * NET_ROW,
+      }))
+      .filter((m) => m.count > 0);
+    return { pos, height, more };
   }, [spec]);
-  const label = new Map(spec.nodes.map((n) => [n.id, n]));
   return (
     <Frame spec={spec} wide>
+      <div className="viz-network-legend">
+        {(["supplier", "center", "customer", "holding", "event"] as const)
+          .filter((r) => spec.nodes.some((n) => n.role === r))
+          .map((r) => (
+            <span key={r} data-role={r}>
+              <i /> {r === "center" ? spec.center : r}
+            </span>
+          ))}
+      </div>
       <svg
         className="viz-network"
-        viewBox="0 0 600 350"
+        viewBox={`0 0 ${NET_W} ${layout.height}`}
         role="img"
-        aria-label={`${spec.title}: ${spec.edges.length} links around ${spec.center}`}
+        aria-label={`${spec.title}: ${spec.edges.map((e) => `${e.from} to ${e.to}${e.label ? ` (${e.label})` : ""}`).join("; ")}`}
       >
         {spec.edges.map((e, i) => {
-          const a = layout.get(e.from);
-          const b = layout.get(e.to);
+          const a = layout.pos.get(e.from);
+          const b = layout.pos.get(e.to);
           if (!a || !b) return null;
+          const [l, r] = a.x <= b.x ? [a, b] : [b, a];
+          const x1 = l.x + l.w / 2;
+          const x2 = r.x - r.w / 2;
+          const mx = (x1 + x2) / 2;
+          const role = spec.nodes.find(
+            (n) => (n.id === e.from || n.id === e.to) && n.role !== "center",
+          )?.role;
           return (
-            <line
-              key={`${e.from}-${e.to}-${String(i)}`}
-              x1={a.x}
-              y1={a.y}
-              x2={b.x}
-              y2={b.y}
-              className="viz-edge"
-            >
+            <g key={`${e.from}-${e.to}-${String(i)}`} className="viz-edge" data-role={role}>
+              <path d={`M${x1} ${l.y} C${mx} ${l.y} ${mx} ${r.y} ${x2} ${r.y}`} />
+              {e.label ? (
+                <text x={mx} y={(l.y + r.y) / 2 - 4} textAnchor="middle">
+                  {e.label.slice(0, 14)}
+                </text>
+              ) : null}
               {e.label ? <title>{e.label}</title> : null}
-            </line>
+            </g>
           );
         })}
         {spec.nodes.map((n) => {
-          const p = layout.get(n.id);
+          const p = layout.pos.get(n.id);
           if (!p) return null;
           return (
             <g
@@ -443,24 +508,20 @@ function Network({ spec }: { spec: Spec<"network"> }) {
               className="viz-node"
               data-role={n.role}
             >
-              <circle r={n.role === "center" ? 9 : 6} />
-              <text y={n.role === "center" ? -13 : -9} textAnchor="middle">
-                {(label.get(n.id)?.label ?? n.id).slice(0, 22)}
+              <rect x={-p.w / 2} y={-10} width={p.w} height={20} rx={2} />
+              <text y={4} textAnchor="middle">
+                {n.label.length > 24 ? `${n.label.slice(0, 23)}…` : n.label}
               </text>
               <title>{n.label}</title>
             </g>
           );
         })}
+        {layout.more.map((m) => (
+          <text key={m.ci} x={m.x} y={m.y + 4} textAnchor="middle" className="viz-node-more">
+            +{m.count} more
+          </text>
+        ))}
       </svg>
-      <div className="viz-network-legend">
-        {(["holding", "customer", "supplier", "event"] as const)
-          .filter((r) => spec.nodes.some((n) => n.role === r))
-          .map((r) => (
-            <span key={r} data-role={r}>
-              <i /> {r}
-            </span>
-          ))}
-      </div>
     </Frame>
   );
 }

@@ -1,4 +1,4 @@
-export const PROMPT_VERSION = "bot-2026-11-12.7";
+export const PROMPT_VERSION = "bot-2026-11-12.8";
 
 export interface PromptInput {
   today: string;
@@ -25,7 +25,7 @@ export function systemPrompt(p: PromptInput): string {
 - You explain and analyse; you do not give personalised buy/sell recommendations or execute trades. Tax figures are educational estimates under stated assumptions.
 - If the question is ambiguous (which company, which period), make the most reasonable reading explicit, or ask one short question.
 - Research notes: for "research", "deep dive", "analyse <company>" or "research note" requests, call company_research once with the symbol or company name (it resolves names itself; do not call company_lookup first) and write a note with these headings: Summary, Business and customers, Supply chain, Operations signals (aircraft and shipping), Financials and valuation, Street view versus our data, Risks, Data gaps. Build every section from the dossier findings and lines, keep their numbers and source ids, lead the customer section with any line marked "Most important", say plainly when a dataset does not apply, compare only with the peers the dossier lists and never with sector, peer or market averages it does not give, and end with the data gaps. Up to about 450 words; no buy/sell call.`,
-    `Style: lead with the answer in one or two sentences, then short sections or bullets. Use markdown tables only for small comparisons the charts do not show. Keep answers under about 250 words unless asked for depth.`,
+    `Style: lead with the answer in one or two sentences, then short sections or bullets. Use markdown tables only for short numeric comparisons the charts do not show; never put sentences, bullet lists or line breaks inside table cells, and write research-note sections as headings with bullets, not as a table. Keep answers under about 250 words unless asked for depth.`,
     `Demo portfolios (synthetic ledgers, real NSE closes): ${p.portfolios.map((x) => `${x.id} (${x.name})`).join(", ")}.`,
     p.portfolio
       ? `Selected portfolio: ${p.portfolio.id} (${p.portfolio.name}, benchmark ${p.portfolio.benchmark}). "My portfolio" means this one.`

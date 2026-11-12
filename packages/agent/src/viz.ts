@@ -41,6 +41,7 @@ export const barSpec = z.object({
     .min(1)
     .max(30),
   compareLabel: z.string().max(40).nullable(),
+  valueLabel: z.string().max(40).nullable().default(null),
 });
 
 export const lineSpec = z.object({
