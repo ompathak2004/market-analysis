@@ -111,7 +111,7 @@ function relColumns(side: Side): Column<SupplyChainEdge>[] {
       cell: (r) => (
         <Badge tone={VALUE_BASIS_TONE[r.valueBasis] ?? "neu"}>{basisLabel(r.valueBasis)}</Badge>
       ),
-      title: (r) => r.valueBasis.replace("_", " "),
+      title: (r) => r.valueBasis.replace(/_/g, " "),
     },
     {
       key: "v",

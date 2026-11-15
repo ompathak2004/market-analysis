@@ -67,7 +67,7 @@ export async function ChangesPane({ symbol }: { symbol: string }) {
         href: `${base}/anr`,
         body: (
           <>
-            <span className="muted">BROKER</span> {c.broker} {c.action.replace("_", " ")} ·{" "}
+            <span className="muted">BROKER</span> {c.broker} {c.action.replace(/_/g, " ")} ·{" "}
             {c.rating}
             {c.targetPrice ? ` · TGT ${num(c.targetPrice, 0)}` : ""}
           </>

@@ -332,6 +332,9 @@ export function intelTools(app: AppContext) {
       }> = [];
       nodes.set("portfolio", { id: "portfolio", label: s.portfolio.name, role: "center" });
       for (const ch of channels.slice(0, 30)) {
+        const evKey = `ev:${ch.sourceId}`;
+        const added = (nodes.has(ch.holding) ? 0 : 1) + (nodes.has(evKey) ? 0 : 1);
+        if (nodes.size + added > 40) break;
         nodes.set(ch.holding, { id: ch.holding, label: ch.holding, role: "holding" });
         edges.push({
           from: "portfolio",
@@ -353,7 +356,7 @@ export function intelTools(app: AppContext) {
         edges.push({
           from: ch.holding,
           to: evId,
-          label: ch.channel.replace("_", " "),
+          label: ch.channel.replace(/_/g, " "),
           weight: ch.exposurePctOfPortfolio,
         });
       }
@@ -382,7 +385,7 @@ export function intelTools(app: AppContext) {
                 .map((ch) => ({
                   date: ch.date.slice(0, 10),
                   label: `${ch.holding} · ${ch.event}`.slice(0, 200),
-                  tag: ch.channel.replace("_", " "),
+                  tag: ch.channel.replace(/_/g, " "),
                   tone:
                     ch.materiality === "high" || ch.materiality === "medium"
                       ? MAT_TONE[ch.materiality]

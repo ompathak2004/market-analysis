@@ -1008,7 +1008,7 @@
     stroke: color-mix(in srgb, var(--viz-2) 55%, transparent);
   }
 
-  .viz-network .viz-edge text {
+  .viz-network .viz-edge-label {
     fill: var(--fg-dim);
     font-size: 9.5px;
     paint-order: stroke;

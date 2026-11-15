@@ -278,13 +278,17 @@ function Line({ spec }: { spec: Spec<"line"> }) {
             </text>
           </g>
         ))}
-        {geo.dates.map((d, i) =>
-          i % every === 0 || i === geo.dates.length - 1 ? (
-            <text key={d} className="axis-label" x={geo.x(i)} y={H - 6} textAnchor="middle">
+        {geo.dates.map((d, i) => {
+          const last = geo.dates.length - 1;
+          const show = i === last || (i % every === 0 && geo.x(last) - geo.x(i) >= 64);
+          if (!show) return null;
+          const anchor = i === last && last > 0 ? "end" : i === 0 ? "start" : "middle";
+          return (
+            <text key={d} className="axis-label" x={geo.x(i)} y={H - 6} textAnchor={anchor}>
               {d.slice(2)}
             </text>
-          ) : null,
-        )}
+          );
+        })}
         {geo.paths.map((d, i) => (
           <path
             key={spec.series[i]?.name}
@@ -407,56 +411,158 @@ function Timeline({ spec, onSource }: { spec: Spec<"timeline">; onSource?: (id: 
   );
 }
 
-const NET_W = 680;
 const NET_ROW = 30;
 const NET_MAX_ROWS = 12;
+const NET_MAX_CHARS = 24;
+const NET_EDGE_CHARS = 16;
+const NET_MARGIN = 8;
 const ROLE_COLUMN: Record<string, number> = { supplier: 0, center: 1, customer: 2 };
+
+const nodeText = (label: string) =>
+  label.length > NET_MAX_CHARS ? `${label.slice(0, NET_MAX_CHARS - 1)}…` : label;
+const nodeWidth = (label: string) => Math.max(48, nodeText(label).length * 6.4 + 16);
+const edgeText = (label: string) =>
+  label.length > NET_EDGE_CHARS ? `${label.slice(0, NET_EDGE_CHARS - 1)}…` : label;
 
 function Network({ spec }: { spec: Spec<"network"> }) {
   const layout = useMemo(() => {
     const center = spec.nodes.find((n) => n.role === "center") ?? spec.nodes[0];
-    const sided = spec.nodes.some((n) => n.role === "supplier" || n.role === "customer");
+    const ids = new Set(spec.nodes.map((n) => n.id));
+    const edges = spec.edges.filter((e) => ids.has(e.from) && ids.has(e.to) && e.from !== e.to);
+    const sided =
+      spec.nodes.some((n) => n.role === "supplier" || n.role === "customer") &&
+      spec.nodes.every((n) => n.role in ROLE_COLUMN);
     const column = new Map<string, number>();
     if (sided) {
       for (const n of spec.nodes) column.set(n.id, ROLE_COLUMN[n.role] ?? 2);
     } else {
       if (center) column.set(center.id, 0);
-      for (let d = 0; d < 3; d++)
-        for (const e of spec.edges) {
+      for (let d = 0; d < spec.nodes.length; d++) {
+        let grew = false;
+        for (const e of edges) {
           const a = column.get(e.from);
           const b = column.get(e.to);
-          if (a === d && b == null) column.set(e.to, d + 1);
-          if (b === d && a == null) column.set(e.from, d + 1);
+          if (a === d && b == null) {
+            column.set(e.to, d + 1);
+            grew = true;
+          }
+          if (b === d && a == null) {
+            column.set(e.from, d + 1);
+            grew = true;
+          }
         }
-      for (const n of spec.nodes) if (!column.has(n.id)) column.set(n.id, 2);
+        if (!grew && ![...column.values()].some((c) => c > d)) break;
+      }
+      const deepest = Math.max(0, ...column.values());
+      for (const n of spec.nodes) if (!column.has(n.id)) column.set(n.id, deepest + 1);
     }
     const used = [...new Set(column.values())].sort((a, b) => a - b);
     const cols = used.map((c) => spec.nodes.filter((n) => column.get(n.id) === c));
-    const hidden = cols.map((c) => Math.max(0, c.length - NET_MAX_ROWS));
-    const shown = cols.map((c) => c.slice(0, NET_MAX_ROWS));
+    const neighbours = new Map<string, string[]>();
+    for (const e of edges) {
+      neighbours.set(e.from, [...(neighbours.get(e.from) ?? []), e.to]);
+      neighbours.set(e.to, [...(neighbours.get(e.to) ?? []), e.from]);
+    }
+    const shown: (typeof spec.nodes)[] = [];
+    const hidden: number[] = [];
+    cols.forEach((col, ci) => {
+      const prev = new Map((shown[ci - 1] ?? []).map((n, i) => [n.id, i]));
+      const rank = (id: string) => {
+        const r = (neighbours.get(id) ?? [])
+          .map((x) => prev.get(x))
+          .filter((x): x is number => x != null);
+        return r.length ? r.reduce((s, x) => s + x, 0) / r.length : Number.POSITIVE_INFINITY;
+      };
+      let picked = col;
+      if (ci > 0 && col.length > NET_MAX_ROWS) {
+        const groups = new Map<number, typeof col>();
+        for (const n of col) {
+          const g = Math.min(
+            Number.POSITIVE_INFINITY,
+            ...(neighbours.get(n.id) ?? []).map((x) => prev.get(x) ?? Number.POSITIVE_INFINITY),
+          );
+          groups.set(g, [...(groups.get(g) ?? []), n]);
+        }
+        const queues = [...groups.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+        picked = [];
+        for (let i = 0; picked.length < NET_MAX_ROWS; i++) {
+          const before = picked.length;
+          for (const q of queues) {
+            const n = q[i];
+            if (n && picked.length < NET_MAX_ROWS) picked.push(n);
+          }
+          if (picked.length === before) break;
+        }
+      }
+      const ordered = ci === 0 ? picked : [...picked].sort((a, b) => rank(a.id) - rank(b.id));
+      shown.push(ordered.slice(0, NET_MAX_ROWS));
+      hidden.push(Math.max(0, col.length - NET_MAX_ROWS));
+    });
+    const labelled = edges.some((e) => e.label);
+    const gap = labelled ? NET_EDGE_CHARS * 6 + 24 : 72;
+    const widths = shown.map((nodes) => Math.max(48, ...nodes.map((n) => nodeWidth(n.label))));
+    const colX: number[] = [];
+    let cursor = NET_MARGIN;
+    widths.forEach((w) => {
+      colX.push(cursor + w / 2);
+      cursor += w + gap;
+    });
+    const width = Math.max(320, cursor - gap + NET_MARGIN);
+    const shift = (width - (cursor - gap + NET_MARGIN)) / 2;
     const rows = Math.max(1, ...shown.map((c, i) => c.length + ((hidden[i] ?? 0) > 0 ? 1 : 0)));
-    const height = Math.max(120, rows * NET_ROW + 24);
-    const pad = 96;
-    const colX = (i: number) =>
-      shown.length === 1 ? NET_W / 2 : pad + (i * (NET_W - pad * 2)) / (shown.length - 1);
-    const pos = new Map<string, { x: number; y: number; w: number }>();
+    const height = Math.max(80, rows * NET_ROW + 16);
+    const pos = new Map<string, { x: number; y: number; w: number; col: number }>();
     shown.forEach((nodes, ci) => {
       const total = nodes.length + ((hidden[ci] ?? 0) > 0 ? 1 : 0);
       const top = (height - total * NET_ROW) / 2 + NET_ROW / 2;
       nodes.forEach((n, ri) => {
-        const w = Math.min(176, Math.max(56, n.label.length * 6.6 + 18));
-        pos.set(n.id, { x: colX(ci), y: top + ri * NET_ROW, w });
+        pos.set(n.id, {
+          x: (colX[ci] ?? 0) + shift,
+          y: top + ri * NET_ROW,
+          w: nodeWidth(n.label),
+          col: ci,
+        });
       });
     });
     const more = shown
       .map((nodes, ci) => ({
         ci,
         count: hidden[ci] ?? 0,
-        x: colX(ci),
+        x: (colX[ci] ?? 0) + shift,
         y: (height - (nodes.length + 1) * NET_ROW) / 2 + NET_ROW / 2 + nodes.length * NET_ROW,
       }))
       .filter((m) => m.count > 0);
-    return { pos, height, more };
+    const role = new Map(spec.nodes.map((n) => [n.id, n.role]));
+    const labelSeen = new Set<string>();
+    const drawn = edges.flatMap((e) => {
+      const a = pos.get(e.from);
+      const b = pos.get(e.to);
+      if (!a || !b || a.col === b.col) return [];
+      const [l, r] = a.x <= b.x ? [a, b] : [b, a];
+      const x1 = l.x + l.w / 2;
+      const x2 = r.x - r.w / 2;
+      const mx = (x1 + x2) / 2;
+      const toRole = role.get(e.to);
+      const edgeRole = toRole && toRole !== "center" ? toRole : role.get(e.from);
+      const anchorRight = (shown[r.col]?.length ?? 0) >= (shown[l.col]?.length ?? 0);
+      const anchorId = (anchorRight ? r : l) === b ? e.to : e.from;
+      const key = `${anchorId}|${anchorRight ? "r" : "l"}`;
+      const showLabel = !!e.label && !labelSeen.has(key);
+      if (showLabel) labelSeen.add(key);
+      return [
+        {
+          e,
+          d: `M${x1} ${l.y} C${mx} ${l.y} ${mx} ${r.y} ${x2} ${r.y}`,
+          role: edgeRole,
+          label: showLabel
+            ? anchorRight
+              ? { x: x2 - 4, y: r.y - 4, anchor: "end" as const }
+              : { x: x1 + 4, y: l.y - 4, anchor: "start" as const }
+            : null,
+        },
+      ];
+    });
+    return { pos, width, height, more, drawn };
   }, [spec]);
   return (
     <Frame spec={spec} wide>
@@ -471,33 +577,30 @@ function Network({ spec }: { spec: Spec<"network"> }) {
       </div>
       <svg
         className="viz-network"
-        viewBox={`0 0 ${NET_W} ${layout.height}`}
+        viewBox={`0 0 ${layout.width} ${layout.height}`}
+        style={{ maxWidth: layout.width }}
         role="img"
         aria-label={`${spec.title}: ${spec.edges.map((e) => `${e.from} to ${e.to}${e.label ? ` (${e.label})` : ""}`).join("; ")}`}
       >
-        {spec.edges.map((e, i) => {
-          const a = layout.pos.get(e.from);
-          const b = layout.pos.get(e.to);
-          if (!a || !b) return null;
-          const [l, r] = a.x <= b.x ? [a, b] : [b, a];
-          const x1 = l.x + l.w / 2;
-          const x2 = r.x - r.w / 2;
-          const mx = (x1 + x2) / 2;
-          const role = spec.nodes.find(
-            (n) => (n.id === e.from || n.id === e.to) && n.role !== "center",
-          )?.role;
-          return (
-            <g key={`${e.from}-${e.to}-${String(i)}`} className="viz-edge" data-role={role}>
-              <path d={`M${x1} ${l.y} C${mx} ${l.y} ${mx} ${r.y} ${x2} ${r.y}`} />
-              {e.label ? (
-                <text x={mx} y={(l.y + r.y) / 2 - 4} textAnchor="middle">
-                  {e.label.slice(0, 14)}
-                </text>
-              ) : null}
-              {e.label ? <title>{e.label}</title> : null}
-            </g>
-          );
-        })}
+        {layout.drawn.map(({ e, d, role }, i) => (
+          <g key={`${e.from}-${e.to}-${String(i)}`} className="viz-edge" data-role={role}>
+            <path d={d} />
+            {e.label ? <title>{e.label}</title> : null}
+          </g>
+        ))}
+        {layout.drawn.map(({ e, label }, i) =>
+          label && e.label ? (
+            <text
+              key={`l-${e.from}-${e.to}-${String(i)}`}
+              className="viz-edge-label"
+              x={label.x}
+              y={label.y}
+              textAnchor={label.anchor}
+            >
+              {edgeText(e.label)}
+            </text>
+          ) : null,
+        )}
         {spec.nodes.map((n) => {
           const p = layout.pos.get(n.id);
           if (!p) return null;
@@ -510,7 +613,7 @@ function Network({ spec }: { spec: Spec<"network"> }) {
             >
               <rect x={-p.w / 2} y={-10} width={p.w} height={20} rx={2} />
               <text y={4} textAnchor="middle">
-                {n.label.length > 24 ? `${n.label.slice(0, 23)}…` : n.label}
+                {nodeText(n.label)}
               </text>
               <title>{n.label}</title>
             </g>
@@ -526,7 +629,29 @@ function Network({ spec }: { spec: Spec<"network"> }) {
   );
 }
 
+function isEmpty(spec: VizSpec): boolean {
+  switch (spec.kind) {
+    case "kpis":
+      return spec.items.length === 0;
+    case "donut":
+      return spec.slices.length === 0;
+    case "bar":
+      return spec.bars.length === 0;
+    case "line":
+      return !spec.series.some((s) => s.points.some((p) => Number.isFinite(p.y)));
+    case "table":
+      return spec.rows.length === 0;
+    case "timeline":
+      return spec.events.length === 0;
+    case "network":
+      return spec.nodes.length === 0;
+    default:
+      return true;
+  }
+}
+
 export function Viz({ spec, onSource }: { spec: VizSpec; onSource?: (id: string) => void }) {
+  if (isEmpty(spec)) return null;
   switch (spec.kind) {
     case "kpis":
       return <Kpis spec={spec} />;
