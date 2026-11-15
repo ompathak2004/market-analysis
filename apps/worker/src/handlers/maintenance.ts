@@ -7,7 +7,9 @@ import {
   type ClassifyResult,
   classifyAnnouncementRange,
   classifyRanges,
+  dedupeAnnouncements,
   deleteExpiredAnnouncements,
+  duplicateAnnouncements,
   reindexAnnouncements,
   unclassifiedAnnouncements,
   verifyBackup,
@@ -34,6 +36,36 @@ function objectStore(ctx: WorkerContext) {
 const resumeSoon = (reason: string) =>
   new DeferredError(new Date(Date.now() + RESUME_DELAY_MS), reason);
 
+async function backupStep(
+  ctx: WorkerContext,
+  payload: { day: string; maxId: number },
+  signal: AbortSignal | undefined,
+  table: string,
+) {
+  const encryptionKey = ctx.env.BACKUP_ENCRYPTION_KEY ?? null;
+  if (!encryptionKey) {
+    ctx.metrics.count(BACKUP_UNENCRYPTED_METRIC);
+    ctx.logger.warn(
+      payload,
+      "BACKUP_ENCRYPTION_KEY is not set; the announcement backup is unencrypted",
+    );
+  }
+  const backup = await backupAnnouncements(ctx.db, objectStore(ctx), {
+    ...payload,
+    encryptionKey,
+    table,
+    ...(signal ? { signal } : {}),
+  });
+  ctx.logger.info({ ...payload, ...backup }, "announcement backup verified");
+  return backup;
+}
+
+async function requireBackup(ctx: WorkerContext, backupKey: string) {
+  if (!(await verifyBackup(ctx.db, objectStore(ctx), backupKey))) {
+    throw new NonRetryableError(`backup ${backupKey} is not verified in object storage`);
+  }
+}
+
 type MaintenanceHandlers = Pick<
   HandlerMap,
   | "maintenance.announcements"
@@ -41,6 +73,9 @@ type MaintenanceHandlers = Pick<
   | "maintenance.announcements.classify"
   | "maintenance.announcements.delete"
   | "maintenance.announcements.reindex"
+  | "maintenance.announcements.dedupe"
+  | "maintenance.announcements.dedupe.backup"
+  | "maintenance.announcements.dedupe.delete"
 >;
 
 export const maintenanceHandlers: MaintenanceHandlers = {
@@ -53,20 +88,7 @@ export const maintenanceHandlers: MaintenanceHandlers = {
     );
   },
   "maintenance.announcements.backup": async ({ ctx, payload, signal }) => {
-    const encryptionKey = ctx.env.BACKUP_ENCRYPTION_KEY ?? null;
-    if (!encryptionKey) {
-      ctx.metrics.count(BACKUP_UNENCRYPTED_METRIC);
-      ctx.logger.warn(
-        payload,
-        "BACKUP_ENCRYPTION_KEY is not set; the announcement backup is unencrypted",
-      );
-    }
-    const backup = await backupAnnouncements(ctx.db, objectStore(ctx), {
-      ...payload,
-      encryptionKey,
-      signal,
-    });
-    ctx.logger.info({ ...payload, ...backup }, "announcement backup verified");
+    const backup = await backupStep(ctx, payload, signal, "announcements");
     return {
       metrics: { rows: backup.rows, bytes: backup.bytes, encrypted: backup.encrypted ? 1 : 0 },
       children: [
@@ -93,10 +115,7 @@ export const maintenanceHandlers: MaintenanceHandlers = {
     };
   },
   "maintenance.announcements.delete": async ({ ctx, payload, signal, expired }) => {
-    const backup = await verifyBackup(ctx.db, objectStore(ctx), payload.backupKey);
-    if (!backup) {
-      throw new NonRetryableError(`backup ${payload.backupKey} is not verified in object storage`);
-    }
+    await requireBackup(ctx, payload.backupKey);
     const pending = await unclassifiedAnnouncements(ctx.db, payload.maxId);
     if (pending) {
       throw new NonRetryableError(
@@ -142,6 +161,49 @@ export const maintenanceHandlers: MaintenanceHandlers = {
     const after = await announcementFootprint(ctx.db);
     return {
       metrics: { ...r, rows: after.rows, bytesBefore: before.bytes, bytesAfter: after.bytes },
+    };
+  },
+  "maintenance.announcements.dedupe": async ({ ctx }) => {
+    objectStore(ctx);
+    const maxId = await announcementMaxId(ctx.db);
+    return fanout(
+      "maintenance.announcements.dedupe.backup",
+      maxId ? [{ day: isoDate(new Date()), maxId }] : [],
+    );
+  },
+  "maintenance.announcements.dedupe.backup": async ({ ctx, payload, signal }) => {
+    const backup = await backupStep(ctx, payload, signal, "announcements-dedupe");
+    return {
+      metrics: { rows: backup.rows, bytes: backup.bytes, encrypted: backup.encrypted ? 1 : 0 },
+      children: [
+        {
+          type: "maintenance.announcements.dedupe.delete",
+          payload: { ...payload, backupKey: backup.key },
+        },
+      ],
+    };
+  },
+  "maintenance.announcements.dedupe.delete": async ({ ctx, payload, signal, expired }) => {
+    await requireBackup(ctx, payload.backupKey);
+    const r = await dedupeAnnouncements(ctx.db, {
+      maxId: payload.maxId,
+      expired: () => expired(STEP_RESERVE_MS),
+      signal,
+    });
+    if (r.deleted || r.merged) await invalidateAfterJob(ctx, "announcements");
+    ctx.logger.info({ ...payload, ...r }, "announcement dedupe slice");
+    if (!r.complete) throw resumeSoon(`deleted ${r.deleted} duplicate announcements`);
+    const left = await duplicateAnnouncements(ctx.db, payload.maxId);
+    return {
+      metrics: {
+        held: r.held,
+        deleted: r.deleted,
+        merged: r.merged,
+        rekeyed: r.rekeyed,
+        batches: r.batches,
+        rows: left.rows,
+        distinct: left.distinct,
+      },
     };
   },
 };

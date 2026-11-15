@@ -290,6 +290,22 @@ from job_runs where job_type like 'maintenance.announcements%' order by id desc 
 
 `--wait` returns as soon as the first step has enqueued the backup. Because the delete and classify steps defer themselves, their final `metrics` only cover the last slice; the worker logs every slice (`announcement delete slice`). `metrics.remaining` and `metrics.bytes` on the final delete row, and `bytesBefore` / `bytesAfter` on the reindex row, show the row count and `pg_total_relation_size` after the cleanup. Deleted heap space is reused by later inserts, but the table file is not returned to the OS without `VACUUM FULL`.
 
+### Duplicate cleanup (NSE .com/.in mirror)
+
+NSE serves attachments from both `nsearchives.nseindia.com` and `nsearchives.nseindia.in`. Before the fix the dedupe key hashed the full URL, so the 2026-11-14 re-ingest stored a second copy of about 41% of filings. `announcementDedupeKey` now folds `.nseindia.in` onto `.nseindia.com` before hashing; keys of `.com` rows did not change.
+
+`maintenance.announcements.dedupe` is a one-off chain with no schedule:
+
+1. `maintenance.announcements.dedupe` records `max(id)`.
+2. `.dedupe.backup` writes the same verified backup as `maintenance.announcements`, to `backups/announcements-dedupe-<YYYY-MM-DD>.ndjson.gz[.enc]`.
+3. `.dedupe.delete` checks the backup again and pins cited rows (`announcement_holds`). It then walks companies 25 at a time, one transaction each, holding the `announcement_evidence` advisory lock exclusively with a 10 s `statement_timeout`. Rows are grouped by company, `published_at`, subject and folded attachment URL. In each group it keeps the row that is held or has a linked document, then one with triage (`materiality`/`so_what`), then the lowest id. Every other row is deleted unless it is itself held or linked, so a group can keep two pinned copies. When the keeper has no triage, it takes the triage of a deleted copy. Surviving `.in` rows get the folded key unless another row already holds it. A rerun finds nothing to do. The final metrics carry `deleted`, `merged`, `rekeyed`, and `rows`/`distinct` up to the max id; the two counts should match apart from pinned twins.
+
+```bash
+pnpm --filter @ma/worker cli run maintenance.announcements.dedupe
+```
+
+Restore from the backup the same way as below. Until the chain has run, the order and rating queues already skip the second copy of a filing, and the web read models de-duplicate at query time.
+
 `BACKUP_ENCRYPTION_KEY` (worker secret, 64 hex characters, `openssl rand -hex 32`) encrypts the backup with AES-256-GCM. The key is derived with HKDF-SHA256 (info `market-analysis/backup/v1`), and the file layout is `MABK1\n`, a 12-byte IV, a 16-byte tag, then the ciphertext. When the key is unset (SSM holds a single space), the backup is written unencrypted, the worker logs a warning and it counts `maintenance.backup.unencrypted`. Keep the key outside AWS as well; a lost key makes the backup unreadable.
 
 Decrypt and restore (the key in `BACKUP_ENCRYPTION_KEY`; skip the decrypt step and use `gunzip` for an unencrypted backup):

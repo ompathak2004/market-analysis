@@ -70,6 +70,7 @@ export async function backupAnnouncements(
     encryptionKey?: string | null;
     signal?: AbortSignal;
     chunkRows?: number;
+    table?: string;
   },
 ): Promise<BackupResult> {
   const chunkRows = opts.chunkRows ?? BACKUP_CHUNK_ROWS;
@@ -91,7 +92,7 @@ export async function backupAnnouncements(
   const encrypted = !!opts.encryptionKey;
   const body = opts.encryptionKey ? encryptBackup(gz, opts.encryptionKey) : gz;
   const digest = sha256(body);
-  const key = backupKey("announcements", opts.day, encrypted);
+  const key = backupKey(opts.table ?? "announcements", opts.day, encrypted);
   await objects.put(key, body, digest, encrypted ? "application/octet-stream" : "application/gzip");
   if (!(await backupMatches(objects, key, body.byteLength, digest))) {
     throw new Error(`backup ${key} did not verify: expected ${body.byteLength} bytes`);
