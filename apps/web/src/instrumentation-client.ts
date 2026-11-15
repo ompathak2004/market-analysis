@@ -1,5 +1,12 @@
 import posthog from "posthog-js";
 import { publicPageEvent } from "./lib/analytics";
+import { initializeClarity, stopClarityOnPrivateNavigation } from "./lib/clarity";
+
+initializeClarity(process.env.NEXT_PUBLIC_CLARITY_PROJECT_ID);
+
+export function onRouterTransitionStart(url: string): void {
+  stopClarityOnPrivateNavigation(url);
+}
 
 const token = process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN;
 
