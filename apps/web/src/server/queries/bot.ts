@@ -219,7 +219,7 @@ export async function holdingLinks(
   symbols: readonly string[],
 ): Promise<BotLink[]> {
   const rows = await ctx.api.getOrLoad(
-    `supply-chain:bot:${[...symbols].sort().join(",")}`,
+    `supply-chain:bot:v2:${[...symbols].sort().join(",")}`,
     () =>
       ctx.db.execute<{
         holding: string;
@@ -245,6 +245,13 @@ export async function holdingLinks(
                  r.supplier_counterparty_id as sup_cp, r.customer_counterparty_id as cus_cp
           from relationships r join h on h.id in (r.supplier_company_id, r.customer_company_id)
           where r.status = 'active' and (r.valid_to is null or r.valid_to >= current_date)
+            and exists (
+              select 1 from relationship_observations o
+              where o.supplier_counterparty_id = r.supplier_counterparty_id
+                and o.customer_counterparty_id = r.customer_counterparty_id
+                and o.status in ('auto', 'confirmed')
+                and o.cue_class in ('order', 'revenue_share', 'purchase_share')
+            )
         ), ranked as (
           select e.*, row_number() over (partition by e.holding order by e.confidence desc, e.id) as rn
           from e
@@ -269,6 +276,7 @@ export async function holdingLinks(
           join documents d on d.id = dr.document_id
           where o.supplier_counterparty_id = k.sup_cp and o.customer_counterparty_id = k.cus_cp
             and o.status in ('auto', 'confirmed')
+            and o.cue_class in ('order', 'revenue_share', 'purchase_share')
           order by o.id desc limit 1
         ) ev on true
         where k.rn <= 12`),
@@ -351,14 +359,18 @@ export async function filingsFor(
         so_what: string | null;
         attachment_url: string | null;
       }>(sql`
-        select a.id, c.nse_symbol as symbol, a.published_at::text as published_at, a.subject,
-               a.materiality, a.triage_category, a.so_what, a.attachment_url
-        from announcements a join companies c on c.id = a.company_id
-        where c.nse_symbol in (${symbolList(symbols)})
-          and a.published_at >= now() - make_interval(days => ${days})
-          and coalesce(a.materiality, 'low') <> 'low'
-          ${like ? sql`and (lower(a.subject) like ${like} or lower(coalesce(a.so_what, '')) like ${like} or lower(coalesce(a.details, '')) like ${like})` : sql``}
-        order by case a.materiality when 'high' then 0 when 'medium' then 1 else 2 end, a.published_at desc
+        select * from (
+          select distinct on (a.company_id, a.published_at, a.subject)
+                 a.id, c.nse_symbol as symbol, a.published_at::text as published_at, a.subject,
+                 a.materiality, a.triage_category, a.so_what, a.attachment_url
+          from announcements a join companies c on c.id = a.company_id
+          where c.nse_symbol in (${symbolList(symbols)})
+            and a.published_at >= now() - make_interval(days => ${days})
+            and coalesce(a.materiality, 'low') <> 'low'
+            ${like ? sql`and (lower(a.subject) like ${like} or lower(coalesce(a.so_what, '')) like ${like} or lower(coalesce(a.details, '')) like ${like})` : sql``}
+          order by a.company_id, a.published_at, a.subject, a.so_what is null, a.id
+        ) f
+        order by case f.materiality when 'high' then 0 when 'medium' then 1 else 2 end, f.published_at desc
         limit 40`),
     { ttlMs: 10 * MINUTE, staleMs: HOUR },
   );
@@ -393,13 +405,17 @@ export async function marketFilings(
         so_what: string | null;
         attachment_url: string | null;
       }>(sql`
-        select a.id, c.nse_symbol as symbol, a.published_at::text as published_at, a.subject,
-               a.materiality, a.triage_category, a.so_what, a.attachment_url
-        from announcements a join companies c on c.id = a.company_id
-        where a.published_at >= now() - make_interval(days => ${days})
-          and a.materiality in ('high', 'medium')
-          ${like ? sql`and (lower(a.subject) like ${like} or lower(coalesce(a.so_what, '')) like ${like})` : sql``}
-        order by case a.materiality when 'high' then 0 else 1 end, a.published_at desc
+        select * from (
+          select distinct on (a.company_id, a.published_at, a.subject)
+                 a.id, c.nse_symbol as symbol, a.published_at::text as published_at, a.subject,
+                 a.materiality, a.triage_category, a.so_what, a.attachment_url
+          from announcements a join companies c on c.id = a.company_id
+          where a.published_at >= now() - make_interval(days => ${days})
+            and a.materiality in ('high', 'medium')
+            ${like ? sql`and (lower(a.subject) like ${like} or lower(coalesce(a.so_what, '')) like ${like})` : sql``}
+          order by a.company_id, a.published_at, a.subject, a.so_what is null, a.id
+        ) f
+        order by case f.materiality when 'high' then 0 else 1 end, f.published_at desc
         limit 25`),
     { ttlMs: 10 * MINUTE, staleMs: HOUR },
   );

@@ -20,7 +20,14 @@ import {
   sharedEstimates,
 } from "../queries/bot";
 import { ChartBuilder, r2 } from "./charts";
+import { BOILERPLATE, GENERIC } from "./dossier";
 import { loadState, PORTFOLIO_IDS, resolvePortfolio } from "./portfolio";
+
+const LEGAL =
+  /\b(nclt|nclat|tribunal|insolvency|ibc|resolution (plan|applicant|professional)|sra|petition|praying|court|arbitra\w*|writ)\b/i;
+
+const POLICY_MEASURE =
+  /\b(approv\w*|notif\w*|amend\w*|impos\w*|levy|levies|dut(y|ies)|tariffs?|gst|tax\w*|subsid\w*|incentives?|pli|schemes?|allocat\w*|sanction\w*|ban(s|ned)?|prohibit\w*|guidelines?|rules?|regulations?|framework|polic(y|ies)|reforms?|auctions?|tenders?|msp|repo rate|rate cut|cuts?|hikes?|raises?|extends?|extension|continuation|comes? into (force|effect)|launch\w* .*(scheme|mission|policy)|outlay|budget|contracts?|inks?|signs? (an? )?(contract|agreement))\b/i;
 
 const portfolioId = z
   .enum(PORTFOLIO_IDS)
@@ -174,7 +181,20 @@ export function intelTools(app: AppContext) {
       const holdings = v.holdings.map((h) => h.symbol);
       const weight = new Map(v.holdings.map((h) => [h.symbol, h.weightPct ?? 0]));
       const topic = input.topic?.trim() || null;
-      const links = await holdingLinks(app, holdings);
+      const seenLinks = new Set<string>();
+      const links = (await holdingLinks(app, holdings)).filter((l) => {
+        const key = `${l.holding}|${l.side}|${l.counterpartySymbol}`;
+        if (
+          !l.counterpartySymbol ||
+          seenLinks.has(key) ||
+          GENERIC.test(l.counterparty.trim()) ||
+          BOILERPLATE.test(l.quote ?? "") ||
+          LEGAL.test(l.quote ?? "")
+        )
+          return false;
+        seenLinks.add(key);
+        return true;
+      });
       const cpSymbols = [
         ...new Set(
           links
@@ -182,13 +202,14 @@ export function intelTools(app: AppContext) {
             .filter((x): x is string => !!x && !holdings.includes(x)),
         ),
       ];
-      const [direct, linked, policy] = await Promise.all([
+      const [direct, linked, policyAll] = await Promise.all([
         filingsFor(app, holdings, input.days, topic),
         cpSymbols.length
           ? filingsFor(app, cpSymbols, input.days, topic)
           : Promise.resolve([] as BotFiling[]),
         policyEventsFor(app, holdings, input.days, topic),
       ]);
+      const policy = policyAll.filter((e) => POLICY_MEASURE.test(e.title));
       const wider =
         topic && !direct.length && !linked.length && !policy.length
           ? {
@@ -220,6 +241,7 @@ export function intelTools(app: AppContext) {
         sourceId: string;
         materiality: string | null;
         via: string | null;
+        counterparty: string | null;
         holdingMoveSinceEventPct: number | null;
         exposurePctOfPortfolio: number | null;
         exposureBasis: string;
@@ -234,6 +256,7 @@ export function intelTools(app: AppContext) {
           sourceId: citeFiling(f),
           materiality: f.materiality,
           via: null,
+          counterparty: null,
           holdingMoveSinceEventPct: reaction(f.symbol, f.publishedAt),
           exposurePctOfPortfolio: r2(weight.get(f.symbol) ?? null),
           exposureBasis: "observed: full holding weight",
@@ -254,6 +277,7 @@ export function intelTools(app: AppContext) {
             sourceId: citeFiling(f),
             materiality: f.materiality,
             via: `${l.counterparty} is a disclosed ${l.side} of ${l.holding}${l.valueCr != null ? ` (est. ₹${r2(l.valueCr)} Cr/yr)` : ""}`,
+            counterparty: f.symbol,
             holdingMoveSinceEventPct: reaction(l.holding, f.publishedAt),
             exposurePctOfPortfolio:
               share != null ? r2(((weight.get(l.holding) ?? 0) * share) / 100) : null,
@@ -283,6 +307,7 @@ export function intelTools(app: AppContext) {
             sourceId: id,
             materiality: null,
             via: `tagged to policy sector ${e.sectors.join(", ")}`,
+            counterparty: null,
             holdingMoveSinceEventPct: reaction(h, e.publishedAt),
             exposurePctOfPortfolio: null,
             exposureBasis: "inference: sector tag only, magnitude unknown",
@@ -332,8 +357,12 @@ export function intelTools(app: AppContext) {
       }> = [];
       nodes.set("portfolio", { id: "portfolio", label: s.portfolio.name, role: "center" });
       for (const ch of channels.slice(0, 30)) {
-        const evKey = `ev:${ch.sourceId}`;
-        const added = (nodes.has(ch.holding) ? 0 : 1) + (nodes.has(evKey) ? 0 : 1);
+        const evId = `ev:${ch.sourceId}`;
+        const cpId = ch.counterparty ? `cp:${ch.holding}:${ch.counterparty}` : null;
+        const added =
+          (nodes.has(ch.holding) ? 0 : 1) +
+          (nodes.has(evId) ? 0 : 1) +
+          (cpId && !nodes.has(cpId) ? 1 : 0);
         if (nodes.size + added > 40) break;
         nodes.set(ch.holding, { id: ch.holding, label: ch.holding, role: "holding" });
         edges.push({
@@ -342,23 +371,29 @@ export function intelTools(app: AppContext) {
           label: null,
           weight: weight.get(ch.holding) ?? null,
         });
-        const evId = `ev:${ch.sourceId}`;
         nodes.set(evId, {
           id: evId,
           label: `${ch.sourceId} ${ch.event}`.slice(0, 80),
-          role:
-            ch.channel === "customer_event"
-              ? "customer"
-              : ch.channel === "supplier_event"
-                ? "supplier"
-                : "event",
+          role: "event",
         });
-        edges.push({
-          from: ch.holding,
-          to: evId,
-          label: ch.channel.replace(/_/g, " "),
-          weight: ch.exposurePctOfPortfolio,
-        });
+        if (cpId && ch.counterparty) {
+          const side = ch.channel === "customer_event" ? "customer" : "supplier";
+          nodes.set(cpId, { id: cpId, label: ch.counterparty, role: side });
+          edges.push({ from: ch.holding, to: cpId, label: side, weight: null });
+          edges.push({
+            from: cpId,
+            to: evId,
+            label: "its filing",
+            weight: ch.exposurePctOfPortfolio,
+          });
+        } else {
+          edges.push({
+            from: ch.holding,
+            to: evId,
+            label: ch.channel === "policy_sector" ? "policy" : "own filing",
+            weight: ch.exposurePctOfPortfolio,
+          });
+        }
       }
       const charts = channels.length
         ? [
@@ -367,7 +402,11 @@ export function intelTools(app: AppContext) {
                 title: "Event exposure map",
                 asOf: s.asOf,
                 source: "NSE filings, PIB policy events, MA supply-chain graph",
-                notes: ["Links show disclosed relationships, not proven causation"],
+                notes: [
+                  "Customer/supplier hops only where a filing states an order, revenue or purchase share; co-mentions are excluded",
+                  "PIB items only when the title states a decision or measure",
+                  "Links show disclosed relationships, not proven causation",
+                ],
               },
               s.portfolio.name,
               [...nodes.values()],

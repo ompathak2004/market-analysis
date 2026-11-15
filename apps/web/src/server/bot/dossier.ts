@@ -22,7 +22,7 @@ import { peerComparison } from "./peers";
 
 export const DOSSIER_VERSION = 1;
 
-const GENERIC =
+export const GENERIC =
   /^(the )?(business|businesses|office|others?|segments?|company|companies|customers?|suppliers?|clients?|vendors?|dealers?|distributors?|exports?|domestic|oems?|group|subsidiar(y|ies)|government)$/i;
 const EXCHANGE = /^(bse|national stock exchange|nse|metropolitan stock exchange)\b/i;
 const AUTHORITY =
@@ -30,7 +30,7 @@ const AUTHORITY =
 const ENTITY =
   /\b(ltd|limited|inc|corp|corporation|co\.|company|plc|gmbh|ag|s\.a\.|llc|llp|pvt|private|bank|railways?|ministry|department|navy|army|air force|forces|organi[sz]ation|agency|undertaking|nigam|board|motors?|industries|enterprises|group|holdings?)\b/i;
 const SUPPLIER_AWARD = /supplier[^.]{0,60}award|award[^.]{0,80}supplier|vendor[^.]{0,40}award/i;
-const BOILERPLATE =
+export const BOILERPLATE =
   /independent director|serves as|serving as|experience (in|serving)|declaration pursuant|circular no|board of directors|chairman|code of conduct|details of business activities|deputy .*manager/i;
 
 type Quality = "usable" | "weak" | "excluded";
