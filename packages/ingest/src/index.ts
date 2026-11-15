@@ -1,6 +1,7 @@
 export * from "./altdata/legs.js";
 export * from "./altdata/maritime.js";
 export * from "./announcements/backup.js";
+export * from "./announcements/dedupe.js";
 export * from "./announcements/maintenance.js";
 export * from "./announcements/policy.js";
 export * from "./context.js";
