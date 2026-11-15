@@ -1,5 +1,6 @@
 import { DAY, DeadlineExceededError, isoDate, remainingMs, throwIfAborted } from "@ma/core";
 import { companies, eq, fencedTransaction, sql, type Tx } from "@ma/db";
+import { firstAnnouncementCopy } from "../announcements/dedupe.js";
 import type { IngestContext } from "../context.js";
 import type { FetchDocumentResult } from "../documents.js";
 import {
@@ -175,7 +176,7 @@ export function isOrderAnnouncement(a: OrderAnnouncementInput): boolean {
 }
 
 export const ORDER_ANNOUNCEMENT = sql`((a.category_key = 'order_win' or a.subject ~* ${ORDER_SUBJECT_PATTERN})
-  and a.subject !~* ${NON_COMMERCIAL_PATTERN})`;
+  and a.subject !~* ${NON_COMMERCIAL_PATTERN} and ${firstAnnouncementCopy(sql`a`)})`;
 
 export function orderAnnouncementUrl(announcementId: number): string {
   return `nse://announcement/${announcementId}`;
