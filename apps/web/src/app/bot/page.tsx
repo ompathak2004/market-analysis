@@ -59,7 +59,7 @@ export default function BotPage() {
     holdings: portfolioSymbols(p).length,
   }));
   return (
-    <div className="grid grid-bot">
+    <div className="grid grid-bot" data-clarity-mask="true">
       <BotApp portfolios={portfolios} suggestions={SUGGESTIONS} />
     </div>
   );
