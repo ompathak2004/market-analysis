@@ -1,5 +1,6 @@
-import { chunk, sha256, throwIfAborted, uniqueBy } from "@ma/core";
+import { chunk, throwIfAborted, uniqueBy } from "@ma/core";
 import { announcements, companies, eq, fencedTransaction, lt, sql } from "@ma/db";
+import { announcementDedupeKey } from "../announcements/dedupe.js";
 import { ANNOUNCEMENT_POLICY_VERSION, announcementPolicy } from "../announcements/policy.js";
 import type { IngestContext } from "../context.js";
 
@@ -18,7 +19,8 @@ export async function syncAnnouncements(
   const stats: AnnouncementSyncStats = { fetched: 0, inserted: 0, reclassified: 0, noise: 0 };
   const company = await ctx.db.query.companies.findFirst({ where: eq(companies.id, companyId) });
   if (!company?.nseSymbol) return stats;
-  const items = await ctx.nse.announcements(company.nseSymbol);
+  const symbol = company.nseSymbol;
+  const items = await ctx.nse.announcements(symbol);
   stats.fetched = items.length;
   const rows = uniqueBy(
     items.flatMap((a) => {
@@ -40,9 +42,12 @@ export async function syncAnnouncements(
           category: a.subject,
           details: a.details || null,
           attachmentUrl: a.attachmentUrl,
-          dedupeKey: sha256(
-            `${company.nseSymbol}|${a.publishedAt.toISOString()}|${a.subject}|${a.attachmentUrl ?? ""}`,
-          ),
+          dedupeKey: announcementDedupeKey({
+            symbol,
+            publishedAt: a.publishedAt,
+            subject: a.subject,
+            attachmentUrl: a.attachmentUrl,
+          }),
           ...policy,
         },
       ];

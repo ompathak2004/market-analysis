@@ -3,6 +3,7 @@ import { MemoryObjectStore } from "@ma/core";
 import { closeDb, createDb, type Db, sql, type Tx } from "@ma/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { backupAnnouncements, readBackup, verifyBackup } from "./backup.js";
+import { announcementDedupeKey, dedupeAnnouncementBatch } from "./dedupe.js";
 import {
   ANNOUNCEMENT_DOCUMENT_PREFIX,
   classifyAnnouncementRange,
@@ -267,6 +268,54 @@ describe.skipIf(!url)("announcement maintenance (DATABASE_URL_TEST)", () => {
       await expect(readBackup(body, "b".repeat(64))).rejects.toThrow();
       await objects.put(backup.key, new Uint8Array([1, 2, 3]), backup.sha256);
       expect(await verifyBackup(tx, objects, backup.key)).toBeNull();
+    });
+  });
+
+  it("drops NSE mirror duplicates but keeps cited rows and triage", async () => {
+    await rolledBack(db, async (tx) => {
+      const companyId = await seedCompany(tx);
+      await tx.execute(sql`update companies set nse_symbol = ${tag} where id = ${companyId}`);
+      const publishedAt = "2026-11-02T10:15:00.000Z";
+      const subject = "Award of Order";
+      const com = `https://nsearchives.nseindia.com/corporate/${tag}.pdf`;
+      const mirror = com.replace(".com/", ".in/");
+      const lowest = await announcement(tx, companyId, {
+        subject,
+        publishedAt,
+        attachmentUrl: mirror,
+      });
+      const cited = await announcement(tx, companyId, { subject, publishedAt, attachmentUrl: com });
+      await cite(tx, com, "order_filing");
+      await tx.execute(sql`
+        update announcements set materiality = 'high', so_what = 'big order' where id = ${lowest}`);
+      const lone = await announcement(tx, companyId, {
+        subject: "Credit Rating",
+        publishedAt,
+        attachmentUrl: mirror.replace(".pdf", "-r.pdf"),
+      });
+      const first = await announcement(tx, companyId, { subject: "Board Meeting", publishedAt });
+      const second = await announcement(tx, companyId, { subject: "Board Meeting", publishedAt });
+      const r = await dedupeAnnouncementBatch(tx, second, companyId - 1, { companies: 1 });
+      expect(r).toMatchObject({ deleted: 2, merged: 1, rekeyed: 1 });
+      expect(await surviving(tx, [lowest, cited, lone, first, second])).toEqual([
+        cited,
+        lone,
+        first,
+      ]);
+      const rows = await tx.execute<{ id: number; materiality: string | null; dedupe_key: string }>(
+        sql`select id, materiality, dedupe_key from announcements where id in (${cited}, ${lone}) order by id`,
+      );
+      expect(rows[0]?.materiality).toBe("high");
+      expect(rows[1]?.dedupe_key).toBe(
+        announcementDedupeKey({
+          symbol: tag,
+          publishedAt: new Date(publishedAt),
+          subject: "Credit Rating",
+          attachmentUrl: mirror.replace(".pdf", "-r.pdf"),
+        }),
+      );
+      const again = await dedupeAnnouncementBatch(tx, second, companyId - 1, { companies: 1 });
+      expect(again).toMatchObject({ deleted: 0, merged: 0, rekeyed: 0 });
     });
   });
 

@@ -1,5 +1,6 @@
 import { DAY, DeadlineExceededError, isoDate, remainingMs, throwIfAborted } from "@ma/core";
 import { type Db, sql } from "@ma/db";
+import { firstAnnouncementCopy } from "../announcements/dedupe.js";
 import type { IngestContext } from "../context.js";
 import type { FetchDocumentResult } from "../documents.js";
 import { registerSource } from "../relationships/graph.js";
@@ -21,7 +22,8 @@ export function ratingAnnouncementUrl(announcementId: number): string {
 }
 
 export const RATING_ANNOUNCEMENT = sql`(a.category_key = 'credit_rating'
-  and a.published_at > now() - make_interval(days => ${RATING_LOOKBACK_DAYS}))`;
+  and a.published_at > now() - make_interval(days => ${RATING_LOOKBACK_DAYS})
+  and ${firstAnnouncementCopy(sql`a`)})`;
 
 export const RATING_ANNOUNCEMENT_UNREAD = sql`not exists (
   select 1 from relationship_sources rs
