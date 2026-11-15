@@ -47,6 +47,12 @@ export const FUNCTIONS: readonly FunctionDef[] = [
   { code: "MOV", label: "NIFTY 50 movers", scope: "global", aliases: ["MOVERS", "TOP"] },
   { code: "SIG", label: "Signal leaderboards", scope: "global", aliases: ["SIGNALS"] },
   { code: "BOT", label: "Ask the analyst", scope: "global", aliases: ["AI", "ASK", "CHAT"] },
+  {
+    code: "ORD",
+    label: "Order flow: who orders from whom",
+    scope: "global",
+    aliases: ["ORDERS", "FLOW"],
+  },
   { code: "HELP", label: "Keys & functions", scope: "global", aliases: ["?", "KEYS"] },
 ];
 
@@ -88,6 +94,10 @@ export function resolveCommand(raw: string, currentSymbol: string | null): strin
   if (fn?.code === "MOV") return "/movers";
   if (fn?.code === "HELP") return "/help";
   if (fn?.code === "BOT") return "/bot";
+  if (fn?.code === "ORD") {
+    const m = second && /^(3|6|12|24)M?$/.test(second) ? second.replace("M", "") : null;
+    return `/orders${m ? `?m=${m}` : ""}`;
+  }
   if (fn?.code === "SIG") return `/signals${second ? `?kind=${second.toLowerCase()}` : ""}`;
   const lower = first.toLowerCase();
   if (isTab(lower)) {

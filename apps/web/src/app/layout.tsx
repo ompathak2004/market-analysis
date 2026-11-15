@@ -22,6 +22,7 @@ import "@/styles/utilities.css";
 import "@/styles/admin.css";
 import "@/styles/infl.css";
 import "@/styles/bot.css";
+import "@/styles/orders.css";
 
 export const metadata: Metadata = {
   title: "MA Terminal",
